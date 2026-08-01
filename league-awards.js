@@ -53,7 +53,7 @@
     runner_up: 5,
     third_place: 3,
     good_season: 3,
-    win_streak: 5
+    win_streak: 3
   };
 
   function normalizeTeamName(name){
