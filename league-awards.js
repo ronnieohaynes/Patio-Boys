@@ -38,8 +38,10 @@
   ];
 
   /* Career GOAT tracker — awards + regular-season wins + playoff wins. GOAT itself awards 0.
-     Good Season = NBA-style ~50-win bar: regular-season win% >= 61% (locks when season completes). */
+     Good Season = NBA-style ~50-win bar: regular-season win% >= 61% (locks when season completes).
+     Win Streak = any regular-season streak of WIN_STREAK_THRESHOLD+ (rare; pays once per streak). */
   const GOOD_SEASON_WIN_PCT = 0.610;
+  const WIN_STREAK_THRESHOLD = 10;
   const GOAT_POINTS = {
     champion: 10,
     mvp: 7,
@@ -50,7 +52,8 @@
     playoff_win: 2,
     runner_up: 5,
     third_place: 3,
-    good_season: 4
+    good_season: 4,
+    win_streak: 5
   };
 
   function normalizeTeamName(name){
@@ -234,7 +237,7 @@
     ];
   }
 
-  /* Regular-season Points For = sum of matchup points before playoff_week_start. */
+  /* Regular-season Points For + win streaks from matchups before playoff_week_start. */
   async function regularSeasonPfByRoster(league){
     const settings = (league && league.settings) || {};
     const start = Number(settings.start_week) || 1;
@@ -244,6 +247,9 @@
     else end = Number(settings.last_scored_leg) || Number(settings.leg) || 18;
 
     const byRoster = {};
+    const streakCur = {};
+    const streakMax = {};
+    const streak10 = {};
     let weeksScored = 0;
     const weeks = [];
     for (let w = start; w <= end; w++) weeks.push(w);
@@ -261,8 +267,45 @@
         if (!Number.isFinite(pts)) return;
         byRoster[rid] = (byRoster[rid] || 0) + pts;
       });
+      const byMatchup = {};
+      matchups.forEach(m => {
+        const mid = m.matchup_id;
+        if (mid == null) return;
+        if (!byMatchup[mid]) byMatchup[mid] = [];
+        byMatchup[mid].push(m);
+      });
+      const winners = {};
+      const played = {};
+      Object.keys(byMatchup).forEach(mid => {
+        const rows = byMatchup[mid];
+        if (rows.length < 2) return;
+        rows.forEach(m => { played[String(m.roster_id)] = 1; });
+        const sorted = rows.slice().sort((a, b) => (Number(b.points) || 0) - (Number(a.points) || 0));
+        const top = Number(sorted[0].points) || 0;
+        const second = Number(sorted[1].points) || 0;
+        if (top === second) return; /* ties snap the streak */
+        winners[String(sorted[0].roster_id)] = 1;
+      });
+      Object.keys(played).forEach(rid => {
+        if (winners[rid]){
+          streakCur[rid] = (streakCur[rid] || 0) + 1;
+          streakMax[rid] = Math.max(streakMax[rid] || 0, streakCur[rid]);
+          if (streakCur[rid] === WIN_STREAK_THRESHOLD){
+            streak10[rid] = (streak10[rid] || 0) + 1;
+          }
+        } else {
+          streakCur[rid] = 0;
+        }
+      });
     });
-    return { byRoster, weeksScored, throughWeek: end, playoffWeekStart: playoffStart || null };
+    return {
+      byRoster,
+      weeksScored,
+      throughWeek: end,
+      playoffWeekStart: playoffStart || null,
+      maxWinStreak: streakMax,
+      winStreaks10: streak10
+    };
   }
 
   /* Winners-bracket stats: playoff wins, runner-up, 3rd place. */
@@ -442,6 +485,8 @@
     const runnerUps = bracketStats.runnerUps || {};
     const thirdPlaces = bracketStats.thirdPlaces || {};
     const rsPf = await regularSeasonPfByRoster(league);
+    const maxWinStreak = rsPf.maxWinStreak || {};
+    const winStreaks10 = rsPf.winStreaks10 || {};
     const rows = teams.map(t => {
       const mp = maxPointsForTeam(t.players, ceiling);
       const gp = gamesPlayed(t);
@@ -460,6 +505,8 @@
         playoffWins: playoffWins[rid] || 0,
         runnerUp: runnerUps[rid] ? 1 : 0,
         thirdPlace: thirdPlaces[rid] ? 1 : 0,
+        maxWinStreak: maxWinStreak[rid] || 0,
+        winStreaks10: winStreaks10[rid] || 0,
         gp,
         pfPerGame: ppg,
         maxPts: mp.maxPts,
@@ -851,11 +898,13 @@
       runnerUpPoints: 0,
       thirdPlacePoints: 0,
       goodSeasonPoints: 0,
+      winStreakPoints: 0,
       seasonWins: 0,
       playoffWins: 0,
       runnerUps: 0,
       thirdPlaces: 0,
       goodSeasons: 0,
+      winStreaks: 0,
       counts: {},
       hardware: [],
       rank: null
@@ -879,6 +928,7 @@
     const runnerPts = Number(GOAT_POINTS.runner_up) || 0;
     const thirdPts = Number(GOAT_POINTS.third_place) || 0;
     const goodPts = Number(GOAT_POINTS.good_season) || 0;
+    const streakPts = Number(GOAT_POINTS.win_streak) || 0;
 
     (seasonPacks || []).forEach(pack => {
       (pack.rows || []).forEach(r => {
@@ -917,6 +967,24 @@
             seasonTag: pack.seasonTag,
             points: goodPts,
             value: pct
+          });
+        }
+        /* 10+ win streaks pay when achieved (including live seasons). */
+        const streaks = Number(r.winStreaks10) || 0;
+        if (streaks > 0 && streakPts){
+          row.winStreaks += streaks;
+          row.winStreakPoints += streaks * streakPts;
+          row.points += streaks * streakPts;
+          row.counts.win_streak = (row.counts.win_streak || 0) + streaks;
+          row.hardware.push({
+            id: 'win_streak',
+            name: WIN_STREAK_THRESHOLD + '+ win streak',
+            short: 'WS',
+            season: pack.season,
+            yearLabel: yearLabel(pack.season),
+            seasonTag: pack.seasonTag,
+            points: streaks * streakPts,
+            value: Number(r.maxWinStreak) || (WIN_STREAK_THRESHOLD * streaks)
           });
         }
         const pw = Number(r.playoffWins) || 0;
@@ -1015,6 +1083,7 @@
       || (b.counts.gm || 0) - (a.counts.gm || 0)
       || (b.counts.mip || 0) - (a.counts.mip || 0)
       || (b.counts.good_season || 0) - (a.counts.good_season || 0)
+      || (b.counts.win_streak || 0) - (a.counts.win_streak || 0)
       || b.playoffWins - a.playoffWins
       || b.seasonWins - a.seasonWins
       || String(a.displayName).localeCompare(String(b.displayName))
@@ -1024,6 +1093,7 @@
     return {
       points: Object.assign({}, GOAT_POINTS),
       goodSeasonWinPct: GOOD_SEASON_WIN_PCT,
+      winStreakThreshold: WIN_STREAK_THRESHOLD,
       rows,
       goat: goat ? {
         key: goat.key,
@@ -1039,12 +1109,14 @@
         runnerUps: goat.runnerUps,
         thirdPlaces: goat.thirdPlaces,
         goodSeasons: goat.goodSeasons,
+        winStreaks: goat.winStreaks,
         awardPoints: goat.awardPoints,
         winPoints: goat.winPoints,
         playoffWinPoints: goat.playoffWinPoints,
         runnerUpPoints: goat.runnerUpPoints,
         thirdPlacePoints: goat.thirdPlacePoints,
-        goodSeasonPoints: goat.goodSeasonPoints
+        goodSeasonPoints: goat.goodSeasonPoints,
+        winStreakPoints: goat.winStreakPoints
       } : null
     };
   }
@@ -1109,6 +1181,19 @@
             yearLabel: yearLabel(pack.season),
             value: seasonWinPct(r),
             goatPoints: GOAT_POINTS.good_season || 0,
+            medal: ''
+          });
+        }
+        const streaks = Number(r.winStreaks10) || 0;
+        if (streaks > 0 && (GOAT_POINTS.win_streak || 0)){
+          byKey[r.key].push({
+            id: 'win_streak',
+            name: WIN_STREAK_THRESHOLD + '+ win streak',
+            short: 'WS',
+            season: pack.season,
+            yearLabel: yearLabel(pack.season),
+            value: Number(r.maxWinStreak) || WIN_STREAK_THRESHOLD,
+            goatPoints: streaks * (GOAT_POINTS.win_streak || 0),
             medal: ''
           });
         }
@@ -1262,6 +1347,7 @@
     AWARD_DEFS,
     GOAT_POINTS,
     GOOD_SEASON_WIN_PCT,
+    WIN_STREAK_THRESHOLD,
     franchiseKey,
     yearLabel,
     seasonTag,
