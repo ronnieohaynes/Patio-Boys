@@ -284,8 +284,6 @@
   /* Finalized mode: the 26-27 lottery is done. Hides the live-draw machinery
      (balls, odds, countdown, run controls) without deleting it, so it can
      come back next season by flipping DRAFT_FINALIZED off. */
-  #pdfBtn{display:none}
-  body.finalized #pdfBtn{display:inline-block}
   body.finalized .ball-wrap,
   body.finalized .oddscols,
   body.finalized .session-countdown,
@@ -407,7 +405,7 @@
       <button class="startbtn" id="runBtn">Start the lottery</button>
       <button class="controlbtn pausebtn" id="pauseBtn" disabled>Pause</button>
       <button class="controlbtn controlbtn--warn" id="restartBtn" disabled>Restart</button>
-      <button class="controlbtn" id="pdfBtn" type="button">Download board PDF</button>
+      <button class="controlbtn" id="refreshBtn" type="button">Refresh</button>
     </div>
   </div>
   <span class="season">Patio Boys &middot; S26&ndash;27</span>
@@ -2423,12 +2421,46 @@ if (DRAFT_FINALIZED){
   setDraftTickerMode(true);
   leagueStatsTickerItems = finalOrderWireLines();
   renderLeagueStatsTicker();
-  document.getElementById('pdfBtn').addEventListener('click', () => downloadDraftBoardPdf(false));
 } else {
   setPool(fourTeamLottery);
   resetSessionCountdown();
   startSessionCountdown();
 }
+
+function activeHqFrame(){
+  const frames = [
+    ['tabCharter', 'charterFrame', () => charterFrameLoaded],
+    ['tabStatus', 'leagueStatusFrame', () => statusFrameLoaded],
+    ['tabIntel', 'teamIntelFrame', () => intelFrameLoaded],
+    ['tabGoat', 'goatTrackerFrame', () => goatFrameLoaded],
+    ['tabMock', 'mockDraftFrame', () => mockFrameLoaded],
+    ['tabGrades', 'draftGradesFrame', () => gradesFrameLoaded],
+    ['tabFa', 'freeAgentsFrame', () => faFrameLoaded],
+    ['tabTrade', 'tradeAnalyzerFrame', () => tradeFrameLoaded]
+  ];
+  for (let i = 0; i < frames.length; i++){
+    const tab = document.getElementById(frames[i][0]);
+    const frame = document.getElementById(frames[i][1]);
+    if (tab && !tab.hidden && frames[i][2]() && frame && frame.src && frame.src !== 'about:blank'){
+      return frame;
+    }
+  }
+  return null;
+}
+
+function refreshHqView(){
+  const frame = activeHqFrame();
+  if (frame){
+    const url = new URL(frame.src, location.href);
+    url.searchParams.set('t', String(Date.now()));
+    frame.src = url.toString();
+    return;
+  }
+  location.reload();
+}
+
+document.getElementById('refreshBtn').addEventListener('click', refreshHqView);
+
 setMainTab('status');
 const leagueDataPromise = loadLeagueData();
 // The stats/trades cache only feeds the League Wire, which is hidden along
