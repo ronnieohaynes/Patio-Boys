@@ -472,7 +472,7 @@ async function loadPreviousSeasons(){
         pf
       });
     });
-    seasons.push({ leagueId: prevId, season: league.season, rosterToTeam });
+    seasons.push({ leagueId: prevId, season: league.season, draftId: league.draft_id, rosterToTeam });
     prevId = league.previous_league_id;
   }
   return seasons;
@@ -591,12 +591,84 @@ function player2KOvr(pid){
 
 /* ---------- trades ---------- */
 
+/* Map completed drafts: season_round_originalRosterId -> player_id.
+   Sleeper trade payloads omit draft_id, so we resolve via each draft's
+   slot_to_roster_id (original pick owner) + pick draft_slot. */
+async function buildDraftPickPlayerMap(seasons){
+  const map = {};
+  const seasonDraft = {};
+  seasons.forEach(s => {
+    if (s.season != null) seasonDraft[String(s.season)] = s;
+  });
+  /* Also walk the league chain so a prior-season trade of a later pick
+     can resolve once that later draft has completed. */
+  let lid = LEAGUE_ID;
+  let guard = 0;
+  while (lid && guard < 4){
+    guard++;
+    try {
+      const lgRes = await fetch('https://api.sleeper.app/v1/league/' + lid);
+      if (!lgRes.ok) break;
+      const lg = await lgRes.json();
+      seasonDraft[String(lg.season)] = {
+        leagueId: lid,
+        season: lg.season,
+        draftId: lg.draft_id
+      };
+      lid = lg.previous_league_id;
+    } catch (e){ break; }
+  }
+
+  await Promise.all(Object.keys(seasonDraft).map(async season => {
+    const s = seasonDraft[season];
+    const draftId = s.draftId;
+    let did = draftId;
+    if (!did && s.leagueId){
+      try {
+        const lgRes = await fetch('https://api.sleeper.app/v1/league/' + s.leagueId);
+        if (lgRes.ok){
+          const lg = await lgRes.json();
+          did = lg.draft_id;
+        }
+      } catch (e){ return; }
+    }
+    if (!did) return;
+    try {
+      const [draftRes, picksRes] = await Promise.all([
+        fetch('https://api.sleeper.app/v1/draft/' + did),
+        fetch('https://api.sleeper.app/v1/draft/' + did + '/picks')
+      ]);
+      if (!draftRes.ok || !picksRes.ok) return;
+      const draft = await draftRes.json();
+      const picks = await picksRes.json();
+      if (!Array.isArray(picks) || !picks.length) return;
+      const slotToRoster = draft.slot_to_roster_id || {};
+      picks.forEach(dp => {
+        if (!dp.player_id || dp.draft_slot == null || dp.round == null) return;
+        const orig = slotToRoster[String(dp.draft_slot)];
+        if (orig == null) return;
+        map[String(season) + '_' + dp.round + '_' + orig] = String(dp.player_id);
+      });
+    } catch (e){ /* draft not available yet */ }
+  }));
+  return map;
+}
+
+function pickAssetFromTrade(pk, draftPlayerMap){
+  const base = "R" + pk.round + " '" + String(pk.season).slice(-2);
+  const key = String(pk.season) + '_' + pk.round + '_' + pk.roster_id;
+  const pid = draftPlayerMap[key] || null;
+  return { type: 'pick', base, pid };
+}
+
 async function loadTrades(prevSeasons){
   // Current-season roster map
   const currentMap = {};
   state.teams.forEach(t => { currentMap[t.rosterId] = { name: t.displayName, key: t.key }; });
-  const seasons = [{ leagueId: LEAGUE_ID, season: state.league.season, rosterToTeam: currentMap }]
+  const seasons = [{ leagueId: LEAGUE_ID, season: state.league.season, draftId: state.league.draft_id, rosterToTeam: currentMap }]
     .concat(prevSeasons);
+
+  const draftPlayerMap = await buildDraftPickPlayerMap(seasons);
 
   const weeks = Array.from({length: 25}, (_, i) => i + 1);
   const tradesByKey = {};
@@ -628,9 +700,9 @@ async function loadTrades(prevSeasons){
             else sent.push({type:'player', pid});
           });
           (tx.draft_picks || []).forEach(pk => {
-            const label = "R" + pk.round + " '" + String(pk.season).slice(-2) + ' pick';
-            if (String(pk.owner_id) === String(rid)) got.push({type:'pick', label});
-            else sent.push({type:'pick', label});
+            const asset = pickAssetFromTrade(pk, draftPlayerMap);
+            if (String(pk.owner_id) === String(rid)) got.push(asset);
+            else sent.push(asset);
           });
           if (!got.length && !sent.length) return;
           if (!tradesByKey[key]) tradesByKey[key] = [];
@@ -964,7 +1036,13 @@ function renderNeeds(t){
 }
 
 function assetLabel(a){
-  return a.type === 'player' ? escapeHtml(playerName(a.pid)) : escapeHtml(a.label);
+  if (a.type === 'player') return escapeHtml(playerName(a.pid));
+  if (a.pid){
+    const name = playerName(a.pid);
+    const resolved = name && name !== 'Unknown' && name.indexOf('Player ') !== 0;
+    return escapeHtml(a.base + (resolved ? ' (' + name + ')' : ' pick'));
+  }
+  return escapeHtml((a.base || a.label || 'Pick') + (a.base ? ' pick' : ''));
 }
 function fmtAssets(items){
   const labels = items.map(assetLabel);

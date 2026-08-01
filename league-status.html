@@ -550,122 +550,63 @@ async function loadTrades(currentData, historySeasonsData){
       return p.full_name||('Player '+pid);
     }
 
-    // Fetch draft results. Key by draft_id + '_' + round + '_' + roster_id (who made the pick).
-    // Also store by draft_id + '_' + round alone as fallback when there's only one pick that round.
-    const draftPickMap = {}; // draft_id_round_rosterid -> player_id
-    const draftPickByRound = {}; // draft_id_round -> [{roster_id, player_id}]
-    const draftIds = new Set();
-    uniqueTrades.forEach(tx=>{
-      (tx.draft_picks||[]).forEach(pk=>{ if (pk.draft_id) draftIds.add(String(pk.draft_id)); });
+    // Resolve completed draft picks. Trade payloads usually omit draft_id, so key by
+    // season + round + original roster_id using each draft's slot_to_roster_id map.
+    const draftPickByOrig = {}; // season_round_originalRosterId -> player_id
+    const seasonDraftIds = {};
+    seasonDraftIds[String(league.season)] = league.draft_id;
+    if (historySeasonsData){
+      historySeasonsData.forEach(s => {
+        if (s.league && s.league.season && s.league.draft_id){
+          seasonDraftIds[String(s.league.season)] = s.league.draft_id;
+        }
+      });
+    }
+    uniqueTrades.forEach(tx => {
+      (tx.draft_picks || []).forEach(pk => {
+        const s = String(pk.season || '');
+        if (s && seasonDraftIds[s] == null) seasonDraftIds[s] = null;
+      });
     });
-    await Promise.all([...draftIds].map(async draftId=>{
+    /* Fill any missing season -> draft_id via the league chain. */
+    let walkId = LEAGUE_ID;
+    let walkGuard = 0;
+    while (walkId && walkGuard < 5){
+      walkGuard++;
       try {
-        const r = await fetch('https://api.sleeper.app/v1/draft/'+draftId+'/picks');
-        if (!r.ok) return;
-        const draftPicks = await r.json();
-        if (!Array.isArray(draftPicks)) return;
-        draftPicks.forEach(dp=>{
-          if (!dp.player_id) return;
-          const key = draftId+'_'+dp.round+'_'+dp.roster_id;
-          draftPickMap[key] = dp.player_id;
-          const roundKey = draftId+'_'+dp.round;
-          if (!draftPickByRound[roundKey]) draftPickByRound[roundKey]=[];
-          draftPickByRound[roundKey].push({ roster_id: dp.roster_id, player_id: dp.player_id });
+        const lgRes = await fetch('https://api.sleeper.app/v1/league/' + walkId);
+        if (!lgRes.ok) break;
+        const lg = await lgRes.json();
+        if (lg.season && lg.draft_id) seasonDraftIds[String(lg.season)] = lg.draft_id;
+        walkId = lg.previous_league_id;
+      } catch (e){ break; }
+    }
+    await Promise.all(Object.keys(seasonDraftIds).map(async season => {
+      const draftId = seasonDraftIds[season];
+      if (!draftId) return;
+      try {
+        const [draftRes, picksRes] = await Promise.all([
+          fetch('https://api.sleeper.app/v1/draft/' + draftId),
+          fetch('https://api.sleeper.app/v1/draft/' + draftId + '/picks')
+        ]);
+        if (!draftRes.ok || !picksRes.ok) return;
+        const draft = await draftRes.json();
+        const draftPicks = await picksRes.json();
+        if (!Array.isArray(draftPicks) || !draftPicks.length) return;
+        const slotToRoster = draft.slot_to_roster_id || {};
+        draftPicks.forEach(dp => {
+          if (!dp.player_id || dp.draft_slot == null || dp.round == null) return;
+          const orig = slotToRoster[String(dp.draft_slot)];
+          if (orig == null) return;
+          draftPickByOrig[season + '_' + dp.round + '_' + orig] = String(dp.player_id);
         });
-      } catch(e){}
+      } catch (e){}
     }));
 
-    // Hardcoded 2025 Patio Boys rookie draft results, used as fallback when the Sleeper
-    // draft API doesn't resolve (draft_id mismatch on traded picks is the most common cause).
-    // Indexed by round_pickNumber -> player name as it appears in Sleeper's player database.
-    const DRAFT_2025 = {
-      '1_1': 'Cooper Flagg',      // thehyphypnw
-      '1_2': 'Dylan Harper',      // jaysonarban
-      '1_3': 'VJ Edgecombe',      // BaderAlhindi
-      '1_4': 'Ace Bailey',        // JSimbulan3
-      '1_5': 'Kon Knueppel',      // addiejarrar
-      '1_6': 'Khaman Maluach',    // RadekA
-      '1_7': 'Jeremiah Fears',    // AliOfDan
-      '1_8': 'CJ Huntley',        // ajhyphy
-      '2_1': 'Cedric Coward',     // thehyphypnw
-      '2_2': 'Tamar Bates',       // jaysonarban
-      '2_3': 'Ryan Kalkbrenner',  // BaderAlhindi
-      '2_4': 'Carter Bryant',     // JSimbulan3
-      '2_5': 'Egor Demin',        // addiejarrar
-      '2_6': 'Cameron Matthews',  // fadie
-      '2_7': 'Chucky Hepburn',    // ajhyphy
-      '2_8': 'Dylan Cardwell',    // jaysonarban (traded pick)
-      '2_9': 'Derik Queen',       // oreokidronaldo
-      '2_10': 'Collin Murray-Boyles', // RadekA
-    };
-
-    // Manager username -> their original pick slot per round in the 2025 draft.
-    // Used to match roster_id (original pick owner) to a slot when draft_id lookup fails.
-    const DRAFT_2025_SLOTS = {
-      'thehyphypnw':    { '1': 1,  '2': 1  },
-      'jaysonarban':    { '1': 2,  '2': 2  },
-      'baderalhindi':   { '1': 3,  '2': 3  },
-      'jsimbulan3':     { '1': 4,  '2': 4  },
-      'addiejarrar':    { '1': 5,  '2': 5  },
-      'fadie':          {          '2': 6  },
-      'ajhyphy':        { '1': 8,  '2': 7  },
-      'oreokidronaldo': {          '2': 9  },
-      'radeka':         { '1': 6,  '2': 10 },
-      'aliofdan':       { '1': 7           },
-    };
-
-    // Build a reverse lookup: normalized player name -> player_id from Sleeper's player database.
-    const pidByName = {};
-    Object.entries(playerDb).forEach(([pid, p])=>{
-      const name = p.first_name&&p.last_name ? (p.first_name+' '+p.last_name).trim() : p.full_name||'';
-      if (name) pidByName[name.toLowerCase()] = pid;
-    });
-    function pidForName(name){ return pidByName[name.toLowerCase()] || null; }
-
-    // Build 2025 season roster_id -> manager username from historySeasonsData.
-    const roster2025UserMap = {};
-    if (historySeasonsData){
-      const s2025 = historySeasonsData.find(s=>s.league.season==='2025');
-      if (s2025){
-        s2025.rows.forEach(row=>{
-          // ownerId is the Sleeper user_id, which matches roster owner_id in transactions
-          if (row.ownerId) roster2025UserMap[String(row.ownerId)] = (row.manager||'').toLowerCase();
-        });
-      }
-    }
-
     function resolvePickPlayer(pk){
-      const did = String(pk.draft_id||'');
-      // Try Sleeper API result first
-      if (did){
-        const k1 = did+'_'+pk.round+'_'+(pk.owner_id||'');
-        if (draftPickMap[k1]) return draftPickMap[k1];
-        const k2 = did+'_'+pk.round+'_'+(pk.roster_id||'');
-        if (draftPickMap[k2]) return draftPickMap[k2];
-        const k3 = did+'_'+pk.round+'_'+(pk.previous_owner_id||'');
-        if (draftPickMap[k3]) return draftPickMap[k3];
-      }
-      // Fallback: hardcoded 2025 data
-      if (String(pk.season) === '2025'){
-        const round = String(pk.round);
-        // Find the original owner's username from their roster_id
-        const username = roster2025UserMap[pk.roster_id] || roster2025UserMap[pk.previous_owner_id] || '';
-        const slots = DRAFT_2025_SLOTS[username] || {};
-        const slot = slots[round];
-        if (slot){
-          const playerNameStr = DRAFT_2025[round+'_'+slot];
-          if (playerNameStr) return pidForName(playerNameStr);
-        }
-        // Last resort: if round + original slot known from owner_id
-        const usernameB = roster2025UserMap[pk.owner_id] || '';
-        const slotsB = DRAFT_2025_SLOTS[usernameB] || {};
-        const slotB = slotsB[round];
-        if (slotB){
-          const playerNameStr = DRAFT_2025[round+'_'+slotB];
-          if (playerNameStr) return pidForName(playerNameStr);
-        }
-      }
-      return null;
+      if (!pk) return null;
+      const key = String(pk.season) + '_' + pk.round + '_' + pk.roster_id;
+      return draftPickByOrig[key] || null;
     }
 
     function estimatedPickValue(round){
