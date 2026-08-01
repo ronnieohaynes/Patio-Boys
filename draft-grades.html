@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patio Boys — Draft Grades</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0F131B; --surface:#171D28; --surface-2:#1F2735;
+    --ink:#ECEEF3; --ink-dim:#8B93A6; --hairline:#2E3645;
+    --gold:#E8C34A; --coral:#D8553A; --green:#1D9E75;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;line-height:1.45}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 20px 48px}
+  .topbar{
+    display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:16px 0;border-bottom:1px solid var(--hairline);
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.08em;
+  }
+  .topbar .brand{display:flex;align-items:baseline;gap:10px}
+  .topbar .brand .gm{font-family:'Anton',sans-serif;font-size:18px;color:var(--ink);letter-spacing:.04em}
+  .topbar .brand .gm em{color:var(--gold);font-style:normal}
+  body.embed .topbar{padding:10px 0}
+
+  .status{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--gold);margin:16px 0 0;
+  }
+  .status.error{color:var(--coral)}
+
+  .report-head{
+    display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;
+    margin:18px 0 12px;padding-bottom:10px;border-bottom:1px solid var(--hairline);
+  }
+  .report-head h1{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:28px;margin:0;letter-spacing:.03em;
+  }
+  .report-head p{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;margin:0;
+  }
+
+  .grade-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+  .grade-card{
+    border:1px solid var(--hairline);border-radius:8px;padding:14px 15px;
+    background:var(--surface);border-left:4px solid var(--team-color, var(--gold));
+  }
+  .grade-card.mine{box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--gold) 45%, transparent)}
+  .grade-card .g-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px}
+  .grade-card .g-team{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:18px;margin:0;line-height:1}
+  .grade-card .g-letter{font-family:'Anton',sans-serif;font-size:32px;color:var(--gold);line-height:1}
+  .grade-card .g-meta{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.03em;margin:0 0 8px;line-height:1.6;
+  }
+  .grade-card .g-meta .up{color:var(--green)}
+  .grade-card .g-meta .flat{color:var(--ink-dim)}
+  .grade-card .g-why{font-size:13px;color:#C9CDD8;margin:0;line-height:1.45}
+  .grade-card .g-picks{
+    margin:10px 0 0;padding:0;list-style:none;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);line-height:1.55;
+  }
+  .grade-card .g-picks li{
+    display:flex;justify-content:space-between;gap:8px;
+    border-top:1px solid color-mix(in srgb, var(--hairline) 70%, transparent);padding:4px 0;
+  }
+  .grade-card .g-picks li.miss{
+    border-top:none;padding-top:0;color:var(--ink-dim);font-size:9px;
+  }
+  .grade-card .g-picks .pk{color:var(--ink);min-width:28px}
+  .grade-card .g-picks .val{color:var(--gold)}
+  .grade-card .g-picks .ceil{
+    display:inline-block;margin-left:6px;padding:1px 5px;border-radius:3px;
+    background:color-mix(in srgb, var(--gold) 22%, transparent);color:var(--gold);
+    font-size:8px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;vertical-align:2px;
+  }
+  .grade-card .g-split{
+    display:flex;gap:10px;flex-wrap:wrap;margin:0 0 8px;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+  }
+  .grade-card .g-split span{
+    padding:3px 7px;border-radius:4px;background:var(--surface-2);border:1px solid var(--hairline);
+  }
+  .grade-card .g-split .hi{color:var(--gold)}
+
+  .max-standings{
+    margin-top:22px;padding-top:16px;border-top:1px solid var(--hairline);
+  }
+  .max-standings h2{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:20px;margin:0 0 10px;letter-spacing:.03em;
+  }
+  .max-standings table{width:100%;border-collapse:collapse}
+  .max-standings th,.max-standings td{
+    text-align:left;padding:8px 10px;border-bottom:1px solid color-mix(in srgb, var(--hairline) 80%, transparent);
+    font-size:13px;
+  }
+  .max-standings th{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;
+  }
+  .max-standings td.rank{font-family:'Anton',sans-serif;font-size:16px;width:36px;color:var(--ink-dim)}
+  .max-standings td.team{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:15px;letter-spacing:.02em;
+  }
+  .max-standings td.team .you{
+    font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;letter-spacing:.04em;
+    color:var(--gold);margin-left:6px;vertical-align:2px;
+  }
+  .max-standings td.pts,.max-standings td.delta{
+    font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;
+  }
+  .max-standings td.pts{color:var(--gold)}
+  .max-standings td.delta.up{color:var(--green)}
+  .max-standings td.delta.down{color:var(--coral)}
+  .max-standings td.delta.flat{color:var(--ink-dim)}
+  .max-standings td.grade{font-family:'Anton',sans-serif;font-size:18px;color:var(--gold);width:40px}
+  .max-standings tr.mine td{background:color-mix(in srgb, var(--gold) 8%, transparent)}
+  .max-standings tr:last-child td{border-bottom:none}
+
+  .board-block{margin-top:22px;padding-top:16px;border-top:1px solid var(--hairline)}
+  .board-block h2{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:20px;margin:0 0 10px;letter-spacing:.03em;
+  }
+  .pick-rows{display:flex;flex-direction:column;gap:6px}
+  .pick-row{
+    display:grid;grid-template-columns:48px 1fr 1.4fr;gap:10px;align-items:center;
+    padding:8px 10px;border-radius:7px;background:var(--surface);border:1px solid var(--hairline);
+    border-left:3px solid var(--team-color, var(--gold));
+  }
+  .pick-row .num{
+    font-family:'Anton',sans-serif;font-size:18px;color:var(--ink-dim);
+  }
+  .pick-row .team{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:14px;letter-spacing:.02em;
+  }
+  .pick-row .player{font-size:14px;font-weight:600}
+  .pick-row .meta{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);margin-top:2px;
+  }
+  @media(max-width:640px){
+    .pick-row{grid-template-columns:40px 1fr}
+    .pick-row .player-wrap{grid-column:1 / -1}
+  }
+</style>
+</head>
+<body>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
+
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><span class="gm">Draft <em>Grades</em></span><span>Patio Boys &middot; S26&ndash;27</span></div>
+    <span id="progressTag">Loading&hellip;</span>
+  </div>
+  <p class="status" id="status">Pulling the completed Sleeper draft and live projections&hellip;</p>
+  <div id="report" hidden></div>
+</div>
+
+<script src="2k-ratings-snapshot.js"></script>
+<script src="nba-proj-consensus.js"></script>
+<script src="team-needs.js"></script>
+<script>
+const LEAGUE_ID = '1350649177381552128';
+const MY_TEAM = 'Freakonomics';
+const MAX_SCORE_TOP_N = 10;
+const TEAM_COLORS = {
+  'Funeral Home':'#C9963A','BoobieDominguez':'#1D9E75','2011-12 Champs':'#D8553A',
+  'Freakonomics':'#7F77DD','Papa Book':'#D4537E','Bam Add the Mayo':'#3A8FC9',
+  'Hamas':'#9B59B6','Belt':'#5DBB63'
+};
+const TEAM_ALIASES = {
+  '20112012champs':'2011-12 Champs',
+  '20112012champ':'2011-12 Champs',
+  'thehitmanharts':'BoobieDominguez',
+  'badgersretirementhome':'Funeral Home',
+  'belt':'Belt'
+};
+
+function normalizeName(name){
+  return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+}
+function canonicalTeam(name){
+  const norm = normalizeName(name);
+  if (TEAM_ALIASES[norm]) return TEAM_ALIASES[norm];
+  return Object.keys(TEAM_COLORS).find(k => normalizeName(k) === norm) || name;
+}
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function letterGrade(percentile){
+  return percentile >= 0.9 ? 'A+' : percentile >= 0.75 ? 'A'
+    : percentile >= 0.6 ? 'B+' : percentile >= 0.45 ? 'B'
+    : percentile >= 0.3 ? 'C+' : percentile >= 0.15 ? 'C'
+    : percentile >= 0.05 ? 'D' : 'F';
+}
+function playerName(p){
+  if (!p) return 'Unknown';
+  if (p.full_name) return p.full_name;
+  return ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || 'Unknown';
+}
+
+const TWO_K = window.TWO_K_SNAPSHOT || {rookies:[], ratings:[]};
+const RATINGS_BY_NAME = new Map((TWO_K.ratings || []).map(p => [normalizeName(p.name), p]));
+const ROOKIE_NAMES = new Set((TWO_K.rookies || []).map(p => normalizeName(p.name)));
+
+const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
+const ESPN_ROOKIE_OUTLOOK = {
+  ajdybantsa:{outlook:1,label:'ESPN #1 · franchise',ceiling:'franchise',
+    comps:'Jaylen Brown / Kawhi high · RJ Barrett low',floor:45},
+  darrynpeterson:{outlook:2,label:'ESPN #2 · franchise',ceiling:'franchise',
+    comps:'Booker / Lillard+tools high · Murray+D low',floor:44},
+  cameronboozer:{outlook:3,label:'ESPN #3 · all-star upside',ceiling:'allstar_prospect',
+    comps:'Kevin Love+ball skills · Sabonis+3',floor:24},
+  calebwilson:{outlook:4,label:'ESPN #4 · starter+',ceiling:'starter',
+    comps:'Bouncier Siakam high · John Collins low',floor:18},
+  braydenburries:{outlook:5,label:'ESPN #5 · starter+',ceiling:'starter',
+    comps:'Summer riser',floor:16},
+  mikelbrownjr:{outlook:6,label:'ESPN #6 · starter+',ceiling:'starter',
+    comps:'Lottery guard',floor:15},
+  mikelbrown:{outlook:6,label:'ESPN #6 · starter+',ceiling:'starter',
+    comps:'Lottery guard',floor:15},
+  yaxellendeborg:{outlook:7,label:'ESPN #7 · starter+',ceiling:'starter',
+    comps:'Summer riser',floor:14},
+  morezjohnsonjr:{outlook:8,label:'ESPN #8 · starter+',ceiling:'starter',
+    comps:'Big upside',floor:13},
+  morezjohnson:{outlook:8,label:'ESPN #8 · starter+',ceiling:'starter',
+    comps:'Big upside',floor:13},
+  kingstonflemings:{outlook:9,label:'ESPN #9 · starter+',ceiling:'starter',
+    comps:'Lottery guard',floor:13},
+  keatonwagler:{outlook:10,label:'ESPN #10 · starter+',ceiling:'starter',
+    comps:'Haliburton pace high · Nembhard low',floor:12},
+  dariusacuffjr:{outlook:11,label:'ESPN #11 · starter+',ceiling:'starter',
+    comps:'Brunson high · Bibby low',floor:12},
+  dariusacuff:{outlook:11,label:'ESPN #11 · starter+',ceiling:'starter',
+    comps:'Brunson high · Bibby low',floor:12}
+};
+const FRANCHISE_YOUNG = {
+  cooperflagg:1, paolobanchero:1, victorwembanyama:1,
+  anthonyedwards:1, cadecunningham:1, chetholmgren:1,
+  amenthompson:1, scottiebarnes:1
+};
+const GOOD_NOT_SUPERSTAR = {
+  jalenduren:1, cedriccoward:1, kelelware:1, keleelware:1, keleel:1
+};
+/* All-Rookie 1st/2nd team in last two seasons (2024-25, 2025-26). */
+const ALL_ROOKIE_RECENT = {
+  cooperflagg:1, konknueppel:1, vjedgecombe:1, dylanharper:1, cedriccoward:1,
+  acebailey:1, jeremiahfears:1, collinmurrayboyles:1, derikqueen:1, maximeraynaud:1,
+  stephoncastle:1, zachedey:1, zaccharierisacher:1, alexsarr:1, jaylenwells:1,
+  matasbuzelis:1, bubcarrington:1, donovanclingan:1, yvesmissi:1,
+  kelelware:1, keleelware:1, keleel:1
+};
+const CEILING_BOOST = {
+  franchise:0, superstar:0, allnba:0, allstar:0,
+  allstar_prospect:0, prospect:0, starter:0, role:0
+};
+const INJURY_PRONE = {
+  zionwilliamson:0.86, kawhileonard:0.88, anthonydavis:0.90, joelembiid:0.87,
+  kristapsporzingis:0.88, jamorant:0.91, kyrieirving:0.92, brandoningram:0.92,
+  jonathanisaac:0.84, lonzoball:0.83, bensimmons:0.82, paulgeorge:0.90,
+  jamalmurray:0.93, tylerherro:0.94, scoothenderson:0.93, darrynpeterson:0.93,
+  keeganmurray:0.95, jalenwilliams:0.95, chetholmgren:0.94
+};
+
+function ageBand(p){
+  const a = Number(p && p.age);
+  const isRookie = p && (p.source === 'rookie' || ROOKIE_NAMES.has(normalizeName(p.name)) || Number(p.yearsExp) === 0);
+  if (!Number.isFinite(a) || a <= 0) return isRookie ? 'young' : 'unknown';
+  if (a < 24) return 'young';
+  if (a <= 32) return 'prime';
+  return 'decline';
+}
+function ageMultiplier(p){ return AGE_MULT[ageBand(p)] || 0.95; }
+function injuryMult(p){
+  let m = INJURY_PRONE[normalizeName(p && p.name)];
+  if (m == null) m = 1;
+  const status = String(p && (p.injuryStatus || p.injury_status) || '').toLowerCase();
+  if (status === 'out' || status === 'ir' || status === 'injured reserve') m *= 0.94;
+  else if (status === 'doubtful') m *= 0.96;
+  else if (status === 'questionable') m *= 0.98;
+  return m;
+}
+function dynastyProfile(p){
+  if (!p) return null;
+  const key = normalizeName(p.name);
+  return ESPN_ROOKIE_OUTLOOK[key] || null;
+}
+function ceilingClass(p){
+  if (!p) return 'role';
+  const key = normalizeName(p.name);
+  if (GOOD_NOT_SUPERSTAR[key]) return 'prospect';
+  const d = dynastyProfile(p);
+  if (d && d.ceiling) return d.ceiling;
+  if (FRANCHISE_YOUNG[key]) return 'franchise';
+  const ovr = Number(p.ovr);
+  const young = ageBand(p) === 'young' || ageBand(p) === 'prime';
+  if (Number.isFinite(ovr)){
+    if (ovr >= 95) return 'superstar';
+    if (ovr >= 90) return 'allnba';
+    if (ovr >= 88 && young) return 'franchise';
+    if (ovr >= 85) return 'allstar';
+  }
+  if (d) return d.ceiling || 'starter';
+  if (ROOKIE_NAMES.has(key) || p.source === 'rookie' || Number(p.yearsExp) === 0) return 'starter';
+  if (ALL_ROOKIE_RECENT[key] || ALL_ROOKIE_RECENT[key.replace(/jr$/, '')]) return 'prospect';
+  return 'role';
+}
+function ceilingBoost(p){ return CEILING_BOOST[ceilingClass(p)] || 0; }
+function ceilingLabel(cls){
+  return ({
+    franchise:'Franchise', superstar:'Superstar', allnba:'All-NBA',
+    allstar:'All-Star', allstar_prospect:'All-Star upside',
+    prospect:'Prospect', starter:'Starter+', role:'Depth'
+  })[cls] || cls;
+}
+
+/* Dynasty asset value:
+   - Vets: 50% consensus proj + 50% last-3-season avg
+   - Rookies: 50% Sleeper proj + 50% ESPN comps/outlook floor
+   Then age (tags are display-only). */
+const HIST_WEIGHT = 0.5;
+const PROJ_WEIGHT = 0.5;
+function isRookiePlayer(p){
+  if (!p) return false;
+  return p.source === 'rookie'
+    || ROOKIE_NAMES.has(normalizeName(p.name))
+    || Number(p.yearsExp) === 0;
+}
+function consensusProj(p){
+  const proj = Number(p && p.metric);
+  return Number.isFinite(proj) && proj > 0 ? proj : null;
+}
+function sleeperProj(p){
+  const s = Number(p && p.sleeperMetric);
+  return Number.isFinite(s) && s > 0 ? s : null;
+}
+function histAvg(p){
+  const h = Number(p && p.histMetric);
+  return Number.isFinite(h) && h > 0 ? h : null;
+}
+function compFloor(p){
+  const d = dynastyProfile(p);
+  const f = d && Number(d.floor);
+  return Number.isFinite(f) && f > 0 ? f : null;
+}
+function blendedFpBase(p){
+  if (isRookiePlayer(p)){
+    const sleeper = sleeperProj(p);
+    const comp = compFloor(p);
+    if (sleeper != null && comp != null) return PROJ_WEIGHT * sleeper + HIST_WEIGHT * comp;
+    if (sleeper != null) return sleeper;
+    if (comp != null) return comp;
+    return consensusProj(p);
+  }
+  const proj = consensusProj(p);
+  const hist = histAvg(p);
+  if (proj != null && hist != null) return PROJ_WEIGHT * proj + HIST_WEIGHT * hist;
+  if (proj != null) return proj;
+  if (hist != null) return hist;
+  return null;
+}
+function potentialValue(p){
+  const base = blendedFpBase(p);
+  const age = ageMultiplier(p);
+  const inj = injuryMult(p);
+  const boost = ceilingBoost(p);
+  if (base == null) return Math.max(0, boost * inj);
+  let v = base * age + boost;
+  if (ageBand(p) === 'young') v += 1;
+  return Math.max(0, v * inj);
+}
+
+function scoreStatLine(stats, scoring){
+  if (!stats || !scoring) return null;
+  let total = 0, matched = 0;
+  Object.keys(scoring).forEach(k => {
+    if (stats[k] != null && Number.isFinite(Number(stats[k]))){
+      total += Number(stats[k]) * scoring[k];
+      matched++;
+    }
+  });
+  return matched ? total : null;
+}
+
+function perGameStats(seasonTotals){
+  if (!seasonTotals) return null;
+  const gp = Number(seasonTotals.gp || seasonTotals.gms_active || 0);
+  if (!(gp > 0)) return null;
+  const out = {};
+  Object.keys(seasonTotals).forEach(k => {
+    const v = Number(seasonTotals[k]);
+    if (!Number.isFinite(v)) return;
+    if (k === 'gp' || k === 'gs' || k === 'gms_active') return;
+    if (/^rank|pos_rank|pts_std|sp$|plus_minus|fg_pct|ft_pct|tp_pct/i.test(k)) return;
+    out[k] = v / gp;
+  });
+  return out;
+}
+
+async function loadLast3SeasonAvg(scoring, currentSeason){
+  const y = Number(currentSeason) || new Date().getFullYear();
+  const seasons = [y - 1, y - 2, y - 3];
+  const byId = new Map();
+  await Promise.all(seasons.map(async season => {
+    try {
+      const res = await fetch('https://api.sleeper.app/v1/stats/nba/regular/' + season);
+      if (!res.ok) return;
+      const rows = await res.json();
+      Object.keys(rows || {}).forEach(pid => {
+        const per = perGameStats(rows[pid]);
+        const fp = scoreStatLine(per, scoring);
+        if (fp == null) return;
+        const id = String(pid);
+        const slot = byId.get(id) || { sum: 0, n: 0 };
+        slot.sum += fp;
+        slot.n += 1;
+        byId.set(id, slot);
+      });
+    } catch (e){ /* skip */ }
+  }));
+  const avgById = new Map();
+  byId.forEach((slot, id) => {
+    if (slot.n) avgById.set(id, slot.sum / slot.n);
+  });
+  return avgById;
+}
+
+function buildConsensusProjMaps(scoring){
+  const pack = window.NBA_PROJ_CONSENSUS || {};
+  const byId = new Map();
+  const byName = new Map();
+  const players = pack.players || {};
+  Object.keys(players).forEach(key => {
+    const row = players[key];
+    const fp = scoreStatLine(row.stats, scoring);
+    if (fp == null) return;
+    if (row.sleeperId) byId.set(String(row.sleeperId), fp);
+    byName.set(normalizeName(row.name), fp);
+    byName.set(key, fp);
+  });
+  return { byId, byName, count: byName.size };
+}
+
+async function loadSleeperProjMaps(scoring, season){
+  const byId = new Map();
+  const byName = new Map();
+  try {
+    const res = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
+    if (!res.ok) return { byId, byName, count: 0 };
+    const rows = await res.json();
+    (Array.isArray(rows) ? rows : []).forEach(row => {
+      const pl = row.player || {};
+      const pid = row.player_id || pl.player_id;
+      const name = (pl.full_name
+        || ((pl.first_name || '') + ' ' + (pl.last_name || '')).trim()).trim();
+      const fp = scoreStatLine(row.stats || {}, scoring);
+      if (fp == null || !(fp > 0)) return;
+      if (pid != null) byId.set(String(pid), fp);
+      if (name) byName.set(normalizeName(name), fp);
+    });
+  } catch (e){ /* optional */ }
+  return { byId, byName, count: byId.size };
+}
+
+/* Dynasty board score used to rank who should have been taken. */
+function boardScore(p){
+  return potentialValue(p);
+}
+
+function pickLetterFromBoard(rank, availableCount, efficiency){
+  if (rank <= 1 || efficiency >= 0.98) return 'A+';
+  if (rank <= 2 || efficiency >= 0.93) return 'A';
+  if (rank <= 3 || efficiency >= 0.88) return 'B+';
+  if (rank <= 5 || efficiency >= 0.80) return 'B';
+  if (rank <= 8 || efficiency >= 0.70) return 'C+';
+  if (efficiency >= 0.58) return 'C';
+  if (efficiency >= 0.45) return 'D';
+  return 'F';
+}
+
+function letterToPoints(g){
+  return ({'A+':97,'A':93,'B+':87,'B':83,'C+':77,'C':73,'D':65,'F':50})[g] || 70;
+}
+
+function pointsToLetter(pts){
+  if (pts >= 95) return 'A+';
+  if (pts >= 90) return 'A';
+  if (pts >= 85) return 'B+';
+  if (pts >= 80) return 'B';
+  if (pts >= 75) return 'C+';
+  if (pts >= 70) return 'C';
+  if (pts >= 60) return 'D';
+  return 'F';
+}
+
+function attachOvr(pick){
+  const hit = RATINGS_BY_NAME.get(normalizeName(pick.name));
+  if (hit && hit.ovr != null) pick.ovr = hit.ovr;
+  if (ROOKIE_NAMES.has(normalizeName(pick.name))) pick.source = 'rookie';
+  return pick;
+}
+
+function makeBoardPlayer(pid, playerDb, projMaps, histById, sleeperMaps){
+  const p = playerDb[pid] || {};
+  const name = playerName(p);
+  const metric = (projMaps.byId.get(String(pid))
+    ?? projMaps.byName.get(normalizeName(name))
+    ?? null);
+  const sleeperMetric = sleeperMaps
+    ? (sleeperMaps.byId.get(String(pid))
+      ?? sleeperMaps.byName.get(normalizeName(name))
+      ?? null)
+    : null;
+  const histMetric = histById && histById.get(String(pid)) != null
+    ? histById.get(String(pid)) : null;
+  return attachOvr({
+    id: String(pid),
+    playerId: String(pid),
+    name,
+    pos: (p.fantasy_positions && p.fantasy_positions[0]) || p.position || '\u2014',
+    age: p.age ?? null,
+    yearsExp: p.years_exp ?? null,
+    injuryStatus: p.injury_status || null,
+    metric,
+    sleeperMetric,
+    histMetric,
+    positions: p.fantasy_positions || [p.position].filter(Boolean)
+  });
+}
+
+async function load(){
+  const status = document.getElementById('status');
+  const tag = document.getElementById('progressTag');
+  try {
+    const [leagueRes, usersRes, rostersRes, playersRes] = await Promise.all([
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID),
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/users'),
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters'),
+      fetch('https://api.sleeper.app/v1/players/nba')
+    ]);
+    if (!leagueRes.ok || !usersRes.ok || !rostersRes.ok || !playersRes.ok){
+      throw new Error('Sleeper league request failed');
+    }
+    const league = await leagueRes.json();
+    const users = await usersRes.json();
+    const rosters = await rostersRes.json();
+    const playerDb = await playersRes.json();
+    const draftId = league.draft_id;
+    if (!draftId) throw new Error('No draft found for this league');
+
+    status.textContent = 'Loading draft picks and consensus projections\u2026';
+    const [draftRes, picksRes] = await Promise.all([
+      fetch('https://api.sleeper.app/v1/draft/' + draftId),
+      fetch('https://api.sleeper.app/v1/draft/' + draftId + '/picks')
+    ]);
+    if (!draftRes.ok || !picksRes.ok) throw new Error('Draft picks unavailable');
+    const draft = await draftRes.json();
+    const picks = await picksRes.json();
+    if (!Array.isArray(picks) || !picks.length){
+      throw new Error('Draft has no picks yet');
+    }
+
+    const scoring = league.scoring_settings || {};
+    const projMaps = buildConsensusProjMaps(scoring);
+    status.textContent = 'Loading Sleeper projections and last-3-season averages\u2026';
+    const [histById, sleeperMaps] = await Promise.all([
+      loadLast3SeasonAvg(scoring, league.season),
+      loadSleeperProjMaps(scoring, league.season || '2026')
+    ]);
+
+    const userById = {};
+    users.forEach(u => { userById[u.user_id] = u; });
+    const slots = (window.TeamNeedsModel
+      ? TeamNeedsModel.parseSlots(league.roster_positions || [])
+      : (league.roster_positions || []).filter(s => !['BN','IR','TAXI'].includes(s)));
+
+    const teams = {};
+    const currentRostered = new Set();
+    rosters.forEach(r => {
+      const u = userById[r.owner_id] || {};
+      const raw = (u.metadata && u.metadata.team_name) || u.display_name || ('Roster ' + r.roster_id);
+      const team = canonicalTeam(raw);
+      const ids = []
+        .concat(r.players || [])
+        .concat(r.reserve || [])
+        .concat(r.taxi || [])
+        .map(String);
+      ids.forEach(id => currentRostered.add(id));
+      teams[r.roster_id] = {
+        rosterId: r.roster_id,
+        team,
+        manager: u.display_name || '',
+        playerIds: Array.from(new Set(ids)),
+        picks: []
+      };
+    });
+
+    const orderedPicks = picks.slice().sort((a, b) => a.pick_no - b.pick_no);
+    const draftedIds = new Set(orderedPicks.map(pk => String(pk.player_id)));
+    /* Approx who was available pre-draft: everyone drafted + players not already rostered. */
+    const preDraftRostered = new Set();
+    Object.values(teams).forEach(t => {
+      t.playerIds.forEach(id => {
+        if (!draftedIds.has(id)) preDraftRostered.add(id);
+      });
+    });
+
+    function boardPlayer(pid){
+      return makeBoardPlayer(pid, playerDb, projMaps, histById, sleeperMaps);
+    }
+
+    const universeMap = new Map();
+    function addToUniverse(pid){
+      const id = String(pid);
+      if (!id || universeMap.has(id) || preDraftRostered.has(id)) return;
+      const pl = playerDb[id];
+      if (!pl) return;
+      if (pl.active === false && !draftedIds.has(id)) return;
+      const bp = boardPlayer(id);
+      bp.ceiling = ceilingClass(bp);
+      bp.board = boardScore(bp);
+      /* Keep the pool to players with a real board signal. */
+      if (!draftedIds.has(id) && bp.board < 8 && (bp.metric == null || bp.metric < 12)) return;
+      universeMap.set(id, bp);
+    }
+    draftedIds.forEach(addToUniverse);
+    Object.keys(playerDb).forEach(pid => {
+      if (universeMap.size > 220) return;
+      addToUniverse(pid);
+    });
+    /* Prefer higher board scores if we over-collected. */
+    let universe = Array.from(universeMap.values()).sort((a, b) => b.board - a.board);
+    if (universe.length > 160){
+      const keep = new Set(draftedIds);
+      universe = universe.filter((p, i) => keep.has(p.id) || i < 120);
+    }
+
+    orderedPicks.forEach(pk => {
+      const t = teams[pk.roster_id];
+      if (!t) return;
+      const pid = String(pk.player_id);
+      const pick = universeMap.get(pid) || boardPlayer(pid);
+      pick.ceiling = ceilingClass(pick);
+      pick.board = boardScore(pick);
+      t.picks.push({
+        pick: pk.pick_no,
+        round: pk.round,
+        playerId: pid,
+        name: pick.name,
+        pos: pick.pos,
+        age: pick.age,
+        metric: pick.metric,
+        ceiling: pick.ceiling,
+        board: pick.board,
+        ovr: pick.ovr,
+        yearsExp: pick.yearsExp,
+        injuryStatus: pick.injuryStatus,
+        source: pick.source
+      });
+    });
+
+    /* Grade every pick vs who was still available right then. */
+    const taken = new Set();
+    const pickEvals = [];
+    orderedPicks.forEach(pk => {
+      const pid = String(pk.player_id);
+      const available = universe.filter(p => !taken.has(p.id)).sort((a, b) => b.board - a.board);
+      const selected = available.find(p => p.id === pid) || universeMap.get(pid);
+      const best = available[0];
+      const rank = Math.max(1, available.findIndex(p => p.id === pid) + 1 || available.length);
+      const selectedScore = selected ? selected.board : 0;
+      const bestScore = best ? best.board : 1;
+      const efficiency = bestScore > 0 ? selectedScore / bestScore : 0;
+      const grade = pickLetterFromBoard(rank, available.length, efficiency);
+      const left = available.filter(p => p.id !== pid).slice(0, 3).map(p => p.name);
+      const team = teams[pk.roster_id];
+      const evalRow = {
+        pick: pk.pick_no,
+        round: pk.round,
+        team: team ? team.team : ('Roster ' + pk.roster_id),
+        rosterId: pk.roster_id,
+        playerId: pid,
+        name: selected ? selected.name : pid,
+        pos: selected ? selected.pos : '\u2014',
+        ceiling: selected ? selected.ceiling : 'role',
+        metric: selected ? selected.metric : null,
+        board: selectedScore,
+        rank,
+        available: available.length,
+        efficiency,
+        grade,
+        bestAvailable: best && best.id !== pid ? best.name : null,
+        bestBoard: best ? best.board : null,
+        leftOnBoard: left,
+        points: letterToPoints(grade)
+      };
+      pickEvals.push(evalRow);
+      if (team){
+        const tp = team.picks.find(p => p.pick === pk.pick_no);
+        if (tp){
+          tp.rank = rank;
+          tp.available = available.length;
+          tp.efficiency = efficiency;
+          tp.grade = grade;
+          tp.bestAvailable = evalRow.bestAvailable;
+          tp.leftOnBoard = left;
+          tp.points = evalRow.points;
+        }
+      }
+      taken.add(pid);
+    });
+
+    function toRecords(ids){
+      return ids.map(pid => boardPlayer(pid));
+    }
+
+    function snapshot(ids){
+      const players = toRecords(ids);
+      let lineupTotal = 0, fills = [];
+      if (window.TeamNeedsModel && slots.length){
+        const opt = TeamNeedsModel.optimize(players, slots);
+        lineupTotal = opt.total;
+        fills = (opt.fills || []).filter(Boolean).map(f => ({
+          slot: f.slot, name: f.player.name, value: f.value
+        }));
+      } else {
+        lineupTotal = players.map(p => Number(p.metric) || 0).sort((a, b) => b - a)
+          .slice(0, Math.min(8, players.length)).reduce((s, v) => s + v, 0);
+      }
+      const metrics = players.map(p => Number(p.metric)).filter(Number.isFinite).sort((a, b) => b - a).slice(0, MAX_SCORE_TOP_N);
+      return {
+        lineupTotal,
+        fills,
+        maxScore: metrics.reduce((s, v) => s + v, 0),
+        maxCounted: metrics.length
+      };
+    }
+
+    const rows = Object.values(teams).map(t => {
+      const draftedIdsTeam = new Set(t.picks.map(p => p.playerId));
+      const afterIds = t.playerIds.slice();
+      const beforeIds = afterIds.filter(id => !draftedIdsTeam.has(id));
+      t.picks.forEach(p => {
+        if (!afterIds.includes(p.playerId)) afterIds.push(p.playerId);
+      });
+      const before = snapshot(beforeIds);
+      const after = snapshot(afterIds);
+      const lineupDelta = after.lineupTotal - before.lineupTotal;
+      const maxDelta = after.maxScore - before.maxScore;
+
+      /* Early picks weigh more — missing on 1.01 hurts more than missing on 5.08. */
+      let weightSum = 0, pointSum = 0;
+      t.picks.forEach(p => {
+        const w = Math.max(0.55, 1.35 - (Number(p.pick) - 1) * 0.02);
+        weightSum += w;
+        pointSum += (p.points != null ? p.points : 70) * w;
+      });
+      const boardPts = weightSum ? pointSum / weightSum : 70;
+      const hits = t.picks.filter(p => p.rank <= 2).length;
+      const steals = t.picks.filter(p => p.rank === 1).length;
+      const reaches = t.picks.filter(p => p.rank >= 6).length;
+      const avgRank = t.picks.length
+        ? t.picks.reduce((s, p) => s + (p.rank || 9), 0) / t.picks.length
+        : 9;
+
+      return {
+        team: t.team,
+        manager: t.manager,
+        picks: t.picks,
+        before, after, lineupDelta, maxDelta,
+        boardPts, hits, steals, reaches, avgRank,
+        /* Board process is primary; tiny production footnote only for ties. */
+        score: boardPts * 10 + hits * 1.5 + steals * 2 - reaches * 1.25 + lineupDelta * 0.04
+      };
+    }).sort((a, b) => b.score - a.score || b.boardPts - a.boardPts || a.avgRank - b.avgRank);
+
+    const n = rows.length;
+    rows.forEach((row, i) => {
+      row.rank = i + 1;
+      row.grade = pointsToLetter(row.boardPts);
+      const names = row.picks.map(p => p.name).slice(0, 3).join(', ');
+      const more = row.picks.length > 3 ? ' +' + (row.picks.length - 3) + ' more' : '';
+      const misses = row.picks
+        .filter(p => p.rank >= 4 && p.bestAvailable)
+        .slice(0, 2)
+        .map(p => '#' + p.pick + ' took ' + p.name + ' over ' + p.bestAvailable);
+      const nails = row.picks
+        .filter(p => p.rank <= 2)
+        .slice(0, 2)
+        .map(p => '#' + p.pick + ' ' + p.name + ' (#' + p.rank + ' avail)');
+
+      let why = 'Averaged the #' + row.avgRank.toFixed(1) + ' remaining board player across '
+        + row.picks.length + ' picks';
+      if (row.steals) why += ' · ' + row.steals + ' best-available hit' + (row.steals > 1 ? 's' : '');
+      if (row.reaches) why += ' · ' + row.reaches + ' reach' + (row.reaches > 1 ? 'es' : '');
+      if (nails.length) why += '. Nailed: ' + nails.join('; ');
+      if (misses.length) why += '. Left on the board: ' + misses.join('; ');
+      if (names) why += '. Haul: ' + names + more;
+      why += '.';
+      row.why = why;
+    });
+
+    const maxRows = rows.slice().sort((a, b) =>
+      b.after.maxScore - a.after.maxScore || b.maxDelta - a.maxDelta || a.team.localeCompare(b.team)
+    );
+    maxRows.forEach((row, i) => {
+      const pct = n <= 1 ? 1 : (n - 1 - i) / (n - 1);
+      row.maxRank = i + 1;
+      row.maxGrade = letterGrade(pct);
+    });
+
+    const mine = rows.find(r => r.team === MY_TEAM);
+    const mineMax = maxRows.find(r => r.team === MY_TEAM);
+    tag.textContent = draft.status === 'complete'
+      ? ('Complete \u00b7 ' + picks.length + ' picks')
+      : (draft.status + ' \u00b7 ' + picks.length + ' picks');
+    status.classList.remove('error');
+    status.textContent = 'Grades are mostly process: each pick vs the best players still available on the board'
+      + ' (vets: cons+L3 · rookies: Sleeper+ESPN comps)'
+      + (mine ? ' · ' + MY_TEAM + ' ' + mine.grade + ' (#' + mine.rank + ', avg remaining rank #' + mine.avgRank.toFixed(1) + ')' : '') + '.';
+
+    const report = document.getElementById('report');
+    report.hidden = false;
+    report.innerHTML = '<div class="report-head"><h1>S26\u201327 Draft Report Card</h1><p>'
+      + 'Available-at-the-time board grades'
+      + (mine ? ' \u00b7 you ' + mine.grade + ' (#' + mine.rank + ')' : '')
+      + '</p></div><div class="grade-grid">'
+      + rows.map(r => {
+        const pickRows = r.picks.map(p =>
+          '<li><span><span class="pk">#' + p.pick + '</span> ' + escapeHtml(p.name)
+            + ' <span class="pk">(' + escapeHtml(p.pos) + ')</span>'
+            + (p.ceiling && p.ceiling !== 'role'
+              ? '<span class="ceil">' + escapeHtml(ceilingLabel(p.ceiling)) + '</span>'
+              : '')
+            + '</span>'
+            + '<span class="val">' + escapeHtml(p.grade || '\u2014')
+            + (p.rank ? ' \u00b7 #' + p.rank + '/' + p.available : '')
+            + '</span></li>'
+            + (p.bestAvailable && p.rank > 1
+              ? '<li class="miss"><span class="pk"></span><span>Best left: ' + escapeHtml(p.bestAvailable)
+                + (p.leftOnBoard && p.leftOnBoard[1] ? ' \u00b7 also ' + escapeHtml(p.leftOnBoard.slice(0, 2).filter(n => n !== p.bestAvailable).join(', ')) : '')
+                + '</span><span class="val"></span></li>'
+              : '')
+        ).join('');
+        return '<article class="grade-card' + (r.team === MY_TEAM ? ' mine' : '')
+          + '" style="--team-color:' + (TEAM_COLORS[r.team] || 'var(--gold)') + '">'
+          + '<div class="g-top"><h3 class="g-team">' + escapeHtml(r.team)
+          + (r.team === MY_TEAM ? ' (you)' : '') + '</h3>'
+          + '<div class="g-letter">' + r.grade + '</div></div>'
+          + '<p class="g-meta">#' + r.rank + ' of ' + rows.length
+          + ' \u00b7 avg board rank <span class="up">#' + r.avgRank.toFixed(1) + '</span> remaining'
+          + '<br>' + r.steals + ' BPA hit' + (r.steals === 1 ? '' : 's')
+          + ' \u00b7 ' + r.hits + ' top-2 \u00b7 ' + r.reaches + ' reach' + (r.reaches === 1 ? '' : 'es')
+          + '</p>'
+          + '<div class="g-split">'
+          + '<span>Process <span class="hi">' + r.boardPts.toFixed(0) + '</span></span>'
+          + '<span>Lineup <span class="hi">' + (r.lineupDelta >= 0 ? '+' : '') + r.lineupDelta.toFixed(1) + '</span></span>'
+          + '<span>Max <span class="hi">' + (r.maxDelta >= 0 ? '+' : '') + r.maxDelta.toFixed(1) + '</span></span>'
+          + '</div>'
+          + '<p class="g-why">' + escapeHtml(r.why) + '</p>'
+          + (pickRows ? '<ul class="g-picks">' + pickRows + '</ul>' : '')
+          + '</article>';
+      }).join('')
+      + '</div>'
+      + '<div class="max-standings"><h2>Updated Max Points Standings</h2>'
+      + '<p style="font-family:IBM Plex Mono,monospace;font-size:10px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.04em;margin:0 0 10px">Secondary \u2014 production after the draft, not the main grade</p>'
+      + '<table><thead><tr><th>#</th><th>Team</th><th>Grade</th><th>Max Pts</th><th>Pre-draft</th><th>Change</th><th>Counted</th></tr></thead><tbody>'
+      + maxRows.map(r => {
+        const md = r.maxDelta;
+        const dCls = md > 0.25 ? 'up' : (md < -0.25 ? 'down' : 'flat');
+        return '<tr class="' + (r.team === MY_TEAM ? 'mine' : '') + '">'
+          + '<td class="rank">' + r.maxRank + '</td>'
+          + '<td class="team" style="border-left:3px solid ' + (TEAM_COLORS[r.team] || 'var(--gold)') + '">'
+          + escapeHtml(r.team)
+          + (r.team === MY_TEAM ? '<span class="you">you</span>' : '') + '</td>'
+          + '<td class="grade">' + r.maxGrade + '</td>'
+          + '<td class="pts">' + r.after.maxScore.toFixed(1) + '</td>'
+          + '<td class="delta flat">' + r.before.maxScore.toFixed(1) + '</td>'
+          + '<td class="delta ' + dCls + '">' + (md >= 0 ? '+' : '') + md.toFixed(1) + '</td>'
+          + '<td class="delta flat">' + r.after.maxCounted + ' / ' + MAX_SCORE_TOP_N + '</td>'
+          + '</tr>';
+      }).join('')
+      + '</tbody></table></div>'
+      + '<div class="board-block"><h2>Pick-by-pick Board Grades</h2><div class="pick-rows">'
+      + pickEvals.map(pk => {
+        return '<div class="pick-row" style="--team-color:' + (TEAM_COLORS[pk.team] || 'var(--gold)') + '">'
+          + '<div class="num">#' + pk.pick + '</div>'
+          + '<div class="team">' + escapeHtml(pk.team)
+          + '<div class="meta">Grade ' + escapeHtml(pk.grade) + ' \u00b7 #' + pk.rank + ' of ' + pk.available + ' left</div></div>'
+          + '<div class="player-wrap"><div class="player">' + escapeHtml(pk.name) + '</div>'
+          + '<div class="meta">R' + pk.round + ' \u00b7 ' + escapeHtml(pk.pos)
+          + (pk.ceiling && pk.ceiling !== 'role' ? ' \u00b7 ' + escapeHtml(ceilingLabel(pk.ceiling)) : '')
+          + (pk.bestAvailable ? ' \u00b7 best left: ' + escapeHtml(pk.bestAvailable) : ' \u00b7 BPA')
+          + '</div></div></div>';
+      }).join('')
+      + '</div></div>';
+  } catch (e){
+    status.classList.add('error');
+    status.textContent = 'Could not grade the draft: ' + (e.message || e);
+    tag.textContent = 'Error';
+  }
+}
+
+load();
+</script>
+</body>
+</html>

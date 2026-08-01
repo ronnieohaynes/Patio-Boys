@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patio Boys — Team Intel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0F131B; --surface:#171D28; --surface-2:#1F2735;
+    --ink:#ECEEF3; --ink-dim:#8B93A6; --hairline:#2E3645;
+    --gold:#E8C34A; --coral:#D8553A;
+    --team:#C9963A;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;line-height:1.45}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 20px 48px}
+
+  .topbar{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:16px 0;border-bottom:1px solid var(--hairline);
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.08em;
+  }
+  .topbar .brand{display:flex;align-items:baseline;gap:10px}
+  .topbar .brand .gm{font-family:'Anton',sans-serif;font-size:18px;color:var(--ink);letter-spacing:.04em}
+  .topbar .brand .gm em{color:var(--gold);font-style:normal}
+  body.embed .topbar{padding:10px 0}
+
+  /* team selector */
+  .team-nav{
+    display:flex;flex-wrap:wrap;gap:8px;padding:14px 0;
+    border-bottom:1px solid var(--hairline);
+  }
+  .team-chip{
+    display:flex;align-items:center;gap:8px;
+    background:var(--surface);border:1px solid var(--hairline);border-radius:6px;
+    color:var(--ink-dim);font-family:'IBM Plex Mono',monospace;font-size:11px;
+    font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+    padding:8px 12px;cursor:pointer;
+  }
+  .team-chip .dot{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+  .team-chip:hover{color:var(--ink);border-color:var(--ink-dim)}
+  .team-chip.active{
+    color:var(--ink);border-color:var(--chip-color,var(--gold));
+    background:color-mix(in srgb, var(--chip-color,var(--gold)) 14%, var(--surface));
+  }
+  .team-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+  .loadnote{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--gold);
+    margin:16px 0 0;
+  }
+  .loadnote.error{color:var(--coral)}
+  .loadnote[hidden]{display:none}
+
+  /* hero band */
+  .hero{
+    display:flex;align-items:center;gap:22px;flex-wrap:wrap;
+    margin-top:18px;padding:20px 22px;border-radius:10px;
+    border:1px solid var(--hairline);
+    background:
+      linear-gradient(100deg, color-mix(in srgb, var(--team) 22%, var(--surface)) 0%, var(--surface) 46%, var(--surface) 100%);
+    position:relative;overflow:hidden;
+  }
+  .hero::before{
+    content:'';position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--team);
+  }
+  .hero-logo{
+    width:76px;height:76px;border-radius:50%;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Anton',sans-serif;font-size:26px;color:#fff;
+    text-shadow:0 2px 4px rgba(0,0,0,.4);
+    background:radial-gradient(circle at 32% 28%, color-mix(in srgb, var(--team) 72%, white) 0%, var(--team) 58%, color-mix(in srgb, var(--team) 65%, black) 100%);
+    box-shadow:inset -4px -6px 12px rgba(0,0,0,.3), 0 4px 10px rgba(0,0,0,.35);
+  }
+  .hero-id{min-width:180px}
+  .hero-id .eyebrow{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--ink-dim);margin:0 0 4px;
+  }
+  .hero-id h1{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:clamp(24px,4vw,38px);
+    margin:0;line-height:.95;
+  }
+  .hero-awards,.chip-awards{
+    display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;
+  }
+  .chip-awards{margin-top:0;margin-left:4px}
+  .award-badge{
+    display:inline-block;padding:2px 6px;border-radius:3px;
+    background:color-mix(in srgb, var(--gold) 18%, var(--surface-2));
+    border:1px solid color-mix(in srgb, var(--gold) 45%, var(--hairline));
+    color:var(--gold);font-family:'IBM Plex Mono',monospace;font-size:9px;
+    font-weight:700;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;
+  }
+  .award-badge.medal-gold{
+    color:#E8C547;
+    border-color:color-mix(in srgb,#E8C547 55%,var(--hairline));
+    background:color-mix(in srgb,#E8C547 18%,var(--surface-2));
+  }
+  .award-badge.medal-silver{
+    color:#C5CDD8;
+    border-color:color-mix(in srgb,#C5CDD8 55%,var(--hairline));
+    background:color-mix(in srgb,#C5CDD8 16%,var(--surface-2));
+  }
+  .award-badge.medal-bronze{
+    color:#D4926A;
+    border-color:color-mix(in srgb,#D4926A 55%,var(--hairline));
+    background:color-mix(in srgb,#D4926A 16%,var(--surface-2));
+  }
+  .team-chip .award-badge{font-size:8px;padding:1px 4px}
+  .hero-id .manager{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);margin:8px 0 0;
+  }
+  .hero-id .manager strong{color:var(--ink);font-weight:600}
+  .hero-stats{
+    display:flex;gap:0;margin-left:auto;flex-wrap:wrap;
+    background:rgba(0,0,0,.28);border:1px solid var(--hairline);border-radius:8px;
+  }
+  .hstat{
+    padding:14px 26px;text-align:center;
+    border-left:1px solid var(--hairline);min-width:120px;
+  }
+  .hstat:first-child{border-left:none}
+  .hstat .label{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--ink);margin:0 0 2px;
+    padding-bottom:5px;border-bottom:1px solid var(--hairline);
+  }
+  .hstat .value{
+    font-family:'Anton',sans-serif;font-size:26px;color:var(--gold);
+    margin:7px 0 0;letter-spacing:.02em;
+  }
+
+  /* body grid */
+  .intel-grid{
+    display:grid;grid-template-columns:minmax(280px,5fr) 7fr;gap:16px;margin-top:16px;
+  }
+  @media(max-width:760px){
+    .intel-grid{grid-template-columns:1fr}
+    .hero-stats{margin-left:0}
+  }
+  .panel{
+    background:var(--surface);border:1px solid var(--hairline);border-radius:10px;
+    overflow:hidden;
+  }
+  .panel-head{
+    display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:10px 14px;border-bottom:1px solid var(--hairline);
+    background:var(--surface-2);
+  }
+  .panel-head h2{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:15px;
+    margin:0;letter-spacing:.03em;
+  }
+  .panel-head .tag{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--gold);white-space:nowrap;
+  }
+  .panel-body{padding:12px 14px}
+  .panel .pending{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);margin:2px 0;
+  }
+
+  /* lineup table */
+  table.lineup{width:100%;border-collapse:collapse;font-size:13px}
+  table.lineup th{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--team);font-weight:600;
+    text-align:left;padding:4px 6px;border-bottom:1px solid var(--hairline);
+  }
+  table.lineup td{padding:6px;border-bottom:1px solid color-mix(in srgb, var(--hairline) 55%, transparent)}
+  table.lineup tr:last-child td{border-bottom:none}
+  table.lineup td.pos{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);width:44px}
+  table.lineup td.name{font-weight:500}
+  table.lineup td.num{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--gold);text-align:right;width:56px}
+  table.lineup td.ovr{font-family:'Anton',sans-serif;font-size:15px;color:#7DD68C;text-align:right;width:42px}
+  table.lineup td.age{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);text-align:right;width:44px}
+  .lineup-foot{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    margin:10px 0 0;letter-spacing:.03em;
+  }
+  .bench-rating{
+    display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+    margin:0 0 9px;padding:8px 10px;border:1px solid var(--hairline);
+    background:color-mix(in srgb, var(--team) 8%, var(--surface-2));border-radius:6px;
+  }
+  .bench-rating strong{font-family:'Anton',sans-serif;font-size:22px;color:var(--gold)}
+  .bench-rating span{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    text-align:right;line-height:1.5;text-transform:uppercase;letter-spacing:.05em;
+  }
+
+  /* status observations */
+  ul.obs{list-style:none;margin:0;padding:0}
+  ul.obs li{
+    position:relative;padding:7px 0 7px 20px;font-size:13.5px;line-height:1.5;
+    color:#C9CDD8;border-bottom:1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+  }
+  ul.obs li:last-child{border-bottom:none}
+  ul.obs li::before{
+    content:'';position:absolute;left:2px;top:14px;width:7px;height:7px;
+    background:var(--team);
+  }
+  ul.obs strong{color:var(--ink);font-weight:600}
+  ul.obs .hl{color:var(--gold);font-weight:600}
+
+  /* team needs */
+  ul.needs{list-style:none;margin:0;padding:0}
+  ul.needs li{
+    padding:8px 0;font-size:13px;line-height:1.5;color:#C9CDD8;
+    border-bottom:1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+  }
+  ul.needs li:last-child{border-bottom:none}
+  ul.needs .need-label{color:var(--ink);font-weight:600}
+  ul.needs .need-tag{
+    display:inline-block;margin-right:7px;padding:1px 6px;border-radius:3px;
+    font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;
+    letter-spacing:.07em;text-transform:uppercase;color:#0F131B;
+    background:var(--gold);vertical-align:1px;
+  }
+  ul.needs .need-tag.critical{background:var(--coral);color:#fff}
+  ul.needs .num{color:var(--gold);font-weight:600}
+
+  /* trade intel */
+  .trade-row{
+    padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+    font-size:12.5px;line-height:1.5;color:#C9CDD8;
+  }
+  .trade-row:last-child{border-bottom:none}
+  .trade-row .meta{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--ink-dim);display:block;margin-bottom:2px;
+  }
+  .trade-row .got{color:#7DD68C}
+  .trade-row .sent{color:var(--coral)}
+  .trade-row strong{color:var(--ink);font-weight:600}
+
+  body.embed .wrap{max-width:none;padding:0 12px 24px}
+  body.embed .hero{margin-top:12px;padding:14px 16px}
+  body.embed .hstat{padding:10px 18px;min-width:104px}
+  body.embed .hero-logo{width:60px;height:60px;font-size:21px}
+</style>
+</head>
+<body>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
+
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><span class="gm">Team <em>Intel</em></span><span>Patio Boys</span></div>
+    <span>Live from Sleeper</span>
+  </div>
+
+  <nav class="team-nav" id="teamNav" aria-label="Select a franchise"></nav>
+  <p class="loadnote" id="loadNote">Loading league data from Sleeper&hellip;</p>
+
+  <div id="teamView" hidden>
+    <div class="hero" id="hero">
+      <div class="hero-logo" id="heroLogo"></div>
+      <div class="hero-id">
+        <p class="eyebrow">Patio Boys Franchise</p>
+        <h1 id="heroName"></h1>
+        <div class="hero-awards" id="heroAwards" hidden></div>
+        <p class="manager">GM: <strong id="heroManager"></strong></p>
+      </div>
+      <div class="hero-stats">
+        <div class="hstat"><p class="label">Record</p><p class="value" id="statRecord">&mdash;</p></div>
+        <div class="hstat"><p class="label">Max Pts Grade</p><p class="value" id="statGrade">&mdash;</p></div>
+        <div class="hstat"><p class="label">Roster Size</p><p class="value" id="statRoster">&mdash;</p></div>
+      </div>
+    </div>
+
+    <div class="intel-grid">
+      <div>
+        <div class="panel">
+          <div class="panel-head"><h2>Lineup</h2><span class="tag" id="lineupTag">Top weekly ceilings</span></div>
+          <div class="panel-body" id="lineupBody"><p class="pending">Pulling weekly player stats&hellip;</p></div>
+        </div>
+        <div class="panel" style="margin-top:16px">
+          <div class="panel-head"><h2>Top 5 Bench</h2><span class="tag" id="benchTag"></span></div>
+          <div class="panel-body" id="benchBody"><p class="pending">Rating bench depth&hellip;</p></div>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <div class="panel-head"><h2>Team Status</h2><span class="tag" id="statusTag"></span></div>
+          <div class="panel-body"><ul class="obs" id="obsList"></ul></div>
+        </div>
+        <div class="panel" style="margin-top:16px">
+          <div class="panel-head"><h2>Team Needs</h2><span class="tag" id="needsTag"></span></div>
+          <div class="panel-body" id="needsBody"><p class="pending">Sizing up the roster&hellip;</p></div>
+        </div>
+        <div class="panel" style="margin-top:16px">
+          <div class="panel-head"><h2>Trade Intel</h2><span class="tag" id="tradeTag">Last two seasons</span></div>
+          <div class="panel-body" id="tradeBody"><p class="pending">Loading trade history&hellip;</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="2k-ratings-snapshot.js"></script>
+<script src="nba-proj-consensus.js"></script>
+<script src="team-needs.js"></script>
+<script src="league-awards.js"></script>
+<script>
+const LEAGUE_ID = '1350649177381552128';
+const TWO_K = window.TWO_K_SNAPSHOT || {ratings:[]};
+function normalizePlayerName(name){
+  return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+}
+const TWO_K_BY_NAME = new Map(TWO_K.ratings.map(p => [normalizePlayerName(p.name), p]));
+
+/* Known franchise identities, mirroring lottery.html's teamColors/ballAbbrev. */
+const TEAM_COLORS = {
+  'Funeral Home':'#C9963A','BoobieDominguez':'#1D9E75','2011-12 Champs':'#D8553A',
+  'Freakonomics':'#7F77DD','Papa Book':'#D4537E','Bam Add the Mayo':'#3A8FC9',
+  'Hamas':'#9B59B6','Belt':'#5DBB63'
+};
+const TEAM_ABBREV = {
+  'Funeral Home':'FH','BoobieDominguez':'BD','2011-12 Champs':'CH',
+  'Freakonomics':'FE','Papa Book':'PB','Bam Add the Mayo':'BM',
+  'Hamas':'HA','Belt':'BE'
+};
+const FALLBACK_COLORS = ['#C9963A','#1D9E75','#D8553A','#7F77DD','#D4537E','#3A8FC9','#9B59B6','#5DBB63'];
+
+/* Sleeper team names that were renamed since the lottery names were locked in.
+   Keyed by normalized Sleeper name -> lottery franchise. */
+const TEAM_ALIASES = {
+  '20112012champs': '2011-12 Champs',
+  'thehitmanharts': 'BoobieDominguez',
+  'badgersretirementhome': 'Funeral Home'
+};
+
+function normalizeTeamName(name){
+  return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+function canonicalKey(name){
+  const norm = normalizeTeamName(name);
+  if (TEAM_ALIASES[norm]) return TEAM_ALIASES[norm];
+  const match = Object.keys(TEAM_COLORS).find(k => normalizeTeamName(k) === norm);
+  return match || name;
+}
+/* Resolve a franchise to a stable key: try the Sleeper team name against the
+   known lottery names, then the manager's display name (some teams are renamed
+   on Sleeper), else fall back to the raw team name. */
+function franchiseKey(teamName, managerName){
+  const byTeam = canonicalKey(teamName);
+  if (TEAM_COLORS[byTeam]) return byTeam;
+  const byManager = canonicalKey(managerName || '');
+  if (TEAM_COLORS[byManager]) return byManager;
+  return teamName;
+}
+function escapeHtml(str){
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+const state = {
+  league: null,
+  teams: [],            // sorted by standings
+  teamsByKey: {},
+  selected: null,
+  playerDb: null,
+  ceilings: null,       // pid -> per-game ceiling (mean + 1 stdev of weekly value)
+  statsSeason: null,
+  statsWeeksFound: 0,
+  maxPtsReady: false,
+  ceilingSettled: false,
+  ceilingError: null,
+  projById: null,       // player_id -> projected FP/G under league scoring
+  projSettled: false,
+  projError: null,
+  tradesByKey: null,    // key -> [{date, season, got[], sent[], other}]
+  historyByOwner: {},   // ownerId -> [{season, record, pf}]
+  awardsByKey: {},      // franchise key -> [{short, yearLabel, name, ...}]
+  awardsReady: false,
+  loadError: null
+};
+
+function setLoadNote(text, isError){
+  const el = document.getElementById('loadNote');
+  if (!text){ el.hidden = true; return; }
+  el.hidden = false;
+  el.textContent = text;
+  el.classList.toggle('error', !!isError);
+}
+
+/* ---------- core league data ---------- */
+
+function buildTeams(users, rosters){
+  const userById = {};
+  users.forEach(u => { userById[u.user_id] = u; });
+  const teams = rosters.map((r, i) => {
+    const u = userById[r.owner_id] || {};
+    const rawName = (u.metadata && u.metadata.team_name) ? u.metadata.team_name : (u.display_name || 'Unknown');
+    const key = franchiseKey(rawName, u.display_name);
+    const s = r.settings || {};
+    const wins = s.wins || 0, losses = s.losses || 0, ties = s.ties || 0;
+    const rawPf = (s.fpts || 0) + (s.fpts_decimal || 0) / 100;
+    return {
+      key,
+      displayName: rawName,
+      color: TEAM_COLORS[key] || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+      abbrev: TEAM_ABBREV[key] || rawName.slice(0, 2).toUpperCase(),
+      manager: u.display_name || 'Unknown',
+      ownerId: r.owner_id || ('roster-' + r.roster_id),
+      rosterId: r.roster_id,
+      wins, losses, ties, rawPf,
+      record: wins + '-' + losses + (ties ? '-' + ties : ''),
+      players: r.players || [],
+      rosterSize: (r.players || []).length,
+      maxPts: null, maxPtsGrade: null, maxPtsRank: null
+    };
+  }).sort((a, b) => b.wins - a.wins || b.rawPf - a.rawPf);
+  teams.forEach((t, i) => { t.standingsRank = i + 1; });
+  return teams;
+}
+
+async function loadCore(){
+  const [leagueRes, usersRes, rostersRes] = await Promise.all([
+    fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID),
+    fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/users'),
+    fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters')
+  ]);
+  if (!leagueRes.ok || !usersRes.ok || !rostersRes.ok) throw new Error('Sleeper API request failed');
+  state.league = await leagueRes.json();
+  const users = await usersRes.json();
+  const rosters = await rostersRes.json();
+  state.teams = buildTeams(users, rosters);
+  state.teamsByKey = {};
+  state.teams.forEach(t => { state.teamsByKey[t.key] = t; });
+  if (!state.selected || !state.teamsByKey[state.selected]) state.selected = state.teams[0] && state.teams[0].key;
+}
+
+/* ---------- previous seasons (history + trade roster maps) ---------- */
+
+async function loadPreviousSeasons(){
+  const seasons = [];  // [{leagueId, season, rosterToTeam}]
+  let prevId = state.league.previous_league_id;
+  let guard = 0;
+  while (prevId && guard < 2){
+    guard++;
+    const leagueRes = await fetch('https://api.sleeper.app/v1/league/' + prevId);
+    if (!leagueRes.ok) break;
+    const league = await leagueRes.json();
+    const [usersRes, rostersRes] = await Promise.all([
+      fetch('https://api.sleeper.app/v1/league/' + prevId + '/users'),
+      fetch('https://api.sleeper.app/v1/league/' + prevId + '/rosters')
+    ]);
+    if (!usersRes.ok || !rostersRes.ok) break;
+    const users = await usersRes.json();
+    const rosters = await rostersRes.json();
+    const userById = {};
+    users.forEach(u => { userById[u.user_id] = u; });
+    const rosterToTeam = {};
+    rosters.forEach(r => {
+      const u = userById[r.owner_id] || {};
+      const name = (u.metadata && u.metadata.team_name) ? u.metadata.team_name : (u.display_name || 'Unknown');
+      rosterToTeam[r.roster_id] = { name, key: franchiseKey(name, u.display_name) };
+      const s = r.settings || {};
+      const wins = s.wins || 0, losses = s.losses || 0, ties = s.ties || 0;
+      const pf = ((s.fpts || 0) + (s.fpts_decimal || 0) / 100).toFixed(1);
+      const ownerId = r.owner_id || ('roster-' + r.roster_id);
+      if (!state.historyByOwner[ownerId]) state.historyByOwner[ownerId] = [];
+      state.historyByOwner[ownerId].push({
+        season: league.season,
+        record: wins + '-' + losses + (ties ? '-' + ties : ''),
+        pf
+      });
+    });
+    seasons.push({ leagueId: prevId, season: league.season, rosterToTeam });
+    prevId = league.previous_league_id;
+  }
+  return seasons;
+}
+
+/* ---------- Max Points ceilings (same method as league-status.html) ---------- */
+
+async function loadCeilings(){
+  const league = state.league;
+  const scoring = league.scoring_settings || {};
+  const scoringKeys = Object.keys(scoring);
+  let statsSeason = league.season;
+  if (league.previous_league_id){
+    const r = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id);
+    if (r.ok){ statsSeason = (await r.json()).season; }
+  }
+  state.statsSeason = statsSeason;
+  const weeks = Array.from({length: 25}, (_, i) => i + 1);
+  const weeklyResults = await Promise.all(weeks.map(w =>
+    fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null)
+  ));
+  state.statsWeeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
+  if (!state.statsWeeksFound) throw new Error('No weekly stats available for ' + statsSeason);
+
+  function fantasyValue(obj){
+    if (!obj) return null;
+    const gp = obj.gp || obj.games_played || null;
+    let total = 0, matched = 0;
+    scoringKeys.forEach(k => { if (obj[k] != null){ total += obj[k] * scoring[k]; matched++; } });
+    if (matched === 0) return null;
+    return gp && gp > 0 ? total / gp : total;
+  }
+  const weeklyByPlayer = {};
+  weeklyResults.forEach(wk => {
+    if (!wk) return;
+    Object.keys(wk).forEach(pid => {
+      const v = fantasyValue(wk[pid]);
+      if (v == null) return;
+      if (!weeklyByPlayer[pid]) weeklyByPlayer[pid] = [];
+      weeklyByPlayer[pid].push(v);
+    });
+  });
+  const ceilings = {};
+  Object.keys(weeklyByPlayer).forEach(pid => {
+    const arr = weeklyByPlayer[pid];
+    const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
+    const stdev = Math.sqrt(arr.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / arr.length);
+    ceilings[pid] = mean + stdev;
+  });
+  state.ceilings = ceilings;
+
+  // Max Points per team: sum of top 10 player ceilings, graded on a curve.
+  state.teams.forEach(t => {
+    const top10 = t.players.map(pid => ceilings[pid]).filter(v => v != null).sort((a, b) => b - a).slice(0, 10);
+    t.maxPts = top10.reduce((s, v) => s + v, 0);
+    t.maxPtsCounted = top10.length;
+  });
+  const byMax = state.teams.slice().sort((a, b) => b.maxPts - a.maxPts);
+  const n = byMax.length;
+  byMax.forEach((t, i) => {
+    const pct = n <= 1 ? 1 : (n - 1 - i) / (n - 1);
+    t.maxPtsGrade = pct >= 0.9 ? 'A+' : pct >= 0.75 ? 'A' : pct >= 0.6 ? 'B+' : pct >= 0.45 ? 'B' : pct >= 0.3 ? 'C+' : pct >= 0.15 ? 'C' : pct >= 0.05 ? 'D' : 'F';
+    t.maxPtsRank = i + 1;
+  });
+  state.maxPtsReady = true;
+}
+
+async function loadPlayerDb(){
+  const r = await fetch('https://api.sleeper.app/v1/players/nba');
+  if (!r.ok) throw new Error('Player database unavailable');
+  state.playerDb = await r.json();
+}
+
+/* Upcoming-season projections (per-game averages) scored with league settings. */
+async function loadProjections(){
+  const scoring = state.league.scoring_settings || {};
+  const season = state.league.season;
+  const r = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
+  if (!r.ok) throw new Error('Projections unavailable (HTTP ' + r.status + ')');
+  const rows = await r.json();
+  if (!Array.isArray(rows) || !rows.length) throw new Error('No ' + season + ' projections published yet');
+  const byId = new Map();
+  rows.forEach(row => {
+    const stats = row.stats || {};
+    let total = 0, matched = 0;
+    Object.keys(scoring).forEach(k => {
+      if (stats[k] != null){ total += stats[k] * scoring[k]; matched++; }
+    });
+    if (matched && row.player_id) byId.set(String(row.player_id), total);
+  });
+  if (!byId.size) throw new Error('No usable projection stats for league scoring');
+  state.projById = byId;
+}
+
+function playerName(pid){
+  const p = (state.playerDb || {})[pid];
+  if (!p) return 'Player ' + pid;
+  if (p.first_name || p.last_name) return ((p.first_name || '') + ' ' + (p.last_name || '')).trim();
+  return p.full_name || ('Player ' + pid);
+}
+function playerPos(pid){
+  const p = (state.playerDb || {})[pid];
+  if (!p) return '—';
+  return p.position || (p.fantasy_positions || [])[0] || '—';
+}
+function playerAge(pid){
+  const p = (state.playerDb || {})[pid];
+  return (p && p.age) ? p.age : '—';
+}
+function player2KOvr(pid){
+  const hit = TWO_K_BY_NAME.get(normalizePlayerName(playerName(pid)));
+  return hit ? hit.ovr : null;
+}
+
+/* ---------- trades ---------- */
+
+async function loadTrades(prevSeasons){
+  // Current-season roster map
+  const currentMap = {};
+  state.teams.forEach(t => { currentMap[t.rosterId] = { name: t.displayName, key: t.key }; });
+  const seasons = [{ leagueId: LEAGUE_ID, season: state.league.season, rosterToTeam: currentMap }]
+    .concat(prevSeasons);
+
+  const weeks = Array.from({length: 25}, (_, i) => i + 1);
+  const tradesByKey = {};
+  const seen = new Set();
+
+  for (const s of seasons){
+    const weekData = await Promise.all(weeks.map(w =>
+      fetch('https://api.sleeper.app/v1/league/' + s.leagueId + '/transactions/' + w)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null)
+    ));
+    weekData.forEach(txns => {
+      if (!txns) return;
+      txns.forEach(tx => {
+        if (tx.type !== 'trade' || tx.status !== 'complete') return;
+        if (seen.has(tx.transaction_id)) return;
+        seen.add(tx.transaction_id);
+        const rosters = tx.roster_ids || [];
+        if (rosters.length < 2) return;
+        rosters.forEach(rid => {
+          const entry = s.rosterToTeam[rid];
+          if (!entry) return;
+          const key = entry.key;
+          const otherRid = rosters.find(r2 => String(r2) !== String(rid));
+          const other = (s.rosterToTeam[otherRid] || {}).name || 'Unknown';
+          const got = [], sent = [];
+          Object.entries(tx.adds || {}).forEach(([pid, ownerRid]) => {
+            if (String(ownerRid) === String(rid)) got.push({type:'player', pid});
+            else sent.push({type:'player', pid});
+          });
+          (tx.draft_picks || []).forEach(pk => {
+            const label = "R" + pk.round + " '" + String(pk.season).slice(-2) + ' pick';
+            if (String(pk.owner_id) === String(rid)) got.push({type:'pick', label});
+            else sent.push({type:'pick', label});
+          });
+          if (!got.length && !sent.length) return;
+          if (!tradesByKey[key]) tradesByKey[key] = [];
+          tradesByKey[key].push({
+            ts: tx.status_updated,
+            date: new Date(tx.status_updated).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}),
+            season: s.season, other, got, sent
+          });
+        });
+      });
+    });
+  }
+  Object.values(tradesByKey).forEach(list => list.sort((a, b) => b.ts - a.ts));
+  state.tradesByKey = tradesByKey;
+}
+
+/* ---------- rendering ---------- */
+
+function awardBadgesHtml(key){
+  const list = state.awardsByKey[key] || [];
+  if (!list.length) return '';
+  return list.map(b => {
+    const medal = b.medal || (window.PatioBoysAwards && PatioBoysAwards.medalClass
+      ? PatioBoysAwards.medalClass(b.id) : '');
+    return '<span class="award-badge' + (medal ? ' ' + medal : '') + '" title="'
+      + escapeHtml(b.name) + ' ' + escapeHtml(b.yearLabel) + '">'
+      + escapeHtml(b.short) + ' ' + escapeHtml(b.yearLabel)
+    + '</span>';
+  }).join('');
+}
+
+function renderNav(){
+  const nav = document.getElementById('teamNav');
+  nav.innerHTML = '';
+  state.teams.forEach(t => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'team-chip' + (t.key === state.selected ? ' active' : '');
+    btn.style.setProperty('--chip-color', t.color);
+    btn.setAttribute('aria-pressed', String(t.key === state.selected));
+    const badges = awardBadgesHtml(t.key);
+    btn.innerHTML = '<span class="dot" style="background:' + t.color + '"></span>'
+      + escapeHtml(t.displayName)
+      + (badges ? '<span class="chip-awards">' + badges + '</span>' : '');
+    btn.addEventListener('click', () => {
+      state.selected = t.key;
+      renderNav();
+      renderTeam();
+    });
+    nav.appendChild(btn);
+  });
+}
+
+function renderLineup(t){
+  const body = document.getElementById('lineupBody');
+  const tag = document.getElementById('lineupTag');
+  if (!state.playerDb){
+    body.innerHTML = '<p class="pending">Loading player database&hellip;</p>';
+    return;
+  }
+  if (!state.ceilings){
+    // Player names are known, ceilings not yet — show unranked roster preview.
+    const rows = t.players.slice(0, 8).map(pid =>
+      '<tr><td class="pos">' + escapeHtml(playerPos(pid)) + '</td><td class="name">' + escapeHtml(playerName(pid)) + '</td><td class="ovr">' + (player2KOvr(pid) || '—') + '</td><td class="num">&hellip;</td><td class="age">' + playerAge(pid) + '</td></tr>'
+    ).join('');
+    body.innerHTML = '<table class="lineup"><thead><tr><th>Pos</th><th>Name</th><th style="text-align:right">2K</th><th style="text-align:right">Ceil</th><th style="text-align:right">Age</th></tr></thead><tbody>' + rows + '</tbody></table>'
+      + '<p class="lineup-foot">Computing weekly ceilings&hellip;</p>';
+    return;
+  }
+  tag.textContent = 'Top ' + state.statsSeason + ' weekly ceilings';
+  const ranked = t.players
+    .map(pid => ({pid, ceil: state.ceilings[pid]}))
+    .sort((a, b) => (b.ceil ?? -1) - (a.ceil ?? -1));
+  const top = ranked.slice(0, 8);
+  const rows = top.map(e =>
+    '<tr><td class="pos">' + escapeHtml(playerPos(e.pid)) + '</td><td class="name">' + escapeHtml(playerName(e.pid)) + '</td><td class="ovr">' + (player2KOvr(e.pid) || '—') + '</td><td class="num">' + (e.ceil != null ? e.ceil.toFixed(1) : '—') + '</td><td class="age">' + playerAge(e.pid) + '</td></tr>'
+  ).join('');
+  const rest = t.players.length - top.length;
+  body.innerHTML = '<table class="lineup"><thead><tr><th>Pos</th><th>Name</th><th style="text-align:right">2K</th><th style="text-align:right">Ceil</th><th style="text-align:right">Age</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<p class="lineup-foot">Ceil = per-game mean + 1 stdev of weekly ' + escapeHtml(String(state.statsSeason)) + ' fantasy output under league scoring.'
+    + ' 2K = top-100 NBA 2K27 snapshot.'
+    + (rest > 0 ? ' +' + rest + ' more on roster.' : '') + '</p>';
+}
+
+function renderObservations(t){
+  const list = document.getElementById('obsList');
+  const statusTag = document.getElementById('statusTag');
+  const items = [];
+  const n = state.teams.length;
+  const anyGames = state.teams.some(x => x.wins + x.losses + x.ties > 0);
+
+  if (anyGames){
+    items.push('Currently <strong>' + t.record + '</strong>, sitting <span class="hl">#' + t.standingsRank + ' of ' + n + '</span> in the standings with ' + t.rawPf.toFixed(1) + ' points for.');
+  } else {
+    items.push('No games recorded yet this season &mdash; every franchise sits at <strong>' + t.record + '</strong>.');
+  }
+
+  if (state.maxPtsReady){
+    items.push('Max Points grade: <span class="hl">' + t.maxPtsGrade + '</span> &mdash; ranked <strong>#' + t.maxPtsRank + ' of ' + n + '</strong> league-wide with a ' + t.maxPts.toFixed(1) + ' weekly ceiling (top ' + t.maxPtsCounted + ' players).');
+    const best = t.players.map(pid => ({pid, ceil: state.ceilings[pid]})).filter(e => e.ceil != null).sort((a, b) => b.ceil - a.ceil)[0];
+    if (best) items.push('Highest weekly ceiling on the roster: <strong>' + escapeHtml(playerName(best.pid)) + '</strong> at ' + best.ceil.toFixed(1) + ' per game.');
+    statusTag.textContent = 'Ceiling rank #' + t.maxPtsRank + ' of ' + n;
+  } else {
+    items.push('Max Points grade is still computing from weekly Sleeper stats&hellip;');
+    statusTag.textContent = '';
+  }
+
+  const avgRoster = state.teams.reduce((s, x) => s + x.rosterSize, 0) / n;
+  items.push('Carrying <strong>' + t.rosterSize + ' players</strong> against a league average of ' + avgRoster.toFixed(1) + '.');
+
+  const hist = state.historyByOwner[t.ownerId] || [];
+  hist.forEach(h => {
+    items.push('Season ' + h.season + ': finished <strong>' + h.record + '</strong> with ' + h.pf + ' points for.');
+  });
+
+  if (state.tradesByKey){
+    const trades = state.tradesByKey[t.key] || [];
+    if (trades.length){
+      items.push('<strong>' + trades.length + ' completed trade' + (trades.length === 1 ? '' : 's') + '</strong> on file across the last two seasons; most recent ' + trades[0].date + '.');
+    } else {
+      items.push('No completed trades on file for this franchise across the last two seasons.');
+    }
+  }
+
+  list.innerHTML = items.map(html => '<li>' + html + '</li>').join('');
+}
+
+function needsPlayerRecord(pid){
+  const p = (state.playerDb || {})[pid] || {};
+  const proj = state.projById ? state.projById.get(String(pid)) : null;
+  return {
+    id: String(pid),
+    name: playerName(pid),
+    positions: p.fantasy_positions || [p.position].filter(Boolean),
+    metric: proj != null ? proj : (state.ceilings ? state.ceilings[pid] : null),
+    age: p.age || null
+  };
+}
+
+function benchGrade(percentile){
+  return percentile >= 0.9 ? 'A+' : percentile >= 0.75 ? 'A'
+    : percentile >= 0.6 ? 'B+' : percentile >= 0.45 ? 'B'
+    : percentile >= 0.3 ? 'C+' : percentile >= 0.15 ? 'C'
+    : percentile >= 0.05 ? 'D' : 'F';
+}
+
+/* Bench = the five strongest players left after optimizing the legal starters.
+   Rating is their average projected FP/G (weekly ceiling when projections are unavailable). */
+function benchSnapshot(team){
+  if (!state.playerDb || !window.TeamNeedsModel) return null;
+  const slots = TeamNeedsModel.parseSlots(state.league.roster_positions);
+  const usingProj = !!state.projById;
+  if (!slots.length || (!usingProj && !state.ceilings)) return null;
+
+  const records = team.players.map(needsPlayerRecord);
+  const opt = TeamNeedsModel.optimize(records, slots);
+  const starterIds = new Set(opt.fills.filter(Boolean).map(f => String(f.player.id)));
+  const players = records
+    .filter(p => !starterIds.has(String(p.id)) && Number.isFinite(Number(p.metric)))
+    .sort((a, b) => Number(b.metric) - Number(a.metric))
+    .slice(0, 5);
+  const score = players.length
+    ? players.reduce((sum, p) => sum + Number(p.metric), 0) / players.length
+    : 0;
+  return {players, score, usingProj};
+}
+
+function benchRatings(){
+  const rows = state.teams.map(team => ({team, snapshot:benchSnapshot(team)}))
+    .filter(row => row.snapshot);
+  rows.sort((a, b) => b.snapshot.score - a.snapshot.score);
+  const n = rows.length;
+  rows.forEach((row, i) => {
+    row.rank = i + 1;
+    row.grade = benchGrade(n <= 1 ? 1 : (n - 1 - i) / (n - 1));
+  });
+  return rows;
+}
+
+function renderBench(t){
+  const body = document.getElementById('benchBody');
+  const tag = document.getElementById('benchTag');
+  const rating = benchRatings().find(row => row.team.key === t.key);
+  if (!rating){
+    tag.textContent = '';
+    body.innerHTML = '<p class="pending">Bench rating is waiting for lineup and player data&hellip;</p>';
+    return;
+  }
+
+  const snap = rating.snapshot;
+  const metricLabel = snap.usingProj ? 'Proj' : 'Ceil';
+  const metricLong = snap.usingProj ? 'projected FP/G' : 'weekly ceiling FP/G';
+  tag.textContent = 'Grade ' + rating.grade + ' · #' + rating.rank + ' of ' + state.teams.length;
+  const rows = snap.players.map((p, i) =>
+    '<tr><td class="pos">B' + (i + 1) + '</td>'
+      + '<td class="name">' + escapeHtml(p.name) + '<br><span style="color:var(--ink-dim);font-size:10px">'
+      + escapeHtml((p.positions || []).join('/')) + '</span></td>'
+      + '<td class="ovr">' + (player2KOvr(p.id) || '—') + '</td>'
+      + '<td class="num">' + Number(p.metric).toFixed(1) + '</td>'
+      + '<td class="age">' + (p.age || '—') + '</td></tr>'
+  ).join('');
+  const emptyRows = Array.from({length:Math.max(0, 5 - snap.players.length)}, (_, i) =>
+    '<tr><td class="pos">B' + (snap.players.length + i + 1) + '</td>'
+      + '<td class="name" style="color:var(--ink-dim)">Open bench spot</td>'
+      + '<td class="ovr">—</td><td class="num">—</td><td class="age">—</td></tr>'
+  ).join('');
+
+  body.innerHTML = '<div class="bench-rating"><strong>' + rating.grade + '</strong><span>'
+    + snap.score.toFixed(1) + ' avg ' + escapeHtml(metricLong) + '<br>#' + rating.rank
+    + ' bench in league</span></div>'
+    + '<table class="lineup"><thead><tr><th>Spot</th><th>Name / Pos</th>'
+    + '<th style="text-align:right">2K</th><th style="text-align:right">' + metricLabel + '</th>'
+    + '<th style="text-align:right">Age</th></tr></thead><tbody>' + rows + emptyRows + '</tbody></table>'
+    + '<p class="lineup-foot">Bench excludes the optimized legal starting lineup. Overall rating is based on the average '
+    + escapeHtml(metricLong) + ' of these top five bench players, graded against all teams.</p>';
+}
+
+/* Team Needs = optimal legal starting lineup. Each player can lock into only
+   one of the league's starting slots; needs are the weakest optimized slots
+   plus aging (33+) position locks that want younger production. */
+function renderNeeds(t){
+  const body = document.getElementById('needsBody');
+  const tag = document.getElementById('needsTag');
+  const metricReady = state.projById || (state.projSettled && (state.ceilings || state.ceilingSettled));
+  if (!state.playerDb || !metricReady || !window.TeamNeedsModel){
+    tag.textContent = '';
+    body.innerHTML = '<p class="pending">Optimizing the starting lineup for projected points&hellip;</p>';
+    return;
+  }
+  const slots = TeamNeedsModel.parseSlots(state.league.roster_positions);
+  const usingProj = !!state.projById;
+  const metricLabel = usingProj ? 'projected FP/G' : 'weekly ceiling FP/G';
+  if (!slots.length || (!usingProj && !state.ceilings)){
+    tag.textContent = '';
+    body.innerHTML = '<p class="pending">Lineup data unavailable (' + escapeHtml(state.projError || 'no starting slots found')
+      + '); team needs cannot be computed.</p>';
+    return;
+  }
+
+  // Optimize every team once so slot values can be benchmarked league-wide.
+  const optByKey = {};
+  state.teams.forEach(team => {
+    optByKey[team.key] = TeamNeedsModel.optimize(team.players.map(needsPlayerRecord), slots);
+  });
+  const opt = optByKey[t.key];
+
+  // Rank duplicate slots (e.g. three UTILs) per team, best first, so
+  // benchmarks compare like with like.
+  function rankedRows(o){
+    const bySlot = {};
+    o.fills.forEach((f, i) => {
+      (bySlot[slots[i]] = bySlot[slots[i]] || []).push({
+        slot:slots[i], player:f ? f.player : null,
+        value:f ? f.value : 0, hasMetric:f ? f.hasMetric : false
+      });
+    });
+    const rows = [];
+    Object.keys(bySlot).forEach(name => {
+      bySlot[name].sort((a, b) => b.value - a.value)
+        .forEach((r, rank) => rows.push({...r, rank}));
+    });
+    return rows;
+  }
+  const rows = rankedRows(opt);
+  const benchmark = {};
+  state.teams.forEach(team => {
+    rankedRows(optByKey[team.key]).forEach(r => {
+      (benchmark[r.slot + '#' + r.rank] = benchmark[r.slot + '#' + r.rank] || []).push(r.value);
+    });
+  });
+  function median(a){ a = a.slice().sort((x, y) => x - y); const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
+
+  tag.textContent = 'Opt. lineup ' + opt.total.toFixed(1) + ' FP/G';
+
+  const items = [];
+  rows.filter(r => !r.player).forEach(r => {
+    items.push({severity:'critical', label:r.slot + ' slot is empty', gap:Infinity,
+      text:'No eligible player is left for this starting slot after the optimal assignment; any eligible add is a direct gain to the weekly lineup.'});
+  });
+  rows.filter(r => r.player).forEach(r => {
+    const med = median(benchmark[r.slot + '#' + r.rank] || [r.value]);
+    const gap = med - r.value;
+    if (gap < 1.5) return;
+    items.push({severity:gap >= 6 ? 'critical' : 'moderate', gap,
+      label:'Weak ' + r.slot + ' lock',
+      text:r.player.name + ' is the optimal ' + r.slot + ' at '
+        + (r.hasMetric ? r.value.toFixed(1) + ' ' + metricLabel : 'no projection')
+        + '; a league-median starter in this slot (' + med.toFixed(1) + ') would add +' + gap.toFixed(1) + ' to the optimal lineup.'});
+  });
+  /* Position age: 33+ locks are a draft need even when production is fine. */
+  rows.filter(r => r.player).forEach(r => {
+    const band = TeamNeedsModel.ageBand(r.player);
+    if (band !== 'decline') return;
+    const age = Number(r.player.age);
+    const ageGap = 20 + (Number.isFinite(age) ? Math.max(0, age - 33) * 2 : 0);
+    items.push({severity: age >= 36 ? 'critical' : 'moderate', gap: ageGap,
+      label:'Aging ' + r.slot + ' lock',
+      text:r.player.name + (Number.isFinite(age) ? (' (' + age + ')') : '')
+        + ' is the optimal ' + r.slot + ' — prioritize a younger producer (<24, or prime 25–32) at this position.'});
+  });
+  items.sort((a, b) => b.gap - a.gap);
+  if (!items.length){
+    items.push({severity:'moderate', label:'Lineup is balanced', gap:0,
+      text:'All ' + slots.length + ' starting slots are filled at or near the league median ' + metricLabel
+        + ' with no aging (33+) locks; favor the best projected young/prime value available.'});
+  }
+
+  const note = '<p class="pending" style="margin:0 0 8px">Optimal lineup fills the league\u2019s '
+    + slots.length + ' starting slots (' + escapeHtml(slots.join(', ')) + ') maximizing ' + escapeHtml(metricLabel)
+    + ' \u2014 each player counts at one slot only; equal-scoring lineups lock stronger eligible players into named positions before flex/UTIL. Needs also flag position age when a lock is 33+.'
+    + (usingProj ? '' : ' Projections unavailable (' + escapeHtml(state.projError || 'not published') + '); using last-season weekly ceilings.')
+    + '</p>';
+  const lineupHtml = '<ul class="needs" style="margin-bottom:10px">' + rows.map(r => {
+    const age = r.player && r.player.age != null ? Number(r.player.age) : null;
+    const band = r.player ? TeamNeedsModel.ageBand(r.player) : null;
+    const ageHtml = Number.isFinite(age)
+      ? (band === 'decline'
+        ? ' \u00b7 <span class="need-tag critical">' + age + 'y</span>'
+        : ' \u00b7 <span style="color:var(--ink-dim)">' + age + 'y</span>')
+      : '';
+    return '<li><span class="need-label">' + escapeHtml(r.slot) + ':</span> '
+      + (r.player
+        ? escapeHtml(r.player.name) + ' \u00b7 ' + (r.hasMetric ? r.value.toFixed(1) : '\u2014') + ageHtml
+        : '<span class="need-tag critical">Empty</span>')
+      + '</li>';
+  }).join('') + '</ul>';
+  body.innerHTML = note + lineupHtml + '<ul class="needs">' + items.slice(0, 6).map(n =>
+    '<li><span class="need-tag ' + n.severity + '">' + (n.severity === 'critical' ? 'Critical' : 'Moderate')
+      + '</span><span class="need-label">' + escapeHtml(n.label) + ':</span> ' + escapeHtml(n.text) + '</li>'
+  ).join('') + '</ul>';
+}
+
+function assetLabel(a){
+  return a.type === 'player' ? escapeHtml(playerName(a.pid)) : escapeHtml(a.label);
+}
+function fmtAssets(items){
+  const labels = items.map(assetLabel);
+  if (labels.length <= 3) return labels.join(', ');
+  return labels.slice(0, 3).join(', ') + ' +' + (labels.length - 3) + ' more';
+}
+
+function renderTrades(t){
+  const body = document.getElementById('tradeBody');
+  if (!state.tradesByKey){
+    body.innerHTML = '<p class="pending">Loading trade history&hellip;</p>';
+    return;
+  }
+  const trades = (state.tradesByKey[t.key] || []).slice(0, 4);
+  if (!trades.length){
+    body.innerHTML = '<p class="pending">No completed trades on file for ' + escapeHtml(t.displayName) + '.</p>';
+    return;
+  }
+  body.innerHTML = trades.map(tr => {
+    let line = '';
+    if (tr.got.length) line += '<span class="got">Got</span> ' + fmtAssets(tr.got);
+    if (tr.got.length && tr.sent.length) line += ' &middot; ';
+    if (tr.sent.length) line += '<span class="sent">Sent</span> ' + fmtAssets(tr.sent);
+    return '<div class="trade-row"><span class="meta">' + tr.date + ' &middot; Season ' + escapeHtml(String(tr.season)) + ' &middot; with <strong>' + escapeHtml(tr.other) + '</strong></span>' + line + '</div>';
+  }).join('');
+}
+
+function renderTeam(){
+  const t = state.teamsByKey[state.selected];
+  if (!t) return;
+  document.getElementById('teamView').hidden = false;
+  document.documentElement.style.setProperty('--team', t.color);
+  document.getElementById('heroLogo').textContent = t.abbrev;
+  document.getElementById('heroName').textContent = t.displayName;
+  const awardsEl = document.getElementById('heroAwards');
+  const badges = awardBadgesHtml(t.key);
+  if (badges){
+    awardsEl.hidden = false;
+    awardsEl.innerHTML = badges;
+  } else {
+    awardsEl.hidden = true;
+    awardsEl.innerHTML = '';
+  }
+  document.getElementById('heroManager').textContent = t.manager;
+  document.getElementById('statRecord').textContent = t.record;
+  document.getElementById('statGrade').textContent = state.maxPtsReady ? t.maxPtsGrade : '…';
+  document.getElementById('statRoster').textContent = t.rosterSize;
+  renderLineup(t);
+  renderBench(t);
+  renderObservations(t);
+  renderNeeds(t);
+  renderTrades(t);
+}
+
+/* ---------- boot ---------- */
+
+async function loadAwards(){
+  if (!window.PatioBoysAwards) return;
+  try {
+    const pack = await PatioBoysAwards.compute(LEAGUE_ID, {
+      playerDb: state.playerDb || undefined,
+      computeCoach: true
+    });
+    state.awardsByKey = pack.badgesByKey || {};
+    state.awardsReady = true;
+  } catch (e){
+    console.warn('Team Intel: accolades failed.', e);
+    state.awardsByKey = {};
+  }
+}
+
+(async () => {
+  try {
+    await loadCore();
+    setLoadNote('Loaded ' + state.teams.length + ' franchises from "' + (state.league.name || 'Sleeper league') + '" · season ' + state.league.season + '. Pulling stats, players, and trades…');
+    renderNav();
+    renderTeam();
+  } catch (e){
+    setLoadNote('Could not load live league data: ' + e.message, true);
+    return;
+  }
+
+  const prevSeasonsPromise = loadPreviousSeasons().catch(e => {
+    console.warn('Team Intel: previous seasons unavailable.', e);
+    return [];
+  });
+
+  const playerDbPromise = loadPlayerDb().catch(e => console.warn('Team Intel: player DB failed.', e));
+
+  const tasks = [
+    playerDbPromise,
+    loadProjections().catch(e => {
+      state.projError = e.message || String(e);
+      console.warn('Team Intel: projections failed.', e);
+    }).finally(() => { state.projSettled = true; }),
+    loadCeilings().catch(e => {
+      state.ceilingError = e.message || String(e);
+      console.warn('Team Intel: ceilings failed.', e);
+    }).finally(() => { state.ceilingSettled = true; }),
+    prevSeasonsPromise.then(prev => loadTrades(prev)).catch(e => console.warn('Team Intel: trades failed.', e)),
+    playerDbPromise.then(() => loadAwards()).catch(e => console.warn('Team Intel: awards failed.', e))
+  ];
+
+  tasks.forEach(p => p.then(() => { renderNav(); renderTeam(); }));
+  await Promise.allSettled(tasks);
+  renderNav();
+  renderTeam();
+  setLoadNote(null);
+})();
+</script>
+</body>
+</html>

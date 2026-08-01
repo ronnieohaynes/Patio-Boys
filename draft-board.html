@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patio Boys — Available Players Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14181F; --surface:#1B212C; --surface-2:#222A37;
+    --ink:#ECEEF3; --ink-dim:#8B93A6; --hairline:#2E3645;
+    --gold:#C9963A; --coral:#D8553A; --teal:#1D9E75;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;line-height:1.55}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 24px 80px}
+  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:0 0 10px}
+  .display{font-family:'Anton',sans-serif;text-transform:uppercase;line-height:.95;margin:0}
+  .topbar{padding:20px 0;border-bottom:1px solid var(--hairline);font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.08em}
+  .hero{padding:40px 0 32px;border-bottom:1px solid var(--hairline)}
+  .hero .display{font-size:clamp(30px,6vw,52px)}
+  .hero p{max-width:660px;color:var(--ink-dim);margin:14px 0 0}
+  section{margin-top:48px}
+  section h2{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:24px;margin:0 0 4px}
+  .status{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--gold);margin:14px 0 16px}
+  .status.error{color:var(--coral)}
+  .caption{font-size:13px;color:var(--ink-dim);margin-top:14px}
+
+  .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:18px}
+  .statcard{background:var(--surface);border-radius:8px;padding:1rem}
+  .statcard .lbl{font-size:12px;color:var(--ink-dim);margin:0 0 4px;font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:.05em}
+  .statcard .num{font-size:24px;font-weight:500;margin:0}
+
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 14px}
+  .controls input[type=text]{background:var(--surface);border:1px solid var(--hairline);color:var(--ink);border-radius:6px;padding:8px 12px;font-family:'Inter',sans-serif;font-size:14px;flex:1;min-width:160px}
+  .controls select{background:var(--surface);border:1px solid var(--hairline);color:var(--ink);border-radius:6px;padding:8px 12px;font-family:'Inter',sans-serif;font-size:14px}
+
+  table{width:100%;border-collapse:collapse;font-family:'IBM Plex Mono',monospace;font-size:12.5px;white-space:nowrap}
+  th,td{text-align:left;padding:8px 9px;border-bottom:1px solid var(--hairline)}
+  th{color:var(--ink-dim);font-weight:400;text-transform:uppercase;font-size:10.5px;letter-spacing:.04em;cursor:pointer;position:sticky;top:0;background:var(--bg)}
+  th:hover{color:var(--ink)}
+  tr:hover td{background:var(--surface)}
+  .src{font-size:11px;padding:2px 7px;border-radius:10px;display:inline-block}
+  .src.fa{background:var(--surface-2);color:var(--ink-dim)}
+  .src.dep{background:rgba(201,150,58,.18);color:var(--gold)}
+  .poolwrap{max-height:640px;overflow:auto;border:1px solid var(--hairline);border-radius:8px}
+  .rk{color:var(--ink-dim)}
+</style>
+</head>
+<body>
+
+<div class="wrap topbar">Patio Boys &middot; Available Players Board</div>
+
+<div class="wrap hero">
+  <p class="eyebrow">Pulled live from Sleeper, in your browser</p>
+  <h1 class="display">Who's Actually<br>Up For Grabs</h1>
+  <p>No forced cutdown, no keeper checkboxes, this is the pool exactly as it stands today. Combines everyone already a free agent (rookies included, once Sleeper's player list has them) with every player on jaysonarban's and Jeff's (thehyphypnw's) rosters. Capped to the top 75 by value. Value is each player's average over their last 50 actually-played games under your league's scoring settings. Nothing here saves between visits.</p>
+</div>
+
+<div class="wrap">
+
+  <section id="loadSection">
+    <p class="status" id="status">Loading league, rosters, and the full NBA player list (this can take a few seconds)&hellip;</p>
+    <div class="statgrid" id="statGrid" style="display:none"></div>
+  </section>
+
+  <section id="poolSection" style="display:none">
+    <p class="eyebrow">Top 75 By Value</p>
+    <h2>The Draftable Pool</h2>
+    <p class="caption" style="margin-top:0">"Proj. pick" assumes a straightforward best-player-available draft, a player's rank by value is treated as the pick number they'd go at. "Proj. team" is the single most likely team to hold that pick. Picks 1, 2, 7, 8, 15, 16, 17, 18, 31, 32, 33, and 34 all trace back to the same 50/50 coin flip between Funeral Home and BoobieDominguez, no real favorite exists, so those show as a coin flip. Picks 3-6 use the four-team Max Points lottery's favorite (Bam Add the Mayo, Champs, Papa Book, Freakonomics). Pick 9 is fixed (Freakonomics, Belt's traded pick), pick 10 is fixed (Papa Book, the swap with Hamas). Picks 11-14 derive from picks 3-6's projected winners, with the swap and the Freakonomics re-lottery (among Bam Add the Mayo, Champs, Papa Book, Hamas) applied. Picks 23-30 and 35-40 are Hamas and Belt drafting normally at their own picks, the round 1/2 trades don't carry forward into rounds 3-5.</p>
+    <div class="controls">
+      <input type="text" id="searchBox" placeholder="Search by name&hellip;">
+      <select id="posFilter">
+        <option value="">All positions</option>
+        <option value="PG">PG</option>
+        <option value="SG">SG</option>
+        <option value="SF">SF</option>
+        <option value="PF">PF</option>
+        <option value="C">C</option>
+      </select>
+      <select id="srcFilter">
+        <option value="">All sources</option>
+        <option value="fa">Already a free agent</option>
+        <option value="dep">From a departing team</option>
+      </select>
+    </div>
+    <p class="status" id="poolStatus" style="margin-top:0"></p>
+    <div class="poolwrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-key="rank">Rank</th>
+            <th data-key="name">Player</th>
+            <th data-key="number">#</th>
+            <th data-key="pos">Pos</th>
+            <th data-key="team">NBA Team</th>
+            <th data-key="value">Value (last 50 GP)</th>
+            <th data-key="gamesUsed">GP Used</th>
+            <th data-key="projPick">Proj. Pick</th>
+            <th data-key="projTeam">Proj. Team</th>
+            <th data-key="source">Source</th>
+          </tr>
+        </thead>
+        <tbody id="poolBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<script>
+const LEAGUE_ID = '1350649177381552128';
+const DEPARTING_USERNAMES = ['jaysonarban', 'thehyphypnw'];
+const POOL_CAP = 75;
+const GAMES_TARGET = 50;
+
+const statusEl = document.getElementById('status');
+const statGridEl = document.getElementById('statGrid');
+const poolSectionEl = document.getElementById('poolSection');
+const poolStatusEl = document.getElementById('poolStatus');
+const poolBodyEl = document.getElementById('poolBody');
+
+const PROJECTED_TEAM_BY_PICK = {
+  1:null, 2:null, 3:'BoobieDominguez', 4:'Bam Add the Mayo', 5:'Papa Book', 6:'Freakonomics',
+  7:null, 8:null,
+  9:'Freakonomics', 10:'Papa Book', 11:'Hamas', 12:'Bam Add the Mayo', 13:'2011-12 Champs', 14:'Belt', 15:null, 16:null,
+  17:null, 18:null, 19:'2011-12 Champs', 20:'Bam Add the Mayo', 21:'Papa Book', 22:'Freakonomics', 23:'Hamas', 24:'Belt',
+  25:'Belt', 26:'Hamas', 27:'Freakonomics', 28:'Papa Book', 29:'Bam Add the Mayo', 30:'2011-12 Champs', 31:null, 32:null,
+  33:null, 34:null, 35:'2011-12 Champs', 36:'Bam Add the Mayo', 37:'Papa Book', 38:'Freakonomics', 39:'Hamas', 40:'Belt'
+};
+
+let state = {
+  players: {},
+  valueByPid: {},
+  freeAgents: [],
+  departingPlayerIds: new Set(),
+  pool75: []
+};
+
+function fmtName(p){
+  if (!p) return 'Unknown player';
+  if (p.first_name || p.last_name) return ((p.first_name || '') + ' ' + (p.last_name || '')).trim();
+  return p.full_name || 'Unknown player';
+}
+
+async function load(){
+  try {
+    const [leagueRes, usersRes, rostersRes, playersRes] = await Promise.all([
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID),
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/users'),
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters'),
+      fetch('https://api.sleeper.app/v1/players/nba')
+    ]);
+    if (!leagueRes.ok || !usersRes.ok || !rostersRes.ok || !playersRes.ok){
+      throw new Error('One or more Sleeper API requests failed');
+    }
+    const league = await leagueRes.json();
+    const users = await usersRes.json();
+    const rosters = await rostersRes.json();
+    const players = await playersRes.json();
+    state.players = players;
+
+    let statsSeason = league.season;
+    if (league.previous_league_id){
+      const prevRes = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id);
+      if (prevRes.ok){
+        const prevLeague = await prevRes.json();
+        statsSeason = prevLeague.season;
+      }
+    }
+
+    const scoring = league.scoring_settings || {};
+    const scoringKeys = Object.keys(scoring);
+
+    statusEl.textContent = 'Pulling every week of ' + statsSeason + ' to build a real last-50-games-played average (up to 25 requests, running in parallel)\u2026';
+    const weekNums = Array.from({length: 25}, (_, i) => i + 1);
+    const weeklyResults = await Promise.all(weekNums.map(w =>
+      fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null)
+    ));
+    const orderedWeeks = weeklyResults.map((d, i) => ({ week: i + 1, data: d })).filter(w => w.data && Object.keys(w.data).length > 0).reverse();
+
+    function weekGpAndTotal(statsObj){
+      if (!statsObj) return null;
+      const gp = statsObj.gp || statsObj.games_played || null;
+      let total = 0, matched = 0;
+      scoringKeys.forEach(k => { if (statsObj[k] != null){ total += statsObj[k]*scoring[k]; matched++; } });
+      if (matched === 0) return null;
+      return { gp: gp || 1, total };
+    }
+
+    const valueInfo = {};
+    Object.keys(players).forEach(pid => {
+      let gamesCounted = 0, pointsCounted = 0;
+      for (const wk of orderedWeeks){
+        if (gamesCounted >= GAMES_TARGET) break;
+        const wInfo = weekGpAndTotal(wk.data[pid]);
+        if (!wInfo) continue;
+        const remaining = GAMES_TARGET - gamesCounted;
+        if (wInfo.gp <= remaining){
+          gamesCounted += wInfo.gp;
+          pointsCounted += wInfo.total;
+        } else {
+          const perGameThisWeek = wInfo.total / wInfo.gp;
+          pointsCounted += perGameThisWeek * remaining;
+          gamesCounted += remaining;
+        }
+      }
+      valueInfo[pid] = gamesCounted > 0 ? { value: pointsCounted / gamesCounted, gamesUsed: gamesCounted } : { value: null, gamesUsed: 0 };
+    });
+    state.valueByPid = valueInfo;
+
+    const userById = {};
+    users.forEach(u => { userById[u.user_id] = u; });
+
+    const departingRosterIds = new Set();
+    rosters.forEach(r => {
+      const u = userById[r.owner_id];
+      if (u && DEPARTING_USERNAMES.includes((u.username || '').toLowerCase())){
+        departingRosterIds.add(r.roster_id);
+        (r.players || []).forEach(pid => state.departingPlayerIds.add(pid));
+      }
+    });
+
+    const allRosteredIds = new Set();
+    rosters.forEach(r => (r.players || []).forEach(pid => allRosteredIds.add(pid)));
+
+    state.freeAgents = Object.keys(players).filter(pid => {
+      const p = players[pid];
+      return !allRosteredIds.has(pid) && p.team && p.active !== false;
+    });
+
+    const stayingTeamCount = rosters.filter(r => !departingRosterIds.has(r.roster_id)).length;
+
+    statGridEl.innerHTML =
+      '<div class="statcard"><p class="lbl">League</p><p class="num" style="font-size:16px">' + (league.name || 'Patio Boys') + '</p></div>' +
+      '<div class="statcard"><p class="lbl">Departing teams</p><p class="num">2</p></div>' +
+      '<div class="statcard"><p class="lbl">Staying teams</p><p class="num">' + stayingTeamCount + '</p></div>' +
+      '<div class="statcard"><p class="lbl">Weeks of data found</p><p class="num">' + orderedWeeks.length + '</p></div>';
+    statGridEl.style.display = '';
+    statusEl.textContent = 'Loaded.';
+
+    poolSectionEl.style.display = '';
+    renderPool();
+  } catch (e){
+    statusEl.classList.add('error');
+    statusEl.textContent = 'Could not load live data: ' + e.message + '. This usually means the league is private, the ID changed, or the page was opened directly as a file instead of served, try opening it through a real URL.';
+  }
+}
+
+let sortKey = 'rank', sortDir = 1;
+
+function buildCandidates(){
+  const rows = [];
+  const seen = new Set();
+  function pushRow(pid, source, sourceLabel){
+    if (seen.has(pid)) return;
+    seen.add(pid);
+    const p = state.players[pid];
+    const v = state.valueByPid[pid] || { value: null, gamesUsed: 0 };
+    rows.push({
+      pid, name: fmtName(p), number: p ? (p.number != null ? p.number : '\u2014') : '\u2014',
+      pos: p ? p.position || '' : '', team: p ? p.team || '' : '',
+      value: v.value, gamesUsed: v.gamesUsed, source, sourceLabel
+    });
+  }
+  state.freeAgents.forEach(pid => pushRow(pid, 'fa', 'Free agent'));
+  state.departingPlayerIds.forEach(pid => pushRow(pid, 'dep', 'Departing team'));
+  return rows;
+}
+
+function renderPool(){
+  let candidates = buildCandidates();
+  candidates.sort((a,b) => (b.value ?? -999) - (a.value ?? -999));
+  candidates = candidates.slice(0, POOL_CAP);
+  candidates.forEach((r, i) => {
+    r.rank = i + 1;
+    r.projPick = r.rank <= 40 ? r.rank : null;
+    const proj = r.projPick ? PROJECTED_TEAM_BY_PICK[r.projPick] : undefined;
+    r.projTeam = r.projPick ? (proj || 'Coin flip (50/50)') : 'Past pick 40';
+  });
+  state.pool75 = candidates;
+
+  let rows = candidates.slice();
+  const search = document.getElementById('searchBox').value.trim().toLowerCase();
+  const posFilter = document.getElementById('posFilter').value;
+  const srcFilter = document.getElementById('srcFilter').value;
+  if (search) rows = rows.filter(r => r.name.toLowerCase().includes(search));
+  if (posFilter) rows = rows.filter(r => r.pos === posFilter);
+  if (srcFilter) rows = rows.filter(r => r.source === srcFilter);
+
+  rows.sort((a,b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (['value','rank','gamesUsed','projPick'].includes(sortKey)){
+      av = av == null ? -9999 : av; bv = bv == null ? -9999 : bv;
+    } else { av = (av || '').toString(); bv = (bv || '').toString(); }
+    if (av < bv) return -1*sortDir;
+    if (av > bv) return 1*sortDir;
+    return 0;
+  });
+
+  poolBodyEl.innerHTML = '';
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="rk">' + r.rank + '</td>' +
+      '<td>' + r.name + '</td>' +
+      '<td>' + r.number + '</td>' +
+      '<td>' + r.pos + '</td>' +
+      '<td>' + r.team + '</td>' +
+      '<td>' + (r.value != null ? r.value.toFixed(1) : '\u2014') + '</td>' +
+      '<td>' + r.gamesUsed + '</td>' +
+      '<td>' + (r.projPick || '\u2014') + '</td>' +
+      '<td>' + r.projTeam + '</td>' +
+      '<td><span class="src ' + r.source + '">' + r.sourceLabel + '</span></td>';
+    poolBodyEl.appendChild(tr);
+  });
+  poolStatusEl.textContent = rows.length + ' of the top ' + POOL_CAP + ' available players shown (after filters).';
+}
+
+document.getElementById('searchBox').addEventListener('input', renderPool);
+document.getElementById('posFilter').addEventListener('change', renderPool);
+document.getElementById('srcFilter').addEventListener('change', renderPool);
+document.querySelectorAll('th[data-key]').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.getAttribute('data-key');
+    if (sortKey === key) sortDir *= -1;
+    else { sortKey = key; sortDir = 1; }
+    renderPool();
+  });
+});
+
+load();
+</script>
+</body>
+</html>

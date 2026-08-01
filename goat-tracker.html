@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patio Boys -- GOAT Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14181F; --surface:#1B212C; --surface-2:#222A37;
+    --ink:#ECEEF3; --ink-dim:#8B93A6; --hairline:#2E3645;
+    --gold:#C9963A; --coral:#D8553A; --teal:#1D9E75;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;line-height:1.55}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 80px}
+  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:0 0 10px}
+  .display{font-family:'Anton',sans-serif;text-transform:uppercase;line-height:.95;margin:0}
+  .topbar{padding:20px 0;border-bottom:1px solid var(--hairline);font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.08em}
+  .hero{padding:40px 0 32px;border-bottom:1px solid var(--hairline)}
+  .hero .display{font-size:clamp(30px,6vw,52px)}
+  .hero p{max-width:640px;color:var(--ink-dim);margin:14px 0 0}
+  section{margin-top:48px}
+  section h2{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:24px;margin:0 0 4px}
+  .status{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--gold);margin:14px 0 16px}
+  .status.error{color:var(--coral)}
+  .caption{font-size:13px;color:var(--ink-dim);margin-top:14px}
+  table{width:100%;border-collapse:collapse;font-family:'IBM Plex Mono',monospace;font-size:13px;margin-top:8px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--hairline)}
+  th{color:var(--ink-dim);font-weight:400;text-transform:uppercase;font-size:11px;letter-spacing:.06em}
+  tr:hover td{background:var(--surface)}
+  tr.lead td{color:var(--gold);font-weight:600}
+  .pts{font-weight:600;color:var(--gold)}
+  .dim{color:var(--ink-dim)}
+  .legend{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:14px;
+  }
+  .legend-item{
+    background:var(--surface);border:1px solid var(--hairline);border-radius:8px;
+    padding:12px 14px;border-top:3px solid var(--gold);
+  }
+  .legend-item .nm{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:16px;margin:0 0 2px;
+  }
+  .legend-item .val{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);
+  }
+  .goat-banner{
+    margin-top:16px;background:var(--surface);border:1px solid var(--hairline);
+    border-radius:8px;padding:18px 18px 16px;border-top:3px solid var(--gold);
+  }
+  .goat-banner .label{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.1em;margin:0 0 6px;
+  }
+  .goat-banner .name{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:clamp(28px,5vw,40px);
+    line-height:.95;margin:0;color:var(--gold);
+  }
+  .goat-banner .sub{
+    font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink-dim);margin:10px 0 0;
+  }
+  .chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .chip{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;padding:3px 8px;
+    border:1px solid var(--hairline);border-radius:999px;color:var(--ink-dim);
+    background:var(--surface-2);
+  }
+  .chip.medal-gold,.legend-item.medal-gold{
+    color:#E8C547;border-color:color-mix(in srgb,#E8C547 55%,var(--hairline));
+    background:color-mix(in srgb,#E8C547 16%,var(--surface-2));
+  }
+  .legend-item.medal-gold{border-top-color:#E8C547}
+  .chip.medal-silver,.legend-item.medal-silver{
+    color:#C5CDD8;border-color:color-mix(in srgb,#C5CDD8 55%,var(--hairline));
+    background:color-mix(in srgb,#C5CDD8 14%,var(--surface-2));
+  }
+  .legend-item.medal-silver{border-top-color:#C5CDD8}
+  .chip.medal-bronze,.legend-item.medal-bronze{
+    color:#D4926A;border-color:color-mix(in srgb,#D4926A 55%,var(--hairline));
+    background:color-mix(in srgb,#D4926A 14%,var(--surface-2));
+  }
+  .legend-item.medal-bronze{border-top-color:#D4926A}
+  .log-gold{color:#E8C547;font-weight:600}
+  .log-silver{color:#C5CDD8;font-weight:600}
+  .log-bronze{color:#D4926A;font-weight:600}
+  .seasonblock{margin-top:28px}
+  .seasonblock h3{
+    font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.06em;margin:0 0 4px;font-weight:500;
+  }
+  body.embed .topbar,
+  body.embed .hero{display:none}
+  body.embed .wrap{max-width:none;padding:12px 14px 24px}
+  body.embed section{margin-top:28px}
+  body.embed section:first-of-type{margin-top:0}
+  body.embed table{font-size:12px}
+  body.embed th,body.embed td{padding:7px 8px}
+</style>
+</head>
+<body>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
+
+<div class="wrap topbar">Patio Boys &middot; GOAT Tracker</div>
+
+<div class="wrap hero">
+  <p class="eyebrow">Career &middot; Managers &middot; Finalized awards + wins</p>
+  <h1 class="display">Who Owns<br>This League</h1>
+  <p>Every accolade, every regular-season win, every playoff win, and podium finishes (runner-up, 3rd) pay GOAT points. The manager with the most GOAT points is the league GOAT &mdash; a career title that updates as wins land and seasons lock.</p>
+</div>
+
+<div class="wrap">
+  <section>
+    <p class="eyebrow">Point Values</p>
+    <h2>How It Scores</h2>
+    <p class="caption" style="margin-top:0">GOAT points follow the manager, not the franchise name. Finalized season awards, every regular-season win, every winners-bracket playoff win, runner-up, and 3rd place finishes count. Live wins count as the year goes; accolades only land when the season locks. The GOAT title itself is worth 0 &mdash; it is the scoreboard, not another stackable award.</p>
+    <div class="legend" id="pointsLegend"></div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Career Standings</p>
+    <h2>GOAT Tracker</h2>
+    <p class="status" id="goatStatus">Loading career accolades&hellip;</p>
+    <div class="goat-banner" id="goatBanner" hidden></div>
+    <table id="goatTable" style="display:none">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Manager</th>
+          <th>Team</th>
+          <th>GOAT pts</th>
+          <th>Wins</th>
+          <th>Playoff W</th>
+          <th>2nd</th>
+          <th>3rd</th>
+          <th>Champ</th>
+          <th>MVP</th>
+          <th>Coach</th>
+          <th>GM</th>
+          <th>MIP</th>
+          <th>Hardware</th>
+        </tr>
+      </thead>
+      <tbody id="goatBody"></tbody>
+    </table>
+    <div class="seasonblock" id="winLog" style="display:none">
+      <h3>Award Log</h3>
+      <p class="caption" style="margin-top:0">Every finalized accolade that paid GOAT points, newest first.</p>
+      <table>
+        <thead><tr><th>Year</th><th>Award</th><th>Manager</th><th>GOAT pts</th></tr></thead>
+        <tbody id="logBody"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script src="2k-ratings-snapshot.js"></script>
+<script src="nba-proj-consensus.js"></script>
+<script src="team-needs.js"></script>
+<script src="league-awards.js"></script>
+<script>
+const LEAGUE_ID = '1350649177381552128';
+const ORDER = ['champion', 'mvp', 'coach', 'gm', 'mip', 'runner_up', 'third_place', 'win', 'playoff_win'];
+
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function countCell(n){
+  return n ? String(n) : '<span class="dim">\u2014</span>';
+}
+
+function chipsHtml(row){
+  const wins = (row.hardware || []).filter(w => w.id !== 'win' && w.id !== 'playoff_win')
+    .slice().sort((a, b) => Number(b.season) - Number(a.season)
+      || ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
+  if (!wins.length) return '<span class="dim">\u2014</span>';
+  return '<div class="chip-row">' + wins.map(w => {
+    const medal = (window.PatioBoysAwards && PatioBoysAwards.medalClass)
+      ? PatioBoysAwards.medalClass(w.id) : '';
+    return '<span class="chip' + (medal ? ' ' + medal : '') + '">'
+      + escapeHtml(w.short) + ' ' + escapeHtml(w.yearLabel) + '</span>';
+  }).join('') + '</div>';
+}
+
+async function boot(){
+  const statusEl = document.getElementById('goatStatus');
+  const legend = document.getElementById('pointsLegend');
+  const table = document.getElementById('goatTable');
+  const body = document.getElementById('goatBody');
+  const banner = document.getElementById('goatBanner');
+  const winLog = document.getElementById('winLog');
+  const logBody = document.getElementById('logBody');
+
+  if (!window.PatioBoysAwards){
+    statusEl.className = 'status error';
+    statusEl.textContent = 'Awards engine failed to load.';
+    return;
+  }
+
+  const pts = PatioBoysAwards.GOAT_POINTS || {};
+  const names = {
+    champion: 'Champion',
+    mvp: 'MVP',
+    coach: 'Coach of the Year',
+    gm: 'GM of the Year',
+    mip: 'Most Improved',
+    runner_up: 'Runner-up',
+    third_place: '3rd place',
+    win: 'Regular-season win',
+    playoff_win: 'Playoff win'
+  };
+  legend.innerHTML = ORDER.map(id => {
+    const medal = PatioBoysAwards.medalClass ? PatioBoysAwards.medalClass(id) : '';
+    return '<div class="legend-item' + (medal ? ' ' + medal : '') + '"><p class="nm">'
+      + escapeHtml(names[id]) + '</p>'
+      + '<p class="val">' + Number(pts[id] || 0) + ' GOAT point' + (Number(pts[id]) === 1 ? '' : 's') + '</p></div>';
+  }).join('');
+
+  try {
+    const pack = await PatioBoysAwards.compute(LEAGUE_ID);
+    const goat = pack.goat || PatioBoysAwards.buildGoatStandings(pack.seasons || []);
+    const rows = goat.rows || [];
+    const leader = goat.goat;
+
+    if (leader){
+      banner.hidden = false;
+      banner.innerHTML =
+        '<p class="label">Current GOAT</p>'
+        + '<p class="name">' + escapeHtml(leader.displayName) + '</p>'
+        + '<p class="sub">' + Number(leader.points).toFixed(0) + ' career GOAT points'
+        + (leader.franchise ? ' &middot; ' + escapeHtml(leader.franchise) : '')
+        + ' &middot; ' + Number(leader.seasonWins || 0) + ' wins'
+        + ' &middot; ' + Number(leader.playoffWins || 0) + ' playoff wins'
+        + ' &middot; ' + Number(leader.runnerUps || 0) + ' runner-up'
+        + ' &middot; ' + Number(leader.thirdPlaces || 0) + ' third'
+        + ' &middot; ties break Champ &rarr; Runner-up &rarr; 3rd &rarr; MVP &rarr; Coach &rarr; GM &rarr; MIP &rarr; Playoff W &rarr; Wins</p>';
+    } else {
+      banner.hidden = false;
+      banner.innerHTML =
+        '<p class="label">Current GOAT</p>'
+        + '<p class="name">Open</p>'
+        + '<p class="sub">No GOAT points on the board yet.</p>';
+    }
+
+    body.innerHTML = '';
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      if (leader && r.key === leader.key) tr.className = 'lead';
+      tr.innerHTML =
+        '<td>' + r.rank + '</td>'
+        + '<td>' + escapeHtml(r.displayName) + '</td>'
+        + '<td class="dim">' + escapeHtml(r.franchise || '\u2014') + '</td>'
+        + '<td class="pts">' + Number(r.points).toFixed(0) + '</td>'
+        + '<td>' + countCell(r.seasonWins) + '</td>'
+        + '<td>' + countCell(r.playoffWins) + '</td>'
+        + '<td>' + countCell(r.runnerUps || r.counts.runner_up) + '</td>'
+        + '<td>' + countCell(r.thirdPlaces || r.counts.third_place) + '</td>'
+        + '<td>' + countCell(r.counts.champion) + '</td>'
+        + '<td>' + countCell(r.counts.mvp) + '</td>'
+        + '<td>' + countCell(r.counts.coach) + '</td>'
+        + '<td>' + countCell(r.counts.gm) + '</td>'
+        + '<td>' + countCell(r.counts.mip) + '</td>'
+        + '<td>' + chipsHtml(r) + '</td>';
+      body.appendChild(tr);
+    });
+    table.style.display = '';
+
+    const log = [];
+    rows.forEach(r => (r.hardware || []).forEach(w => {
+      if (w.id === 'win' || w.id === 'playoff_win') return;
+      log.push({
+        yearLabel: w.yearLabel,
+        season: w.season,
+        award: w.name,
+        team: r.displayName,
+        points: w.points,
+        id: w.id
+      });
+    }));
+    log.sort((a, b) => Number(b.season) - Number(a.season)
+      || ORDER.indexOf(a.id) - ORDER.indexOf(b.id)
+      || String(a.team).localeCompare(String(b.team)));
+    logBody.innerHTML = log.map(e => {
+      const medal = PatioBoysAwards.medalClass ? PatioBoysAwards.medalClass(e.id) : '';
+      const awardCls = medal === 'medal-gold' ? 'log-gold'
+        : medal === 'medal-silver' ? 'log-silver'
+        : medal === 'medal-bronze' ? 'log-bronze' : '';
+      return '<tr><td>' + escapeHtml(e.yearLabel) + '</td><td class="' + awardCls + '">'
+        + escapeHtml(e.award)
+        + '</td><td>' + escapeHtml(e.team) + '</td><td class="pts">+' + e.points + '</td></tr>';
+    }).join('') || '<tr><td colspan="4" class="dim">No locked awards yet.</td></tr>';
+    winLog.style.display = '';
+
+    const locked = log.filter(e => e.id !== 'runner_up' && e.id !== 'third_place').length;
+    const totalWins = rows.reduce((s, r) => s + (r.seasonWins || 0), 0);
+    const totalPw = rows.reduce((s, r) => s + (r.playoffWins || 0), 0);
+    const totalRu = rows.reduce((s, r) => s + (r.runnerUps || 0), 0);
+    const total3 = rows.reduce((s, r) => s + (r.thirdPlaces || 0), 0);
+    statusEl.textContent = totalWins + ' regular wins (+' + Number(pts.win || 0) + ' ea)'
+      + ' \u00b7 ' + totalPw + ' playoff wins (+' + Number(pts.playoff_win || 0) + ' ea)'
+      + ' \u00b7 ' + totalRu + ' runner-up (+' + Number(pts.runner_up || 0) + ' ea)'
+      + ' \u00b7 ' + total3 + ' third (+' + Number(pts.third_place || 0) + ' ea)'
+      + (locked ? ' \u00b7 ' + locked + ' locked award' + (locked === 1 ? '' : 's') : '')
+      + '.';
+  } catch (e){
+    statusEl.className = 'status error';
+    statusEl.textContent = 'Could not load GOAT tracker: ' + (e.message || e);
+  }
+}
+
+boot();
+</script>
+</body>
+</html>

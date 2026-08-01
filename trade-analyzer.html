@@ -1,0 +1,1100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patio Boys — Trade Analyzer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0F131B; --surface:#171D28; --surface-2:#1F2735;
+    --ink:#ECEEF3; --ink-dim:#8B93A6; --hairline:#2E3645;
+    --gold:#E8C34A; --coral:#D8553A; --green:#1D9E75;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;line-height:1.45}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 20px 48px}
+  .topbar{
+    display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:16px 0;border-bottom:1px solid var(--hairline);
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.08em;
+  }
+  .topbar .brand{display:flex;align-items:baseline;gap:10px}
+  .topbar .brand .gm{font-family:'Anton',sans-serif;font-size:18px;color:var(--ink);letter-spacing:.04em}
+  .topbar .brand .gm em{color:var(--gold);font-style:normal}
+  body.embed .topbar{padding:10px 0}
+
+  .status{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--gold);margin:16px 0 0}
+  .status.error{color:var(--coral)}
+
+  .lede{
+    font-size:13px;color:#C9CDD8;margin:12px 0 0;max-width:720px;line-height:1.5;
+  }
+
+  .team-pick{
+    display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:end;
+    margin:18px 0 14px;
+  }
+  .field{display:flex;flex-direction:column;gap:5px}
+  .field label{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.08em;text-transform:uppercase;
+  }
+  .field select{
+    background:var(--surface);border:1px solid var(--hairline);border-radius:6px;
+    color:var(--ink);font:inherit;font-size:14px;padding:9px 11px;width:100%;
+  }
+  .vs{
+    font-family:'Anton',sans-serif;font-size:18px;color:var(--ink-dim);
+    padding-bottom:8px;text-align:center;
+  }
+
+  .boards{
+    display:grid;grid-template-columns:1fr 1fr;gap:14px;
+  }
+  @media(max-width:760px){
+    .team-pick,.boards{grid-template-columns:1fr}
+    .vs{padding:0}
+  }
+  .board{
+    border:1px solid var(--hairline);border-radius:8px;background:var(--surface);
+    border-top:3px solid var(--team-color, var(--gold));overflow:hidden;
+  }
+  .board-head{
+    display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+    padding:12px 14px;border-bottom:1px solid var(--hairline);background:var(--surface-2);
+  }
+  .board-head h2{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:18px;margin:0;letter-spacing:.02em;
+  }
+  .board-head .hint{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;
+  }
+  .player-list{max-height:340px;overflow:auto;padding:6px 0}
+  .player-row{
+    display:flex;align-items:flex-start;gap:10px;padding:8px 14px;cursor:pointer;
+    border-bottom:1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+  }
+  .player-row:last-child{border-bottom:none}
+  .player-row:hover{background:color-mix(in srgb, var(--gold) 6%, transparent)}
+  .player-row.selected{background:color-mix(in srgb, var(--team-color, var(--gold)) 14%, transparent)}
+  .player-row input{margin-top:3px;accent-color:var(--gold)}
+  .player-row .name{font-weight:600;font-size:14px}
+  .player-row .meta{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);margin-top:2px;
+  }
+  .player-row .val{
+    margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--gold);
+    white-space:nowrap;padding-top:2px;
+  }
+  .ceil{
+    display:inline-block;margin-left:6px;padding:1px 5px;border-radius:3px;
+    background:color-mix(in srgb, var(--gold) 22%, transparent);color:var(--gold);
+    font-family:'IBM Plex Mono',monospace;font-size:8px;font-weight:700;
+    letter-spacing:.04em;text-transform:uppercase;vertical-align:2px;
+  }
+
+  .result{margin-top:18px}
+  .result[hidden]{display:none}
+  .verdict{
+    display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center;
+    padding:16px 18px;border-radius:8px;border:1px solid var(--hairline);
+    background:var(--surface);margin-bottom:12px;
+  }
+  .verdict .letter{
+    font-family:'Anton',sans-serif;font-size:52px;line-height:1;color:var(--gold);
+    min-width:64px;text-align:center;
+  }
+  .verdict.unfair .letter{color:var(--coral)}
+  .verdict.runaway .letter{color:var(--coral)}
+  .verdict h3{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:22px;margin:0 0 4px;letter-spacing:.02em;
+  }
+  .verdict p{margin:0;font-size:14px;color:#C9CDD8}
+  .flags{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+  .flag{
+    padding:10px 14px;border-radius:7px;border:1px solid var(--hairline);
+    font-size:13px;line-height:1.45;background:var(--surface);
+  }
+  .flag.warn{
+    border-color:color-mix(in srgb, var(--coral) 55%, var(--hairline));
+    background:color-mix(in srgb, var(--coral) 12%, var(--surface));
+  }
+  .flag.ok{
+    border-color:color-mix(in srgb, var(--green) 45%, var(--hairline));
+    background:color-mix(in srgb, var(--green) 10%, var(--surface));
+  }
+  .flag strong{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+
+  .decision{
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    padding:16px 18px;border-radius:8px;margin-bottom:12px;
+    border:1px solid var(--hairline);background:var(--surface);
+  }
+  .decision .stamp{
+    font-family:'Anton',sans-serif;font-size:28px;letter-spacing:.04em;
+    text-transform:uppercase;padding:10px 16px;border-radius:6px;line-height:1;
+    border:2px solid currentColor;
+  }
+  .decision.allow{border-color:color-mix(in srgb, var(--green) 50%, var(--hairline));
+    background:color-mix(in srgb, var(--green) 12%, var(--surface))}
+  .decision.allow .stamp{color:var(--green)}
+  .decision.block{border-color:color-mix(in srgb, var(--coral) 55%, var(--hairline));
+    background:color-mix(in srgb, var(--coral) 14%, var(--surface))}
+  .decision.block .stamp{color:var(--coral)}
+  .decision.review{border-color:color-mix(in srgb, var(--gold) 50%, var(--hairline));
+    background:color-mix(in srgb, var(--gold) 12%, var(--surface))}
+  .decision.review .stamp{color:var(--gold)}
+  .decision .body{flex:1;min-width:200px}
+  .decision .body h3{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:20px;margin:0 0 4px;letter-spacing:.02em;
+  }
+  .decision .body p{margin:0;font-size:14px;color:#C9CDD8;line-height:1.45}
+
+  .sides{
+    display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;
+  }
+  @media(max-width:760px){.sides{grid-template-columns:1fr}}
+  .side-card{
+    border:1px solid var(--hairline);border-radius:8px;padding:14px;background:var(--surface);
+    border-left:4px solid var(--team-color, var(--gold));
+  }
+  .side-card h4{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:16px;margin:0 0 6px;
+  }
+  .side-card .totals{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);line-height:1.6;margin:0 0 8px;
+  }
+  .side-card .totals .hi{color:var(--gold)}
+  .side-card ul{list-style:none;margin:0;padding:0}
+  .side-card li{
+    display:flex;justify-content:space-between;gap:8px;
+    font-size:13px;padding:4px 0;
+    border-top:1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+  }
+  .side-card li .dv{font-family:'IBM Plex Mono',monospace;color:var(--gold);font-size:11px}
+  .empty-note{color:var(--ink-dim);font-size:13px;margin:0}
+
+  .max-block{
+    border:1px solid var(--hairline);border-radius:8px;overflow:hidden;background:var(--surface);
+  }
+  .max-block h3{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:16px;margin:0;
+    padding:12px 14px;border-bottom:1px solid var(--hairline);background:var(--surface-2);
+  }
+  .max-block p.cap{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;margin:0;padding:8px 14px;
+    border-bottom:1px solid var(--hairline);
+  }
+  table{width:100%;border-collapse:collapse}
+  th,td{
+    text-align:left;padding:8px 12px;font-size:13px;
+    border-bottom:1px solid color-mix(in srgb, var(--hairline) 80%, transparent);
+  }
+  th{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;background:var(--surface-2);
+  }
+  td.rk{font-family:'Anton',sans-serif;font-size:15px;color:var(--ink-dim);width:36px}
+  td.team{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:14px}
+  td.num{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;color:var(--gold)}
+  td.delta.up{color:var(--green)}
+  td.delta.down{color:var(--coral)}
+  td.delta.flat{color:var(--ink-dim)}
+  tr.involved td{background:color-mix(in srgb, var(--gold) 7%, transparent)}
+  tr.leader td{background:color-mix(in srgb, var(--coral) 10%, transparent)}
+  tr:last-child td{border-bottom:none}
+</style>
+</head>
+<body>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
+
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><span class="gm">Trade <em>Analyzer</em></span><span>Patio Boys &middot; S26&ndash;27</span></div>
+    <span id="progressTag">Loading&hellip;</span>
+  </div>
+  <p class="status" id="status">Pulling rosters, projections, and Max Points ceilings&hellip;</p>
+  <p class="lede">Pick two teams and the players each side is sending. Vets blend <strong>consensus next-year proj</strong> (50%) with <strong>last-3-season avg FP</strong> (50%). Rookies use <strong>Sleeper proj</strong> (50%) plus <strong>ESPN comps/outlook floors</strong> (50%) from the summer-league rankings &amp; lottery comps. Then age/injury. Max Points checks league balance. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
+
+  <div id="app" hidden>
+    <div class="team-pick">
+      <div class="field">
+        <label for="teamA">Team A receives from Team B</label>
+        <select id="teamA"></select>
+      </div>
+      <div class="vs">VS</div>
+      <div class="field">
+        <label for="teamB">Team B receives from Team A</label>
+        <select id="teamB"></select>
+      </div>
+    </div>
+
+    <div class="boards">
+      <div class="board" id="boardA" style="--team-color:var(--gold)">
+        <div class="board-head">
+          <h2 id="boardATitle">Team A</h2>
+          <span class="hint">Sending these</span>
+        </div>
+        <div class="player-list" id="listA"></div>
+      </div>
+      <div class="board" id="boardB" style="--team-color:var(--gold)">
+        <div class="board-head">
+          <h2 id="boardBTitle">Team B</h2>
+          <span class="hint">Sending these</span>
+        </div>
+        <div class="player-list" id="listB"></div>
+      </div>
+    </div>
+
+    <div class="result" id="result" hidden></div>
+  </div>
+</div>
+
+<script src="2k-ratings-snapshot.js"></script>
+<script src="nba-proj-consensus.js"></script>
+<script>
+const LEAGUE_ID = '1350649177381552128';
+const MY_TEAM = 'Freakonomics';
+const MAX_TOP_N = 10;
+const TEAM_COLORS = {
+  'Funeral Home':'#C9963A','BoobieDominguez':'#1D9E75','2011-12 Champs':'#D8553A',
+  'Freakonomics':'#7F77DD','Papa Book':'#D4537E','Bam Add the Mayo':'#3A8FC9',
+  'Hamas':'#9B59B6','Belt':'#5DBB63'
+};
+const FALLBACK_COLORS = ['#C9963A','#1D9E75','#D8553A','#7F77DD','#D4537E','#3A8FC9','#9B59B6','#5DBB63'];
+/* Historical Sleeper renames only — never collapse two live franchises into one label. */
+const TEAM_ALIASES = {
+  '20112012champs':'2011-12 Champs',
+  '201112champs':'2011-12 Champs',
+  'thehitmanharts':'BoobieDominguez',
+  'badgersretirementhome':'Funeral Home'
+};
+
+function normalizeName(name){
+  return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+}
+function canonicalKey(name){
+  const norm = normalizeName(name);
+  if (TEAM_ALIASES[norm]) return TEAM_ALIASES[norm];
+  return Object.keys(TEAM_COLORS).find(k => normalizeName(k) === norm) || name;
+}
+/* Prefer Sleeper team name, then manager display name, for color / MY_TEAM only. */
+function franchiseKey(teamName, managerName){
+  const byTeam = canonicalKey(teamName);
+  if (TEAM_COLORS[byTeam]) return byTeam;
+  const byManager = canonicalKey(managerName || '');
+  if (TEAM_COLORS[byManager]) return byManager;
+  return teamName;
+}
+function teamColor(t){
+  if (!t) return 'var(--gold)';
+  return TEAM_COLORS[t.key] || t.color || 'var(--gold)';
+}
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+const TWO_K = window.TWO_K_SNAPSHOT || {rookies:[], ratings:[]};
+const RATINGS_BY_NAME = new Map((TWO_K.ratings || []).map(p => [normalizeName(p.name), p]));
+const ROOKIE_NAMES = new Set((TWO_K.rookies || []).map(p => normalizeName(p.name)));
+
+const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
+/* ESPN post–summer league top 11 (Kram) + Woo lottery comps — floors are the
+   comparison-derived FP proxy used when Sleeper year-1 proj is thin/missing. */
+const ESPN_ROOKIE_OUTLOOK = {
+  ajdybantsa:{outlook:1,label:'ESPN #1 · franchise',ceiling:'franchise',
+    comps:'Jaylen Brown / Kawhi high · RJ Barrett low',floor:45},
+  darrynpeterson:{outlook:2,label:'ESPN #2 · franchise',ceiling:'franchise',
+    comps:'Booker / Lillard+tools high · Murray+D low',floor:44},
+  cameronboozer:{outlook:3,label:'ESPN #3 · all-star upside',ceiling:'allstar_prospect',
+    comps:'Kevin Love+ball skills · Sabonis+3',floor:24},
+  calebwilson:{outlook:4,label:'ESPN #4 · starter+',ceiling:'starter',
+    comps:'Bouncier Siakam high · John Collins low',floor:18},
+  braydenburries:{outlook:5,label:'ESPN #5 · starter+',ceiling:'starter',
+    comps:'Summer riser',floor:16},
+  mikelbrownjr:{outlook:6,label:'ESPN #6 · starter+',ceiling:'starter',
+    comps:'Lottery guard',floor:15},
+  mikelbrown:{outlook:6,label:'ESPN #6 · starter+',ceiling:'starter',
+    comps:'Lottery guard',floor:15},
+  yaxellendeborg:{outlook:7,label:'ESPN #7 · starter+',ceiling:'starter',
+    comps:'Summer riser',floor:14},
+  morezjohnsonjr:{outlook:8,label:'ESPN #8 · starter+',ceiling:'starter',
+    comps:'Big upside',floor:13},
+  morezjohnson:{outlook:8,label:'ESPN #8 · starter+',ceiling:'starter',
+    comps:'Big upside',floor:13},
+  kingstonflemings:{outlook:9,label:'ESPN #9 · starter+',ceiling:'starter',
+    comps:'Lottery guard',floor:13},
+  keatonwagler:{outlook:10,label:'ESPN #10 · starter+',ceiling:'starter',
+    comps:'Haliburton pace high · Nembhard low',floor:12},
+  dariusacuffjr:{outlook:11,label:'ESPN #11 · starter+',ceiling:'starter',
+    comps:'Brunson high · Bibby low',floor:12},
+  dariusacuff:{outlook:11,label:'ESPN #11 · starter+',ceiling:'starter',
+    comps:'Brunson high · Bibby low',floor:12}
+};
+const FRANCHISE_YOUNG = {
+  cooperflagg:1, paolobanchero:1, victorwembanyama:1,
+  anthonyedwards:1, cadecunningham:1, chetholmgren:1,
+  amenthompson:1, scottiebarnes:1
+};
+const GOOD_NOT_SUPERSTAR = {
+  jalenduren:1, cedriccoward:1, kelelware:1, keleelware:1, keleel:1
+};
+/* All-Rookie 1st/2nd team in last two seasons (2024-25, 2025-26). */
+const ALL_ROOKIE_RECENT = {
+  /* 2025-26 */
+  cooperflagg:1, konknueppel:1, vjedgecombe:1, dylanharper:1, cedriccoward:1,
+  acebailey:1, jeremiahfears:1, collinmurrayboyles:1, derikqueen:1, maximeraynaud:1,
+  /* 2024-25 */
+  stephoncastle:1, zachedey:1, zaccharierisacher:1, alexsarr:1, jaylenwells:1,
+  matasbuzelis:1, bubcarrington:1, donovanclingan:1, yvesmissi:1,
+  kelelware:1, keleelware:1, keleel:1
+};
+const CEILING_BOOST = {
+  franchise:0, superstar:0, allnba:0, allstar:0,
+  allstar_prospect:0, prospect:0, starter:0, role:0
+};
+const INJURY_PRONE = {
+  zionwilliamson:0.86, kawhileonard:0.88, anthonydavis:0.90, joelembiid:0.87,
+  kristapsporzingis:0.88, jamorant:0.91, kyrieirving:0.92, brandoningram:0.92,
+  jonathanisaac:0.84, lonzoball:0.83, bensimmons:0.82, paulgeorge:0.90,
+  jamalmurray:0.93, tylerherro:0.94, scoothenderson:0.93, darrynpeterson:0.93,
+  keeganmurray:0.95, jalenwilliams:0.95, chetholmgren:0.94
+};
+
+function playerName(p){
+  if (!p) return 'Unknown';
+  if (p.full_name) return p.full_name;
+  return ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || 'Unknown';
+}
+function ageBand(p){
+  const a = Number(p && p.age);
+  const isRookie = p && (p.source === 'rookie' || ROOKIE_NAMES.has(normalizeName(p.name)) || Number(p.yearsExp) === 0);
+  if (!Number.isFinite(a) || a <= 0) return isRookie ? 'young' : 'unknown';
+  if (a < 24) return 'young';
+  if (a <= 32) return 'prime';
+  return 'decline';
+}
+function ageMultiplier(p){ return AGE_MULT[ageBand(p)] || 0.95; }
+function injuryMult(p){
+  let m = INJURY_PRONE[normalizeName(p && p.name)];
+  if (m == null) m = 1;
+  const status = String(p && (p.injuryStatus || p.injury_status) || '').toLowerCase();
+  if (status === 'out' || status === 'ir' || status === 'injured reserve') m *= 0.94;
+  else if (status === 'doubtful') m *= 0.96;
+  else if (status === 'questionable') m *= 0.98;
+  return m;
+}
+function dynastyProfile(p){
+  if (!p) return null;
+  return ESPN_ROOKIE_OUTLOOK[normalizeName(p.name)] || null;
+}
+function ceilingClass(p){
+  if (!p) return 'role';
+  const key = normalizeName(p.name);
+  if (GOOD_NOT_SUPERSTAR[key]) return 'prospect';
+  const d = dynastyProfile(p);
+  if (d && d.ceiling) return d.ceiling;
+  if (FRANCHISE_YOUNG[key]) return 'franchise';
+  const ovr = Number(p.ovr);
+  const young = ageBand(p) === 'young' || ageBand(p) === 'prime';
+  if (Number.isFinite(ovr)){
+    if (ovr >= 95) return 'superstar';
+    if (ovr >= 90) return 'allnba';
+    if (ovr >= 88 && young) return 'franchise';
+    if (ovr >= 85) return 'allstar';
+  }
+  if (d) return d.ceiling || 'starter';
+  if (ROOKIE_NAMES.has(key) || p.source === 'rookie' || Number(p.yearsExp) === 0) return 'starter';
+  /* Recent All-Rookie — Prospect only if nothing else tagged them. */
+  if (ALL_ROOKIE_RECENT[key] || ALL_ROOKIE_RECENT[key.replace(/jr$/, '')]) return 'prospect';
+  return 'role';
+}
+function ceilingBoost(p){ return CEILING_BOOST[ceilingClass(p)] || 0; }
+function ceilingLabel(cls){
+  return ({
+    franchise:'Franchise', superstar:'Superstar', allnba:'All-NBA',
+    allstar:'All-Star', allstar_prospect:'All-Star upside',
+    prospect:'Prospect', starter:'Starter+', role:'Depth'
+  })[cls] || cls;
+}
+
+const HIST_WEIGHT = 0.5;
+const PROJ_WEIGHT = 0.5;
+
+/* Dynasty value:
+   - Vets: 50% consensus next-year proj + 50% last-3-season avg FP
+   - Rookies: 50% Sleeper proj + 50% ESPN comps/outlook floor (no L3 history)
+   Then age/injury (tags are display-only). */
+function isRookiePlayer(p){
+  if (!p) return false;
+  return p.source === 'rookie'
+    || ROOKIE_NAMES.has(normalizeName(p.name))
+    || Number(p.yearsExp) === 0;
+}
+function consensusProj(p){
+  const proj = Number(p && p.metric);
+  return Number.isFinite(proj) && proj > 0 ? proj : null;
+}
+function sleeperProj(p){
+  const s = Number(p && p.sleeperMetric);
+  return Number.isFinite(s) && s > 0 ? s : null;
+}
+function histAvg(p){
+  const h = Number(p && p.histMetric);
+  return Number.isFinite(h) && h > 0 ? h : null;
+}
+function compFloor(p){
+  const d = dynastyProfile(p);
+  const f = d && Number(d.floor);
+  return Number.isFinite(f) && f > 0 ? f : null;
+}
+function blendedFpBase(p){
+  if (isRookiePlayer(p)){
+    const sleeper = sleeperProj(p);
+    const comp = compFloor(p);
+    if (sleeper != null && comp != null) return PROJ_WEIGHT * sleeper + HIST_WEIGHT * comp;
+    if (sleeper != null) return sleeper;
+    if (comp != null) return comp;
+    return consensusProj(p); /* last resort if Sleeper missing */
+  }
+  const proj = consensusProj(p);
+  const hist = histAvg(p);
+  if (proj != null && hist != null) return PROJ_WEIGHT * proj + HIST_WEIGHT * hist;
+  if (proj != null) return proj;
+  if (hist != null) return hist;
+  return null;
+}
+function dynastyValue(p){
+  const base = blendedFpBase(p);
+  const age = ageMultiplier(p);
+  const inj = injuryMult(p);
+  const boost = ceilingBoost(p);
+  if (base == null){
+    return Math.max(0, boost * inj);
+  }
+  let v = base * age + boost;
+  if (ageBand(p) === 'young') v += 1;
+  return Math.max(0, v * inj);
+}
+
+function scoreStatLine(stats, scoring){
+  if (!stats || !scoring) return null;
+  let total = 0, matched = 0;
+  Object.keys(scoring).forEach(k => {
+    if (stats[k] != null && Number.isFinite(Number(stats[k]))){
+      total += Number(stats[k]) * scoring[k];
+      matched++;
+    }
+  });
+  return matched ? total : null;
+}
+
+function perGameStats(seasonTotals){
+  if (!seasonTotals) return null;
+  const gp = Number(seasonTotals.gp || seasonTotals.gms_active || 0);
+  if (!(gp > 0)) return null;
+  const out = {};
+  Object.keys(seasonTotals).forEach(k => {
+    const v = Number(seasonTotals[k]);
+    if (!Number.isFinite(v)) return;
+    if (k === 'gp' || k === 'gs' || k === 'gms_active') return;
+    /* Rank / rate fields stay as-is; counting stats → per game. */
+    if (/^rank|pos_rank|pts_std|sp$|plus_minus|fg_pct|ft_pct|tp_pct/i.test(k)) return;
+    out[k] = v / gp;
+  });
+  return out;
+}
+
+async function loadLast3SeasonAvg(scoring, currentSeason){
+  const y = Number(currentSeason) || new Date().getFullYear();
+  const seasons = [y - 1, y - 2, y - 3];
+  const byId = new Map(); // pid -> {sum, n, seasons:[]}
+  await Promise.all(seasons.map(async season => {
+    try {
+      const res = await fetch('https://api.sleeper.app/v1/stats/nba/regular/' + season);
+      if (!res.ok) return;
+      const rows = await res.json();
+      Object.keys(rows || {}).forEach(pid => {
+        const per = perGameStats(rows[pid]);
+        const fp = scoreStatLine(per, scoring);
+        if (fp == null) return;
+        const id = String(pid);
+        const slot = byId.get(id) || { sum: 0, n: 0, seasons: [] };
+        slot.sum += fp;
+        slot.n += 1;
+        slot.seasons.push(season);
+        byId.set(id, slot);
+      });
+    } catch (e){ /* skip bad season */ }
+  }));
+  const avgById = new Map();
+  byId.forEach((slot, id) => {
+    if (slot.n) avgById.set(id, slot.sum / slot.n);
+  });
+  return { avgById, seasons, counted: avgById.size };
+}
+
+function buildConsensusProjMaps(scoring){
+  const pack = window.NBA_PROJ_CONSENSUS || {};
+  const byId = new Map();
+  const byName = new Map();
+  const players = pack.players || {};
+  Object.keys(players).forEach(key => {
+    const row = players[key];
+    const fp = scoreStatLine(row.stats, scoring);
+    if (fp == null) return;
+    if (row.sleeperId) byId.set(String(row.sleeperId), fp);
+    byName.set(normalizeName(row.name), fp);
+    byName.set(key, fp);
+  });
+  return {
+    byId, byName,
+    meta: {
+      count: byName.size,
+      method: pack.method || 'median',
+      sites: pack.sites || [],
+      captured: pack.captured || null,
+      season: pack.season || null
+    }
+  };
+}
+
+async function loadSleeperProjMaps(scoring, season){
+  const byId = new Map();
+  const byName = new Map();
+  try {
+    const res = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
+    if (!res.ok) return { byId, byName, count: 0 };
+    const rows = await res.json();
+    (Array.isArray(rows) ? rows : []).forEach(row => {
+      const pl = row.player || {};
+      const pid = row.player_id || pl.player_id;
+      const name = (pl.full_name
+        || ((pl.first_name || '') + ' ' + (pl.last_name || '')).trim()).trim();
+      const fp = scoreStatLine(row.stats || {}, scoring);
+      if (fp == null || !(fp > 0)) return;
+      if (pid != null) byId.set(String(pid), fp);
+      if (name) byName.set(normalizeName(name), fp);
+    });
+  } catch (e){ /* Sleeper proj optional for rookies */ }
+  return { byId, byName, count: byId.size };
+}
+
+function fairnessGrade(ratio){
+  if (ratio >= 0.94) return 'A+';
+  if (ratio >= 0.88) return 'A';
+  if (ratio >= 0.80) return 'B+';
+  if (ratio >= 0.72) return 'B';
+  if (ratio >= 0.62) return 'C+';
+  if (ratio >= 0.52) return 'C';
+  if (ratio >= 0.40) return 'D';
+  return 'F';
+}
+
+const state = {
+  teams: [],
+  playersById: new Map(),
+  sendA: new Set(),
+  sendB: new Set(),
+  maxMetricLabel: 'Proj'
+};
+
+function makePlayer(pid, playerDb, projMaps, ceilings, histById, sleeperMaps){
+  const p = playerDb[pid] || {};
+  const name = playerName(p);
+  const hit = RATINGS_BY_NAME.get(normalizeName(name));
+  const metric = (projMaps.byId.get(String(pid))
+    ?? projMaps.byName.get(normalizeName(name))
+    ?? null);
+  const sleeperMetric = sleeperMaps
+    ? (sleeperMaps.byId.get(String(pid))
+      ?? sleeperMaps.byName.get(normalizeName(name))
+      ?? null)
+    : null;
+  const histMetric = histById && histById.get(String(pid)) != null
+    ? histById.get(String(pid)) : null;
+  const rec = {
+    id: String(pid),
+    name,
+    pos: (p.fantasy_positions && p.fantasy_positions[0]) || p.position || '\u2014',
+    positions: p.fantasy_positions || [p.position].filter(Boolean),
+    age: p.age ?? null,
+    yearsExp: p.years_exp ?? null,
+    injuryStatus: p.injury_status || null,
+    metric,
+    sleeperMetric,
+    histMetric,
+    ceiling: ceilings.get(String(pid)) ?? null,
+    ovr: hit && hit.ovr != null ? hit.ovr : null,
+    source: ROOKIE_NAMES.has(normalizeName(name)) || Number(p.years_exp) === 0 ? 'rookie' : null
+  };
+  rec.compFloor = compFloor(rec);
+  rec.blend = blendedFpBase(rec);
+  rec.dynasty = dynastyValue(rec);
+  rec.ceilClass = ceilingClass(rec);
+  rec.maxPiece = Number.isFinite(rec.ceiling) ? rec.ceiling
+    : (Number.isFinite(rec.blend) ? rec.blend
+      : (Number.isFinite(rec.metric) ? rec.metric : 0));
+  return rec;
+}
+
+function teamById(rosterId){
+  return state.teams.find(t => String(t.rosterId) === String(rosterId));
+}
+
+function maxPointsForIds(ids){
+  const vals = ids.map(id => {
+    const p = state.playersById.get(String(id));
+    return p ? p.maxPiece : 0;
+  }).filter(v => v > 0).sort((a, b) => b - a).slice(0, MAX_TOP_N);
+  return {
+    total: vals.reduce((s, v) => s + v, 0),
+    counted: vals.length
+  };
+}
+
+function analyze(){
+  const aId = document.getElementById('teamA').value;
+  const bId = document.getElementById('teamB').value;
+  const teamA = teamById(aId);
+  const teamB = teamById(bId);
+  const result = document.getElementById('result');
+  if (!teamA || !teamB || aId === bId){
+    result.hidden = true;
+    return;
+  }
+
+  const aName = teamA.displayName;
+  const bName = teamB.displayName;
+
+  const fromA = [...state.sendA].map(id => state.playersById.get(id)).filter(Boolean);
+  const fromB = [...state.sendB].map(id => state.playersById.get(id)).filter(Boolean);
+  if (!fromA.length && !fromB.length){
+    result.hidden = true;
+    return;
+  }
+
+  const valueToA = fromB.reduce((s, p) => s + p.dynasty, 0);
+  const valueToB = fromA.reduce((s, p) => s + p.dynasty, 0);
+  const high = Math.max(valueToA, valueToB, 0.01);
+  const low = Math.min(valueToA, valueToB);
+  const ratio = low / high;
+  const grade = fairnessGrade(ratio);
+  const winner = valueToA === valueToB ? null
+    : (valueToA > valueToB ? aName : bName);
+  const loser = winner == null ? null : (winner === aName ? bName : aName);
+  const unfair = ratio < 0.62 || (high - low) >= 12;
+
+  const afterA = new Set(teamA.playerIds);
+  const afterB = new Set(teamB.playerIds);
+  fromA.forEach(p => { afterA.delete(p.id); afterB.add(p.id); });
+  fromB.forEach(p => { afterB.delete(p.id); afterA.add(p.id); });
+
+  const beforeStandings = state.teams.map(t => {
+    const mp = maxPointsForIds(t.playerIds);
+    return { rosterId: t.rosterId, team: t.displayName, before: mp.total, after: mp.total, counted: mp.counted };
+  });
+  const afterMap = {};
+  state.teams.forEach(t => {
+    let ids = t.playerIds.slice();
+    if (String(t.rosterId) === String(aId)) ids = [...afterA];
+    if (String(t.rosterId) === String(bId)) ids = [...afterB];
+    const mp = maxPointsForIds(ids);
+    afterMap[t.rosterId] = mp;
+  });
+  const standings = beforeStandings.map(row => {
+    const after = afterMap[row.rosterId];
+    return {
+      rosterId: row.rosterId,
+      team: row.team,
+      before: row.before,
+      after: after.total,
+      delta: after.total - row.before,
+      counted: after.counted,
+      color: teamColor(teamById(row.rosterId))
+    };
+  }).sort((a, b) => b.after - a.after || b.before - a.before);
+
+  const leader = standings[0];
+  const second = standings[1];
+  const gap = leader && second ? leader.after - second.after : 0;
+  const beforeSorted = beforeStandings.slice().sort((a, b) => b.before - a.before);
+  const beforeGap = beforeSorted[0] && beforeSorted[1]
+    ? beforeSorted[0].before - beforeSorted[1].before : 0;
+  const leagueAvg = standings.reduce((s, r) => s + r.after, 0) / Math.max(1, standings.length);
+  const runaway = !!(leader && second
+    && (String(leader.rosterId) === String(aId) || String(leader.rosterId) === String(bId))
+    && gap >= Math.max(18, leagueAvg * 0.08)
+    && gap > beforeGap + 6);
+
+  const aColor = teamColor(teamA);
+  const bColor = teamColor(teamB);
+  const verdictCls = unfair ? 'unfair' : (runaway ? 'runaway' : '');
+  let headline = 'Balanced enough on dynasty value';
+  if (unfair && winner) headline = 'Lopsided — favors ' + winner;
+  else if (winner && ratio < 0.80) headline = 'Edge to ' + winner;
+  else if (winner) headline = 'Slight edge to ' + winner;
+
+  const flags = [];
+  if (unfair && loser){
+    flags.push({
+      cls: 'warn',
+      title: 'Super unfair',
+      text: loser + ' is giving up far more dynasty value ('
+        + (winner === aName ? valueToA : valueToB).toFixed(1) + ' received vs '
+        + (loser === aName ? valueToA : valueToB).toFixed(1) + '). Ratio '
+        + (ratio * 100).toFixed(0) + '%.'
+    });
+  } else {
+    flags.push({
+      cls: 'ok',
+      title: 'Value check',
+      text: 'Dynasty haul is within a reasonable band (ratio '
+        + (ratio * 100).toFixed(0) + '%). Grade ' + grade + '.'
+    });
+  }
+  if (runaway){
+    flags.push({
+      cls: 'warn',
+      title: 'Max Points runaway',
+      text: leader.team + ' would sit #1 at '
+        + leader.after.toFixed(1) + ' Max Points, '
+        + gap.toFixed(1) + ' ahead of ' + second.team
+        + ' (was ' + beforeGap.toFixed(1) + ' before). That pulls them too far from the pack.'
+    });
+  } else if (leader && (String(leader.rosterId) === String(aId) || String(leader.rosterId) === String(bId)) && gap > beforeGap + 2){
+    flags.push({
+      cls: 'ok',
+      title: 'Max Points',
+      text: leader.team + ' gains ground but stays within the league band (+'
+        + gap.toFixed(1) + ' over #2).'
+    });
+  } else {
+    flags.push({
+      cls: 'ok',
+      title: 'Max Points',
+      text: 'Deal does not create an outsized Max Points separation versus the rest of the league.'
+    });
+  }
+
+  function sideHtml(title, color, receives, value, maxDelta){
+    const items = receives.length
+      ? '<ul>' + receives.map(p =>
+        '<li><span>' + escapeHtml(p.name)
+          + (p.ceilClass && p.ceilClass !== 'role'
+            ? '<span class="ceil">' + escapeHtml(ceilingLabel(p.ceilClass)) + '</span>' : '')
+          + '</span><span class="dv">' + p.dynasty.toFixed(1) + '</span></li>'
+      ).join('') + '</ul>'
+      : '<p class="empty-note">Nothing incoming</p>';
+    return '<div class="side-card" style="--team-color:' + color + '">'
+      + '<h4>' + escapeHtml(title) + ' gets</h4>'
+      + '<p class="totals">Dynasty <span class="hi">' + value.toFixed(1) + '</span>'
+      + ' &middot; Max Pts <span class="hi">' + (maxDelta >= 0 ? '+' : '') + maxDelta.toFixed(1) + '</span></p>'
+      + items + '</div>';
+  }
+
+  const aDelta = afterMap[teamA.rosterId].total - (beforeStandings.find(r => String(r.rosterId) === String(aId)) || {before:0}).before;
+  const bDelta = afterMap[teamB.rosterId].total - (beforeStandings.find(r => String(r.rosterId) === String(bId)) || {before:0}).before;
+
+  /* League ruling: block lopsided value or Max Points runaways; soft imbalances → review. */
+  let ruling = 'allow';
+  let rulingTitle = 'Allow this trade';
+  let rulingWhy = 'Dynasty value is close enough and Max Points stay within the league band.';
+  const softEdge = !unfair && !runaway && (ratio < 0.80 || grade === 'C+' || grade === 'C');
+  if (unfair && runaway){
+    ruling = 'block';
+    rulingTitle = 'Do not allow';
+    rulingWhy = 'Blocked on both counts: dynasty value is super unfair'
+      + (loser ? ' to ' + loser : '')
+      + ', and the deal creates a Max Points runaway for ' + leader.team + '.';
+  } else if (unfair){
+    ruling = 'block';
+    rulingTitle = 'Do not allow';
+    rulingWhy = 'Blocked — too one-sided on dynasty value'
+      + (loser ? ' against ' + loser : '')
+      + ' (fairness ' + grade + ', ratio ' + (ratio * 100).toFixed(0) + '%).';
+  } else if (runaway){
+    ruling = 'block';
+    rulingTitle = 'Do not allow';
+    rulingWhy = 'Blocked — ' + leader.team + ' would pull too far ahead in Max Points (+'
+      + gap.toFixed(1) + ' over ' + second.team + '). League balance breaks even if the dynasty haul looks fine.';
+  } else if (softEdge){
+    ruling = 'review';
+    rulingTitle = 'Allow with caution';
+    rulingWhy = 'Passable, but ' + (winner || 'one side') + ' gets a clear edge (fairness '
+      + grade + '). Fine to allow unless the league wants a stricter bar.';
+  }
+
+  result.hidden = false;
+  result.innerHTML = '<div class="decision ' + ruling + '">'
+    + '<div class="stamp">' + (ruling === 'block' ? 'Block' : (ruling === 'review' ? 'Caution' : 'Allow')) + '</div>'
+    + '<div class="body"><h3>' + escapeHtml(rulingTitle) + '</h3>'
+    + '<p>' + escapeHtml(rulingWhy) + '</p></div></div>'
+    + '<div class="verdict ' + verdictCls + '">'
+    + '<div class="letter">' + grade + '</div>'
+    + '<div><h3>' + escapeHtml(headline) + '</h3>'
+    + '<p>' + escapeHtml(aName) + ' receives <strong>' + valueToA.toFixed(1)
+    + '</strong> dynasty &middot; ' + escapeHtml(bName) + ' receives <strong>'
+    + valueToB.toFixed(1) + '</strong></p></div></div>'
+    + '<div class="flags">' + flags.map(f =>
+      '<div class="flag ' + f.cls + '"><strong>' + escapeHtml(f.title)
+      + '</strong> — ' + escapeHtml(f.text) + '</div>'
+    ).join('') + '</div>'
+    + '<div class="sides">'
+    + sideHtml(aName, aColor, fromB, valueToA, aDelta)
+    + sideHtml(bName, bColor, fromA, valueToB, bDelta)
+    + '</div>'
+    + '<div class="max-block"><h3>Max Points after trade</h3>'
+    + '<p class="cap">Top ' + MAX_TOP_N + ' by ' + escapeHtml(state.maxMetricLabel)
+    + ' &middot; involved teams highlighted</p>'
+    + '<table><thead><tr><th>#</th><th>Team</th><th>After</th><th>Before</th><th>Change</th></tr></thead><tbody>'
+    + standings.map((r, i) => {
+      const dCls = r.delta > 0.25 ? 'up' : (r.delta < -0.25 ? 'down' : 'flat');
+      const rowCls = (runaway && i === 0 ? 'leader ' : '')
+        + ((String(r.rosterId) === String(aId) || String(r.rosterId) === String(bId)) ? 'involved' : '');
+      return '<tr class="' + rowCls + '">'
+        + '<td class="rk">' + (i + 1) + '</td>'
+        + '<td class="team" style="border-left:3px solid ' + (r.color || 'var(--gold)') + '">'
+        + escapeHtml(r.team) + '</td>'
+        + '<td class="num">' + r.after.toFixed(1) + '</td>'
+        + '<td class="num" style="color:var(--ink-dim)">' + r.before.toFixed(1) + '</td>'
+        + '<td class="delta ' + dCls + '">' + (r.delta >= 0 ? '+' : '') + r.delta.toFixed(1) + '</td>'
+        + '</tr>';
+    }).join('')
+    + '</tbody></table></div>';
+}
+
+function renderLists(){
+  const teamA = teamById(document.getElementById('teamA').value);
+  const teamB = teamById(document.getElementById('teamB').value);
+  const aColor = teamColor(teamA);
+  const bColor = teamColor(teamB);
+
+  document.getElementById('boardA').style.setProperty('--team-color', aColor);
+  document.getElementById('boardB').style.setProperty('--team-color', bColor);
+  document.getElementById('boardATitle').textContent = teamA ? teamA.displayName : 'Team A';
+  document.getElementById('boardBTitle').textContent = teamB ? teamB.displayName : 'Team B';
+
+  function listHtml(team, sendSet, side){
+    if (!team) return '<p class="empty-note" style="padding:14px">Select a team</p>';
+    const players = team.playerIds.map(id => state.playersById.get(id)).filter(Boolean)
+      .sort((a, b) => b.dynasty - a.dynasty);
+    return players.map(p => {
+      const checked = sendSet.has(p.id) ? ' checked' : '';
+      const sel = sendSet.has(p.id) ? ' selected' : '';
+      return '<label class="player-row' + sel + '">'
+        + '<input type="checkbox" data-side="' + side + '" value="' + escapeHtml(p.id) + '"' + checked + '>'
+        + '<span><span class="name">' + escapeHtml(p.name) + '</span>'
+        + (p.ceilClass && p.ceilClass !== 'role'
+          ? '<span class="ceil">' + escapeHtml(ceilingLabel(p.ceilClass)) + '</span>' : '')
+        + '<div class="meta">' + escapeHtml(p.pos)
+        + (Number.isFinite(p.age) ? ' · ' + p.age + 'y' : '')
+        + (isRookiePlayer(p)
+          ? ((p.sleeperMetric != null ? ' · ' + p.sleeperMetric.toFixed(1) + ' Slpr' : '')
+            + (p.compFloor != null ? ' · ' + p.compFloor.toFixed(0) + ' comps' : '')
+            + (p.sleeperMetric == null && p.compFloor == null ? ' · no FP base' : ''))
+          : ((p.metric != null ? ' · ' + p.metric.toFixed(1) + ' cons.' : '')
+            + (p.histMetric != null ? ' · ' + p.histMetric.toFixed(1) + ' L3' : '')
+            + (p.metric == null && p.histMetric == null ? ' · no FP base' : '')))
+        + '</div></span>'
+        + '<span class="val">' + p.dynasty.toFixed(1) + '</span></label>';
+    }).join('');
+  }
+
+  document.getElementById('listA').innerHTML = listHtml(teamA, state.sendA, 'A');
+  document.getElementById('listB').innerHTML = listHtml(teamB, state.sendB, 'B');
+
+  document.querySelectorAll('.player-row input').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const set = inp.dataset.side === 'A' ? state.sendA : state.sendB;
+      if (inp.checked) set.add(inp.value);
+      else set.delete(inp.value);
+      renderLists();
+      analyze();
+    });
+  });
+}
+
+function onTeamChange(){
+  const a = document.getElementById('teamA').value;
+  const b = document.getElementById('teamB').value;
+  if (a === b){
+    const other = state.teams.find(t => String(t.rosterId) !== String(a));
+    if (other) document.getElementById('teamB').value = String(other.rosterId);
+  }
+  state.sendA.clear();
+  state.sendB.clear();
+  renderLists();
+  analyze();
+}
+
+async function loadCeilings(league, scoring){
+  const ceilings = new Map();
+  let statsSeason = league.season;
+  try {
+    if (league.previous_league_id){
+      const r = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id);
+      if (r.ok){
+        const prev = await r.json();
+        statsSeason = prev.season;
+      }
+    }
+    const weeks = Array.from({length: 25}, (_, i) => i + 1);
+    const weeklyResults = await Promise.all(weeks.map(w =>
+      fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+        .then(r => r.ok ? r.json() : null).catch(() => null)
+    ));
+    const scoringKeys = Object.keys(scoring || {});
+    function fantasyValue(obj){
+      if (!obj) return null;
+      const gp = obj.gp || obj.games_played || null;
+      let total = 0, matched = 0;
+      scoringKeys.forEach(k => {
+        if (obj[k] != null){ total += obj[k] * scoring[k]; matched++; }
+      });
+      if (!matched) return null;
+      return gp && gp > 0 ? total / gp : total;
+    }
+    const weeklyByPlayer = {};
+    weeklyResults.forEach(wk => {
+      if (!wk) return;
+      Object.keys(wk).forEach(pid => {
+        const v = fantasyValue(wk[pid]);
+        if (v == null) return;
+        if (!weeklyByPlayer[pid]) weeklyByPlayer[pid] = [];
+        weeklyByPlayer[pid].push(v);
+      });
+    });
+    Object.keys(weeklyByPlayer).forEach(pid => {
+      const arr = weeklyByPlayer[pid];
+      const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
+      const stdev = Math.sqrt(arr.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / arr.length);
+      ceilings.set(String(pid), mean + stdev);
+    });
+    if (ceilings.size){
+      state.maxMetricLabel = 'weekly ceiling (mean+1σ, ' + statsSeason + ')';
+      return ceilings;
+    }
+  } catch (e){
+    /* fall through to projections */
+  }
+  state.maxMetricLabel = 'projected FP/G';
+  return ceilings;
+}
+
+async function load(){
+  const status = document.getElementById('status');
+  const tag = document.getElementById('progressTag');
+  try {
+    const [leagueRes, usersRes, rostersRes, playersRes] = await Promise.all([
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID),
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/users'),
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters'),
+      fetch('https://api.sleeper.app/v1/players/nba')
+    ]);
+    if (!leagueRes.ok || !usersRes.ok || !rostersRes.ok || !playersRes.ok){
+      throw new Error('Sleeper league request failed');
+    }
+    const league = await leagueRes.json();
+    const users = await usersRes.json();
+    const rosters = await rostersRes.json();
+    const playerDb = await playersRes.json();
+    const scoring = league.scoring_settings || {};
+
+    status.textContent = 'Loading consensus, Sleeper projections, and last-3-season averages\u2026';
+    const projMaps = buildConsensusProjMaps(scoring);
+    const projError = projMaps.meta.count ? null
+      : 'nba-proj-consensus.js missing or empty — run build-proj-consensus.py';
+
+    const [histPack, ceilings, sleeperMaps] = await Promise.all([
+      loadLast3SeasonAvg(scoring, league.season),
+      loadCeilings(league, scoring),
+      loadSleeperProjMaps(scoring, league.season || '2026')
+    ]);
+
+    const userById = {};
+    users.forEach(u => { userById[u.user_id] = u; });
+
+    state.playersById = new Map();
+    state.teams = rosters.map((r, i) => {
+      const u = userById[r.owner_id] || {};
+      const raw = (u.metadata && u.metadata.team_name) || u.display_name || ('Roster ' + r.roster_id);
+      const key = franchiseKey(raw, u.display_name);
+      const ids = []
+        .concat(r.players || [])
+        .concat(r.reserve || [])
+        .concat(r.taxi || [])
+        .map(String);
+      const uniq = Array.from(new Set(ids));
+      uniq.forEach(pid => {
+        if (!state.playersById.has(pid)){
+          state.playersById.set(pid, makePlayer(pid, playerDb, projMaps, ceilings, histPack.avgById, sleeperMaps));
+        }
+      });
+      return {
+        rosterId: r.roster_id,
+        key,
+        displayName: raw,
+        color: TEAM_COLORS[key] || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+        manager: u.display_name || '',
+        playerIds: uniq
+      };
+    }).sort((a, b) => {
+      if (a.key === MY_TEAM || a.displayName === MY_TEAM) return -1;
+      if (b.key === MY_TEAM || b.displayName === MY_TEAM) return 1;
+      return a.displayName.localeCompare(b.displayName);
+    });
+
+    const selA = document.getElementById('teamA');
+    const selB = document.getElementById('teamB');
+    const opts = state.teams.map(t =>
+      '<option value="' + escapeHtml(String(t.rosterId)) + '">' + escapeHtml(t.displayName)
+      + (t.key === MY_TEAM || t.displayName === MY_TEAM ? ' (you)' : '')
+      + (t.manager ? ' · ' + escapeHtml(t.manager) : '')
+      + '</option>'
+    ).join('');
+    selA.innerHTML = opts;
+    selB.innerHTML = opts;
+    const mine = state.teams.find(t => t.key === MY_TEAM || t.displayName === MY_TEAM) || state.teams[0];
+    const other = state.teams.find(t => t !== mine) || state.teams[1];
+    if (mine) selA.value = String(mine.rosterId);
+    if (other) selB.value = String(other.rosterId);
+    selA.addEventListener('change', onTeamChange);
+    selB.addEventListener('change', onTeamChange);
+
+    document.getElementById('app').hidden = false;
+    tag.textContent = state.teams.length + ' teams ready';
+    status.classList.remove('error');
+    if (projError){
+      status.classList.add('error');
+      status.textContent = 'Consensus projections unavailable (' + projError
+        + '). Vet dynasty value has no FP base until the snapshot is built. Rookies still use Sleeper + ESPN comps.';
+    } else {
+      const sites = (projMaps.meta.sites || []).join(', ') || 'multi-site';
+      status.textContent = 'Vets = 50% consensus (' + sites + ') + 50% L3 · Rookies = 50% Sleeper + 50% ESPN comps'
+        + ' (' + projMaps.meta.count + ' cons / ' + sleeperMaps.count + ' Slpr / ' + histPack.counted + ' L3'
+        + (projMaps.meta.captured ? ', captured ' + projMaps.meta.captured.slice(0, 10) : '')
+        + '). Max Points = top '
+        + MAX_TOP_N + ' by ' + state.maxMetricLabel + '.';
+    }
+    onTeamChange();
+  } catch (e){
+    status.classList.add('error');
+    status.textContent = 'Could not load trade analyzer: ' + (e.message || e);
+    tag.textContent = 'Error';
+  }
+}
+
+load();
+</script>
+</body>
+</html>
