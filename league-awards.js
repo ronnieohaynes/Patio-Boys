@@ -49,10 +49,10 @@
     gm: 5,
     mip: 3,
     win: 0.5,
-    playoff_win: 2,
+    playoff_win: 1.5,
     runner_up: 5,
     third_place: 3,
-    good_season: 4,
+    good_season: 3,
     win_streak: 5
   };
 
