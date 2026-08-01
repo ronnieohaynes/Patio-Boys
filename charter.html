@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patio Boys — Sleeper 26-27 Reconstruction Charter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14181F;
+    --surface:#1B212C;
+    --surface-2:#222A37;
+    --ink:#ECEEF3;
+    --ink-dim:#8B93A6;
+    --hairline:#2E3645;
+    --gold:#C9963A;
+    --coral:#D8553A;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Inter',sans-serif;
+    line-height:1.55;
+  }
+  a{color:var(--gold)}
+  .wrap{max-width:880px;margin:0 auto;padding:0 24px}
+  .mono{font-family:'IBM Plex Mono',monospace;letter-spacing:.04em}
+  .eyebrow{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--gold);
+    margin:0 0 10px;
+  }
+  .display{
+    font-family:'Anton',sans-serif;
+    text-transform:uppercase;
+    letter-spacing:.01em;
+    line-height:.95;
+    margin:0;
+  }
+
+  /* top bar */
+  .topbar{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:20px 0;border-bottom:1px solid var(--hairline);
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.08em;
+  }
+  .seal{
+    width:64px;height:64px;border:2px solid var(--gold);border-radius:50%;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;
+    transform:rotate(-8deg);flex-shrink:0;
+    font-family:'IBM Plex Mono',monospace;color:var(--gold);
+    font-size:9px;letter-spacing:.06em;text-transform:uppercase;text-align:center;
+  }
+  .seal span:first-child{font-size:14px;font-weight:600;letter-spacing:.1em}
+
+  /* hero */
+  .hero{padding:72px 0 48px;border-bottom:1px solid var(--hairline)}
+  .hero .display{font-size:clamp(42px,9vw,92px);color:var(--ink)}
+  .hero .display em{color:var(--gold);font-style:normal}
+  .hero p.lede{max-width:560px;color:var(--ink-dim);font-size:17px;margin:18px 0 32px}
+  .stat-strip{display:flex;flex-wrap:wrap;gap:28px;font-family:'IBM Plex Mono',monospace}
+  .stat-strip div{min-width:90px}
+  .stat-strip .num{font-size:22px;color:var(--gold);font-weight:600}
+  .stat-strip .lbl{font-size:11px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em}
+
+  article{padding:56px 0;border-bottom:1px solid var(--hairline)}
+  article:last-of-type{border-bottom:none}
+  article h2{font-size:clamp(28px,4vw,40px);margin:0 0 18px}
+  article p{color:#C9CDD8;max-width:640px}
+  article .note{
+    border-left:2px solid var(--coral);padding:10px 16px;background:var(--surface);
+    color:var(--ink-dim);font-size:14px;margin:18px 0;max-width:640px;border-radius:0 6px 6px 0;
+  }
+  article .caption{color:var(--ink-dim);font-size:13px;margin-top:14px}
+
+  /* roster grid */
+  .roster-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:1px;background:var(--hairline);border:1px solid var(--hairline);margin-top:24px;max-width:640px}
+  .roster-grid div{background:var(--surface);padding:14px 12px}
+  .roster-grid .n{font-family:'IBM Plex Mono',monospace;font-size:20px;color:var(--gold)}
+  .roster-grid .p{font-size:11px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.05em;margin-top:4px}
+
+  /* draft tables */
+  table{width:100%;border-collapse:collapse;margin-top:20px;font-family:'IBM Plex Mono',monospace;font-size:14px}
+  caption{text-align:left;font-family:'Inter',sans-serif;font-weight:600;color:var(--ink);margin-bottom:8px;font-size:15px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--hairline)}
+  th{color:var(--ink-dim);font-weight:400;text-transform:uppercase;font-size:11px;letter-spacing:.06em}
+  tr.lot td{color:var(--coral)}
+  tr.lot td:first-child::after{content:" \2605";color:var(--coral)}
+  .tables-wrap{display:grid;grid-template-columns:1fr 1fr;gap:32px}
+  @media (max-width:680px){.tables-wrap{grid-template-columns:1fr}}
+
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-size:13px;color:var(--ink-dim)}
+  .legend span.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--coral);margin-right:6px}
+
+  /* lottery cta */
+  .cta-box{
+    margin-top:24px;padding:28px;background:var(--surface);border:1px solid var(--hairline);
+    border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap;
+    max-width:640px;
+  }
+  .cta-box p{margin:0;max-width:340px}
+  .btn{
+    display:inline-block;background:var(--gold);color:#1B140A;text-decoration:none;
+    font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:13px;letter-spacing:.04em;
+    text-transform:uppercase;padding:13px 22px;border-radius:6px;transition:transform .15s ease;
+  }
+  .btn:hover{transform:translateY(-1px)}
+  .btn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+
+  /* payouts */
+  .payout-row{display:flex;justify-content:space-between;max-width:420px;padding:12px 0;border-bottom:1px solid var(--hairline);font-family:'IBM Plex Mono',monospace}
+  .payout-row:last-child{border-bottom:none;color:var(--gold);font-weight:600}
+
+  /* footer */
+  footer{padding:48px 0 64px}
+  footer .eyebrow{margin-bottom:18px}
+  .signatories{display:flex;flex-wrap:wrap;gap:10px 18px;font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink-dim)}
+  .signatories span{border-bottom:1px dotted var(--hairline);padding-bottom:2px}
+
+  .fade-in{opacity:0;transform:translateY(14px);transition:opacity .6s ease, transform .6s ease}
+  .fade-in.in{opacity:1;transform:translateY(0)}
+  @media (prefers-reduced-motion: reduce){
+    .fade-in{opacity:1;transform:none;transition:none}
+    html{scroll-behavior:auto}
+  }
+  body.embed .topbar{display:none}
+  body.embed .hero{padding:20px 0 16px}
+  body.embed .hero .display{font-size:clamp(28px,5vw,48px)}
+  body.embed .hero p.lede{font-size:15px;margin:12px 0 20px}
+  body.embed .stat-strip{gap:16px}
+  body.embed .wrap{max-width:none;padding:12px 16px 32px}
+  body.embed article{padding:28px 0}
+  body.embed article h2{font-size:clamp(22px,3vw,32px)}
+  body.embed .cta-box{display:none}
+  body.embed footer{padding:24px 0 32px}
+</style>
+</head>
+<body>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
+
+<div class="wrap topbar">
+  <span>Patio Boys &middot; Official League Document &middot; Season 3</span>
+  <span>Ratified June 2026</span>
+</div>
+
+<div class="wrap hero">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:24px;flex-wrap:wrap">
+    <div>
+      <p class="eyebrow">Patio Boys &middot; Sleeper Dynasty &middot; 8 Franchises</p>
+      <h1 class="display">Sleeper <em>26&ndash;27</em><br>Reconstruction<br>Charter</h1>
+    </div>
+    <div class="seal"><span>EST.</span><span>2024</span></div>
+  </div>
+  <p class="lede">Two franchises folded. The league didn't. This charter governs dues, rosters, the reconstruction draft, the lottery, and the road to the title for the upcoming season.</p>
+  <div class="stat-strip">
+    <div><div class="num">8</div><div class="lbl">Franchises</div></div>
+    <div><div class="num">$400</div><div class="lbl">Total Pot</div></div>
+    <div><div class="num">0</div><div class="lbl">Forced Cuts</div></div>
+    <div><div class="num">5</div><div class="lbl">Draft Rounds</div></div>
+    <div><div class="num">8</div><div class="lbl">Picks Decided By Chance</div></div>
+  </div>
+</div>
+
+<div class="wrap">
+
+<article class="fade-in">
+  <p class="eyebrow">Article I</p>
+  <h2>Buy-in &amp; Dues</h2>
+  <p>Entry is <strong>$50 per franchise</strong>, due before the reconstruction draft and again before the commissioner approves any trade. No exceptions, no IOUs.</p>
+  <div class="note">The commissioner personally confirms a franchise is paid up before signing off on a trade involving that franchise. Verbal promises don't count.</div>
+</article>
+
+<article class="fade-in">
+  <p class="eyebrow">Article II</p>
+  <h2>Roster &amp; Keepers</h2>
+  <p>There's no pre-draft keeper deadline and no forced cutdown. Every franchise carries its full current roster straight into the reconstruction draft, then adds up to 5 more picks on top. Rosters get trimmed down to the active limit on each manager's own schedule afterward, the same way roster management always works, any time before Week 1 lineups lock. Taxi and IR eligibility still apply as usual, only actual rookies and qualifying injuries land there.</p>
+  <div class="roster-grid">
+    <div><div class="n">1</div><div class="p">PG</div></div>
+    <div><div class="n">1</div><div class="p">SG</div></div>
+    <div><div class="n">1</div><div class="p">G</div></div>
+    <div><div class="n">1</div><div class="p">SF</div></div>
+    <div><div class="n">1</div><div class="p">PF</div></div>
+    <div><div class="n">1</div><div class="p">F</div></div>
+    <div><div class="n">1</div><div class="p">C</div></div>
+    <div><div class="n">3</div><div class="p">Util</div></div>
+    <div><div class="n">8</div><div class="p">Bench</div></div>
+    <div><div class="n">2</div><div class="p">Taxi</div></div>
+  </div>
+  <p class="caption">No one is required to cut anyone before draft day. Free agency and preseason can play out first, the wire (and FAAB) handles the rest.</p>
+</article>
+
+<article class="fade-in">
+  <p class="eyebrow">Article III</p>
+  <h2>The Reconstruction Draft</h2>
+  <p>jaysonarban (Arban) and Sad Face Fried Rice (Jeff) are leaving the league. Their rosters enter the free agent pool. Their own draft picks for this year are voided outright, no lottery, no consolation. Sleeper requires all 8 teams to hold a round 1 pick, no exceptions, so picks 7 and 8 get entered as Hamas and Belt, who get nothing from this round, purely so the commissioner can immediately trade those two picks away. Every round after round 1 auto-snakes automatically.</p>
+
+  <div class="tables-wrap">
+    <table>
+      <caption>Picks 1 &amp; 2 &mdash; coin flip, no trade needed</caption>
+      <thead><tr><th>Franchise</th><th>Chance at #1</th></tr></thead>
+      <tbody>
+        <tr><td>Funeral Home</td><td>50.0%</td></tr>
+        <tr><td>BoobieDominguez</td><td>50.0%</td></tr>
+      </tbody>
+    </table>
+
+    <table>
+      <caption>Picks 3&ndash;6 &mdash; odds for pick 6, revealed first</caption>
+      <thead><tr><th>Franchise</th><th>Odds</th></tr></thead>
+      <tbody>
+        <tr><td>Freakonomics</td><td>40.0%</td></tr>
+        <tr><td>Papa Book</td><td>30.0%</td></tr>
+        <tr><td>Bam Add the Mayo</td><td>20.0%</td></tr>
+        <tr><td>2011&ndash;12 Champs</td><td>10.0%</td></tr>
+      </tbody>
+    </table>
+
+    <table>
+      <caption>Picks 7 &amp; 8 &mdash; entered as Hamas/Belt, then traded</caption>
+      <thead><tr><th>Pick</th><th>Goes to</th></tr></thead>
+      <tbody>
+        <tr><td>7 (Hamas's pick)</td><td>Coin-flip loser, a bonus second round 1 pick</td></tr>
+        <tr><td>8 (Belt's pick)</td><td>Coin-flip winner, a bonus second round 1 pick</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="caption" style="max-width:640px">Picks 1 and 2 go directly and outright to the coin-flip winner and loser, no trade involved, that's just who wins the flip. Picks 3 through 6 are an open lottery among exactly four franchises, Bam Add the Mayo, Champs, Papa Book, and Freakonomics, weighted by current Max Points, worst ceiling gets the best odds, revealed worst-first. Funeral Home and BoobieDominguez are not in this pool, they're fully accounted for by the coin flip already. Picks 7 and 8 are Hamas and Belt in name only, immediately traded, pick 7 to whoever lost the coin flip, pick 8 to whoever won it, giving each of Funeral Home/BoobieDominguez a second round 1 pick. Hamas and Belt win nothing from round 1 itself.</p>
+
+  <table style="margin-top:28px">
+    <caption>Round 2, automatic except for three standing trades</caption>
+    <thead><tr><th>Pick</th><th>Franchise</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>9</td><td>Freakonomics</td><td>Belt's own pick (pick 8's reversal), traded to Freakonomics</td></tr>
+      <tr><td>10</td><td>Papa Book</td><td>Hamas's own pick (pick 7's reversal), traded to Papa Book</td></tr>
+      <tr><td>15</td><td>Coin-flip loser</td><td>Their own pick (pick 2's reversal), untouched</td></tr>
+      <tr><td>16</td><td>Coin-flip winner</td><td>Their own pick (pick 1's reversal), untouched</td></tr>
+      <tr><td>11&ndash;14</td><td>Whoever won that pick in picks 3&ndash;6</td><td>Plain auto-snake, with two exceptions below</td></tr>
+    </tbody>
+  </table>
+  <p class="caption" style="max-width:640px">Two exceptions inside picks 11&ndash;14: whichever one belongs to Papa Book reroutes to Hamas (the other half of the swap with pick 10). Whichever one belongs to Freakonomics gets pulled out entirely and re-lotteried among Bam Add the Mayo, Champs, Papa Book, and Hamas, weighted by current Max Points, since Freakonomics already has a guaranteed second pick from Belt. Net effect: Freakonomics and Papa Book are each guaranteed one round 2 pick no matter what, with a chance at a second; Hamas is guaranteed one (from the swap), with a chance at a second from the re-lottery; Belt gets none.</p>
+  <p class="caption" style="max-width:640px">Rounds 3 through 5 continue the same snake off round 1, not last season's record and not round 2's trade recipients. The round 1 and round 2 trades above were one-time transactions for those specific picks only. They don't carry forward, Hamas and Belt keep their own picks 7 and 8 for every other round, this is their first real, untraded action of the draft.</p>
+
+  <table style="margin-top:28px">
+    <caption>Rounds 3&ndash;5 (picks 17&ndash;40) &mdash; snake off round 1, Hamas/Belt keep their own 7 and 8</caption>
+    <thead><tr><th>Round</th><th>Picks 1&ndash;8 of the round, by pick</th></tr></thead>
+    <tbody>
+      <tr><td>3 (17&ndash;24)</td><td>Pick 1 winner, pick 2 winner, picks 3-6 winners in order, Hamas, Belt</td></tr>
+      <tr><td>4 (25&ndash;32)</td><td>Belt, Hamas, picks 3-6 winners reversed, pick 2 winner, pick 1 winner</td></tr>
+      <tr><td>5 (33&ndash;40)</td><td>Pick 1 winner, pick 2 winner, picks 3-6 winners in order, Hamas, Belt</td></tr>
+    </tbody>
+  </table>
+</article>
+
+<article class="fade-in">
+  <p class="eyebrow">Article IV</p>
+  <h2>The Lottery</h2>
+  <p>Picks 1 and 2 come down to a single coin flip between Funeral Home and BoobieDominguez, 50/50, the actual #1 and #2 overall picks on the line, outright. Picks 3 through 6 are an open lottery among Bam Add the Mayo, Champs, Papa Book, and Freakonomics, weighted by current Max Points, worst ceiling gets the best odds. Picks 7 and 8 are entered as Hamas and Belt purely because Sleeper requires every team to hold a pick, then immediately traded, pick 7 to the coin-flip loser, pick 8 to the coin-flip winner. Round 2 then auto-snakes, except for three standing trades: Belt's pick always goes to Freakonomics, Hamas and Papa Book have already swapped theirs, and Freakonomics' own pick gets re-lotteried among the field since they already have a second pick guaranteed.</p>
+  <div class="cta-box">
+    <p>League status, team intel, free agents, draft board, and the live lottery — all in one place.</p>
+    <a class="btn" href="lottery.html">Open Patio Boys HQ &#8599;</a>
+  </div>
+</article>
+
+<article class="fade-in">
+  <p class="eyebrow">Article V</p>
+  <h2>Playoffs</h2>
+  <p>Top 4 franchises qualify. Playoffs open in <strong>week 18</strong>, the short week coming off the All-Star break. Each round is a two-week matchup, combined score decides the winner. Ties go to the higher seed.</p>
+</article>
+
+<article class="fade-in">
+  <p class="eyebrow">Article VI</p>
+  <h2>Payouts</h2>
+  <p>Eight franchises at $50 apiece, total pot $400, split three ways.</p>
+  <div style="margin-top:20px">
+    <div class="payout-row"><span>3rd place</span><span>$50</span></div>
+    <div class="payout-row"><span>2nd place</span><span>$130</span></div>
+    <div class="payout-row"><span>1st place</span><span>$220</span></div>
+  </div>
+</article>
+
+<article class="fade-in">
+  <p class="eyebrow">Article VII</p>
+  <h2>Accolades</h2>
+  <p>Six automatic awards. No voting. Computed from league data when the season is complete; live leaders show in Patio Boys HQ during the year. Ties go to higher Points For, then higher lock-in points. First year in the league is ineligible for Most Improved.</p>
+  <div style="margin-top:20px">
+    <div class="payout-row"><span>Champion</span><span>Playoff winner &middot; 10 GOAT pts</span></div>
+    <div class="payout-row"><span>MVP</span><span>Most regular-season Points For &middot; 7 GOAT pts</span></div>
+    <div class="payout-row"><span>Most Improved</span><span>Biggest YoY Points For / game jump &middot; 3 GOAT pts</span></div>
+    <div class="payout-row"><span>Coach of the Year</span><span>Best lineup efficiency &middot; 5 GOAT pts</span></div>
+    <div class="payout-row"><span>GM of the Year</span><span>Biggest YoY gain in roster dynasty value (founding year: highest end total) &middot; 5 GOAT pts</span></div>
+    <div class="payout-row"><span>Regular-season win</span><span>1 GOAT pt each</span></div>
+    <div class="payout-row"><span>Playoff win</span><span>2 GOAT pts each (winners bracket)</span></div>
+    <div class="payout-row"><span>Runner-up</span><span>5 GOAT pts (lost the finals)</span></div>
+    <div class="payout-row"><span>3rd place</span><span>3 GOAT pts</span></div>
+    <div class="payout-row"><span>GOAT</span><span>Manager with the most career accolade + win GOAT points (GOAT Tracker)</span></div>
+  </div>
+  <p style="margin-top:18px;color:var(--ink-dim);font-size:15px"><strong>Dynasty value</strong> uses the same formula as the Trade Analyzer (proj/history blend, age, injury). <strong>GM</strong> compares each franchise&rsquo;s total roster dynasty score at season end vs the prior season end &mdash; biggest gain wins. In the league&rsquo;s first season (no prior year), GM is the highest end-of-season dynasty total instead. <strong>Lineup efficiency</strong> is actual starter fantasy points divided by the optimal legal lineup from that week&rsquo;s roster, averaged across scored weeks. <strong>GOAT</strong> follows the manager: finalized season awards, regular-season wins, winners-bracket playoff wins, runner-up, and 3rd place. The GOAT title itself is worth 0 and lives on the GOAT Tracker.</p>
+</article>
+
+</div>
+
+<footer class="wrap">
+  <p class="eyebrow">Signed &amp; Ratified</p>
+  <div class="signatories">
+    <span>Funeral Home</span><span>BoobieDominguez</span><span>2011&ndash;12 Champs</span>
+    <span>Freakonomics</span><span>Papa Book</span><span>Bam Add the Mayo</span>
+    <span>Hamas</span><span>Belt</span>
+  </div>
+</footer>
+
+<script>
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const items = document.querySelectorAll('.fade-in');
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('in'); });
+    }, { threshold: 0.15 });
+    items.forEach(i => obs.observe(i));
+  } else {
+    document.querySelectorAll('.fade-in').forEach(i => i.classList.add('in'));
+  }
+</script>
+</body>
+</html>
