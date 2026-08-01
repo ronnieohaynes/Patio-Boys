@@ -108,14 +108,14 @@
 <div class="wrap hero">
   <p class="eyebrow">Career &middot; Managers &middot; Finalized awards + wins</p>
   <h1 class="display">Who Owns<br>This League</h1>
-  <p>Every accolade, every regular-season win, every playoff win, and podium finishes (runner-up, 3rd) pay GOAT points. The manager with the most GOAT points is the league GOAT &mdash; a career title that updates as wins land and seasons lock.</p>
+  <p>Every accolade, every regular-season win, every playoff win, podium finishes, and Good Seasons (61%+ win rate) pay GOAT points. The manager with the most GOAT points is the league GOAT &mdash; a career title that updates as wins land and seasons lock.</p>
 </div>
 
 <div class="wrap">
   <section>
     <p class="eyebrow">Point Values</p>
     <h2>How It Scores</h2>
-    <p class="caption" style="margin-top:0">GOAT points follow the manager, not the franchise name. Finalized season awards, every regular-season win, every winners-bracket playoff win, runner-up, and 3rd place finishes count. Live wins count as the year goes; accolades only land when the season locks. The GOAT title itself is worth 0 &mdash; it is the scoreboard, not another stackable award.</p>
+    <p class="caption" style="margin-top:0">GOAT points follow the manager, not the franchise name. Finalized season awards, regular-season wins (0.5 each), winners-bracket playoff wins, runner-up, 3rd place, and Good Season bonuses count. Live wins count as the year goes; accolades and Good Seasons only land when the season locks. A Good Season is a regular-season win rate of 61% or better (NBA 50-win pace). The GOAT title itself is worth 0 &mdash; it is the scoreboard, not another stackable award.</p>
     <div class="legend" id="pointsLegend"></div>
   </section>
 
@@ -133,6 +133,7 @@
           <th>GOAT pts</th>
           <th>Wins</th>
           <th>Playoff W</th>
+          <th>GS</th>
           <th>2nd</th>
           <th>3rd</th>
           <th>Champ</th>
@@ -162,7 +163,15 @@
 <script src="league-awards.js"></script>
 <script>
 const LEAGUE_ID = '1350649177381552128';
-const ORDER = ['champion', 'mvp', 'coach', 'gm', 'mip', 'runner_up', 'third_place', 'win', 'playoff_win'];
+const ORDER = ['champion', 'mvp', 'coach', 'gm', 'mip', 'good_season', 'runner_up', 'third_place', 'win', 'playoff_win'];
+
+function fmtPts(n){
+  if (window.PatioBoysAwards && PatioBoysAwards.formatGoatPoints){
+    return PatioBoysAwards.formatGoatPoints(n);
+  }
+  const v = Number(n) || 0;
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
 
 function escapeHtml(s){
   return String(s == null ? '' : s)
@@ -209,16 +218,23 @@ async function boot(){
     coach: 'Coach of the Year',
     gm: 'GM of the Year',
     mip: 'Most Improved',
+    good_season: 'Good Season',
     runner_up: 'Runner-up',
     third_place: '3rd place',
     win: 'Regular-season win',
     playoff_win: 'Playoff win'
   };
+  const goodPct = Number(PatioBoysAwards.GOOD_SEASON_WIN_PCT || 0.610);
   legend.innerHTML = ORDER.map(id => {
     const medal = PatioBoysAwards.medalClass ? PatioBoysAwards.medalClass(id) : '';
+    const val = Number(pts[id] || 0);
+    let detail = fmtPts(val) + ' GOAT point' + (val === 1 ? '' : 's');
+    if (id === 'good_season'){
+      detail += ' · ' + Math.round(goodPct * 100) + '%+ win rate';
+    }
     return '<div class="legend-item' + (medal ? ' ' + medal : '') + '"><p class="nm">'
       + escapeHtml(names[id]) + '</p>'
-      + '<p class="val">' + Number(pts[id] || 0) + ' GOAT point' + (Number(pts[id]) === 1 ? '' : 's') + '</p></div>';
+      + '<p class="val">' + escapeHtml(detail) + '</p></div>';
   }).join('');
 
   try {
@@ -232,13 +248,14 @@ async function boot(){
       banner.innerHTML =
         '<p class="label">Current GOAT</p>'
         + '<p class="name">' + escapeHtml(leader.displayName) + '</p>'
-        + '<p class="sub">' + Number(leader.points).toFixed(0) + ' career GOAT points'
+        + '<p class="sub">' + fmtPts(leader.points) + ' career GOAT points'
         + (leader.franchise ? ' &middot; ' + escapeHtml(leader.franchise) : '')
         + ' &middot; ' + Number(leader.seasonWins || 0) + ' wins'
         + ' &middot; ' + Number(leader.playoffWins || 0) + ' playoff wins'
+        + ' &middot; ' + Number(leader.goodSeasons || 0) + ' good seasons'
         + ' &middot; ' + Number(leader.runnerUps || 0) + ' runner-up'
         + ' &middot; ' + Number(leader.thirdPlaces || 0) + ' third'
-        + ' &middot; ties break Champ &rarr; Runner-up &rarr; 3rd &rarr; MVP &rarr; Coach &rarr; GM &rarr; MIP &rarr; Playoff W &rarr; Wins</p>';
+        + ' &middot; ties break Champ &rarr; Runner-up &rarr; 3rd &rarr; MVP &rarr; Coach &rarr; GM &rarr; MIP &rarr; Good Season &rarr; Playoff W &rarr; Wins</p>';
     } else {
       banner.hidden = false;
       banner.innerHTML =
@@ -255,9 +272,10 @@ async function boot(){
         '<td>' + r.rank + '</td>'
         + '<td>' + escapeHtml(r.displayName) + '</td>'
         + '<td class="dim">' + escapeHtml(r.franchise || '\u2014') + '</td>'
-        + '<td class="pts">' + Number(r.points).toFixed(0) + '</td>'
+        + '<td class="pts">' + fmtPts(r.points) + '</td>'
         + '<td>' + countCell(r.seasonWins) + '</td>'
         + '<td>' + countCell(r.playoffWins) + '</td>'
+        + '<td>' + countCell(r.goodSeasons || r.counts.good_season) + '</td>'
         + '<td>' + countCell(r.runnerUps || r.counts.runner_up) + '</td>'
         + '<td>' + countCell(r.thirdPlaces || r.counts.third_place) + '</td>'
         + '<td>' + countCell(r.counts.champion) + '</td>'
@@ -292,19 +310,21 @@ async function boot(){
         : medal === 'medal-bronze' ? 'log-bronze' : '';
       return '<tr><td>' + escapeHtml(e.yearLabel) + '</td><td class="' + awardCls + '">'
         + escapeHtml(e.award)
-        + '</td><td>' + escapeHtml(e.team) + '</td><td class="pts">+' + e.points + '</td></tr>';
+        + '</td><td>' + escapeHtml(e.team) + '</td><td class="pts">+' + fmtPts(e.points) + '</td></tr>';
     }).join('') || '<tr><td colspan="4" class="dim">No locked awards yet.</td></tr>';
     winLog.style.display = '';
 
-    const locked = log.filter(e => e.id !== 'runner_up' && e.id !== 'third_place').length;
+    const locked = log.filter(e => e.id !== 'runner_up' && e.id !== 'third_place' && e.id !== 'good_season').length;
     const totalWins = rows.reduce((s, r) => s + (r.seasonWins || 0), 0);
     const totalPw = rows.reduce((s, r) => s + (r.playoffWins || 0), 0);
+    const totalGs = rows.reduce((s, r) => s + (r.goodSeasons || 0), 0);
     const totalRu = rows.reduce((s, r) => s + (r.runnerUps || 0), 0);
     const total3 = rows.reduce((s, r) => s + (r.thirdPlaces || 0), 0);
-    statusEl.textContent = totalWins + ' regular wins (+' + Number(pts.win || 0) + ' ea)'
-      + ' \u00b7 ' + totalPw + ' playoff wins (+' + Number(pts.playoff_win || 0) + ' ea)'
-      + ' \u00b7 ' + totalRu + ' runner-up (+' + Number(pts.runner_up || 0) + ' ea)'
-      + ' \u00b7 ' + total3 + ' third (+' + Number(pts.third_place || 0) + ' ea)'
+    statusEl.textContent = totalWins + ' regular wins (+' + fmtPts(pts.win || 0) + ' ea)'
+      + ' \u00b7 ' + totalPw + ' playoff wins (+' + fmtPts(pts.playoff_win || 0) + ' ea)'
+      + ' \u00b7 ' + totalGs + ' good seasons (+' + fmtPts(pts.good_season || 0) + ' ea)'
+      + ' \u00b7 ' + totalRu + ' runner-up (+' + fmtPts(pts.runner_up || 0) + ' ea)'
+      + ' \u00b7 ' + total3 + ' third (+' + fmtPts(pts.third_place || 0) + ' ea)'
       + (locked ? ' \u00b7 ' + locked + ' locked award' + (locked === 1 ? '' : 's') : '')
       + '.';
   } catch (e){
