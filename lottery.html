@@ -465,7 +465,7 @@
     <div class="main-tabs" role="tablist" aria-label="Draft board panels">
       <button class="main-tab active" id="tabBtnStatus" type="button" role="tab" aria-selected="true" aria-controls="tabStatus">League Status</button>
       <button class="main-tab" id="tabBtnIntel" type="button" role="tab" aria-selected="false" aria-controls="tabIntel">Team Intel</button>
-      <button class="main-tab" id="tabBtnGoat" type="button" role="tab" aria-selected="false" aria-controls="tabGoat">GOAT Tracker</button>
+      <button class="main-tab" id="tabBtnGoat" type="button" role="tab" aria-selected="false" aria-controls="tabGoat">GOAT Race</button>
       <button class="main-tab" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa">Free Agents</button>
       <button class="main-tab" id="tabBtnTrade" type="button" role="tab" aria-selected="false" aria-controls="tabTrade">Trade Analyzer</button>
       <button class="main-tab" id="tabBtnGrades" type="button" role="tab" aria-selected="false" aria-controls="tabGrades">Draft Grades</button>
@@ -536,7 +536,7 @@
       <iframe class="status-frame" id="teamIntelFrame" title="Team Intel" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabGoat" role="tabpanel" aria-labelledby="tabBtnGoat" hidden>
-      <iframe class="status-frame" id="goatTrackerFrame" title="GOAT Tracker" src="about:blank"></iframe>
+      <iframe class="status-frame" id="goatTrackerFrame" title="GOAT Race" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabFa" role="tabpanel" aria-labelledby="tabBtnFa" hidden>
       <iframe class="status-frame" id="freeAgentsFrame" title="Free Agents" src="about:blank"></iframe>
@@ -2362,7 +2362,7 @@ function setMainTab(tab){
     intelFrameLoaded = true;
   }
   if (isGoat && !goatFrameLoaded){
-    document.getElementById('goatTrackerFrame').src = 'goat-tracker.html?embed=1&v=20260802-bundles';
+    document.getElementById('goatTrackerFrame').src = 'goat-tracker.html?embed=1&v=20260802-race';
     goatFrameLoaded = true;
   }
   if (isMock && !mockFrameLoaded){
