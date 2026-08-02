@@ -295,17 +295,35 @@
   body.finalized .stream-machine{display:none !important}
   body.finalized .stream-stage{grid-template-columns:minmax(0,1fr)}
 
-  .main-tabs{
-    display:flex;gap:8px;margin-bottom:10px;flex-shrink:0;
+  .hq-nav{
+    display:flex;flex-direction:column;gap:8px;margin-bottom:10px;flex-shrink:0;
   }
-  .main-tab{
+  .nav-primary,.nav-secondary{
+    display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+  }
+  .nav-secondary{
+    gap:6px;padding-top:2px;border-top:1px solid color-mix(in srgb, var(--hairline) 80%, transparent);
+  }
+  .nav-group,.nav-sub{
     margin:0;background:transparent;color:var(--ink-dim);border:1px solid var(--hairline);
-    font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:11px;letter-spacing:.06em;
-    text-transform:uppercase;padding:8px 14px;border-radius:6px;cursor:pointer;
+    font-family:'IBM Plex Mono',monospace;font-weight:600;letter-spacing:.06em;
+    text-transform:uppercase;border-radius:6px;cursor:pointer;
   }
-  .main-tab:hover{color:var(--ink);border-color:var(--ink-dim)}
-  .main-tab.active{background:var(--surface);color:var(--gold);border-color:var(--gold)}
-  .main-tab:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+  .nav-group{
+    font-size:12px;padding:9px 16px;
+  }
+  .nav-sub{
+    font-size:11px;padding:7px 12px;
+  }
+  .nav-group:hover,.nav-sub:hover{color:var(--ink);border-color:var(--ink-dim)}
+  .nav-group.active{
+    background:var(--surface);color:var(--gold);border-color:var(--gold);
+  }
+  .nav-sub.active{
+    background:color-mix(in srgb, var(--gold) 14%, var(--surface));
+    color:var(--gold);border-color:color-mix(in srgb, var(--gold) 55%, var(--hairline));
+  }
+  .nav-group:focus-visible,.nav-sub:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
   .boardsection.rules-panel{
     padding:0;
     overflow:hidden;
@@ -462,19 +480,27 @@
   </aside>
 
   <section class="stream-main">
-    <div class="main-tabs" role="tablist" aria-label="Draft board panels">
-      <button class="main-tab active" id="tabBtnStatus" type="button" role="tab" aria-selected="true" aria-controls="tabStatus">League Status</button>
-      <button class="main-tab" id="tabBtnIntel" type="button" role="tab" aria-selected="false" aria-controls="tabIntel">Team Intel</button>
-      <button class="main-tab" id="tabBtnGoat" type="button" role="tab" aria-selected="false" aria-controls="tabGoat">GOAT Race</button>
-      <button class="main-tab" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa">Free Agents</button>
-      <button class="main-tab" id="tabBtnTx" type="button" role="tab" aria-selected="false" aria-controls="tabTx">Transactions</button>
-      <button class="main-tab" id="tabBtnTrade" type="button" role="tab" aria-selected="false" aria-controls="tabTrade">Trade Analyzer</button>
-      <button class="main-tab" id="tabBtnGrades" type="button" role="tab" aria-selected="false" aria-controls="tabGrades">Draft Grades</button>
-      <button class="main-tab" id="tabBtnBoard" type="button" role="tab" aria-selected="false" aria-controls="tabBoard">Draft Board</button>
-      <button class="main-tab" id="tabBtnRules" type="button" role="tab" aria-selected="false" aria-controls="tabRules">Rules</button>
-      <button class="main-tab" id="tabBtnCharter" type="button" role="tab" aria-selected="false" aria-controls="tabCharter">Charter</button>
-      <button class="main-tab" id="tabBtnMock" type="button" role="tab" aria-selected="false" aria-controls="tabMock">Mock Draft</button>
-    </div>
+    <nav class="hq-nav" aria-label="Patio Boys HQ">
+      <div class="nav-primary" role="tablist" aria-label="HQ sections">
+        <button class="nav-group active" id="navGroupLeague" type="button" role="tab" aria-selected="true" data-group="league">League</button>
+        <button class="nav-group" id="navGroupMoves" type="button" role="tab" aria-selected="false" data-group="moves">Moves</button>
+        <button class="nav-group" id="navGroupDraft" type="button" role="tab" aria-selected="false" data-group="draft">Draft</button>
+        <button class="nav-group" id="navGroupRules" type="button" role="tab" aria-selected="false" data-group="rules">Rules</button>
+      </div>
+      <div class="nav-secondary" id="navSecondary" role="tablist" aria-label="League panels">
+        <button class="nav-sub active" id="tabBtnStatus" type="button" role="tab" aria-selected="true" aria-controls="tabStatus" data-group="league" data-tab="status">Status</button>
+        <button class="nav-sub" id="tabBtnIntel" type="button" role="tab" aria-selected="false" aria-controls="tabIntel" data-group="league" data-tab="intel">Intel</button>
+        <button class="nav-sub" id="tabBtnGoat" type="button" role="tab" aria-selected="false" aria-controls="tabGoat" data-group="league" data-tab="goat">GOAT</button>
+        <button class="nav-sub" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa" data-group="moves" data-tab="fa" hidden>FA</button>
+        <button class="nav-sub" id="tabBtnTx" type="button" role="tab" aria-selected="false" aria-controls="tabTx" data-group="moves" data-tab="tx" hidden>Transactions</button>
+        <button class="nav-sub" id="tabBtnTrade" type="button" role="tab" aria-selected="false" aria-controls="tabTrade" data-group="moves" data-tab="trade" hidden>Analyzer</button>
+        <button class="nav-sub" id="tabBtnBoard" type="button" role="tab" aria-selected="false" aria-controls="tabBoard" data-group="draft" data-tab="board" hidden>Board</button>
+        <button class="nav-sub" id="tabBtnGrades" type="button" role="tab" aria-selected="false" aria-controls="tabGrades" data-group="draft" data-tab="grades" hidden>Grades</button>
+        <button class="nav-sub" id="tabBtnMock" type="button" role="tab" aria-selected="false" aria-controls="tabMock" data-group="draft" data-tab="mock" hidden>Mock</button>
+        <button class="nav-sub" id="tabBtnCharter" type="button" role="tab" aria-selected="false" aria-controls="tabCharter" data-group="rules" data-tab="charter" hidden>Charter</button>
+        <button class="nav-sub" id="tabBtnRules" type="button" role="tab" aria-selected="false" aria-controls="tabRules" data-group="rules" data-tab="rules" hidden>Lottery</button>
+      </div>
+    </nav>
     <div class="boardsection" id="tabBoard" role="tabpanel" aria-labelledby="tabBtnBoard" hidden>
       <div class="board-commentary">
         <p class="oneliner" id="oneliner">Eight positions, one drum. The balls settle, the lever drops, and whoever lands in the chute wins the draw.</p>
@@ -2312,90 +2338,61 @@ document.getElementById('runBtn').addEventListener('click', () => {
   runLottery();
 });
 
-function setMainTab(tab){
-  const isBoard = tab === 'board';
-  const isRules = tab === 'rules';
-  const isCharter = tab === 'charter';
-  const isStatus = tab === 'status';
-  const isIntel = tab === 'intel';
-  const isGoat = tab === 'goat';
-  const isMock = tab === 'mock';
-  const isGrades = tab === 'grades';
-  const isFa = tab === 'fa';
-  const isTx = tab === 'tx';
-  const isTrade = tab === 'trade';
-  document.getElementById('tabBoard').hidden = !isBoard;
-  document.getElementById('tabRules').hidden = !isRules;
-  document.getElementById('tabCharter').hidden = !isCharter;
-  document.getElementById('tabStatus').hidden = !isStatus;
-  document.getElementById('tabIntel').hidden = !isIntel;
-  document.getElementById('tabGoat').hidden = !isGoat;
-  document.getElementById('tabMock').hidden = !isMock;
-  document.getElementById('tabGrades').hidden = !isGrades;
-  document.getElementById('tabFa').hidden = !isFa;
-  document.getElementById('tabTx').hidden = !isTx;
-  document.getElementById('tabTrade').hidden = !isTrade;
-  document.getElementById('tabBtnBoard').classList.toggle('active', isBoard);
-  document.getElementById('tabBtnRules').classList.toggle('active', isRules);
-  document.getElementById('tabBtnCharter').classList.toggle('active', isCharter);
-  document.getElementById('tabBtnStatus').classList.toggle('active', isStatus);
-  document.getElementById('tabBtnIntel').classList.toggle('active', isIntel);
-  document.getElementById('tabBtnGoat').classList.toggle('active', isGoat);
-  document.getElementById('tabBtnMock').classList.toggle('active', isMock);
-  document.getElementById('tabBtnGrades').classList.toggle('active', isGrades);
-  document.getElementById('tabBtnFa').classList.toggle('active', isFa);
-  document.getElementById('tabBtnTx').classList.toggle('active', isTx);
-  document.getElementById('tabBtnTrade').classList.toggle('active', isTrade);
-  document.getElementById('tabBtnBoard').setAttribute('aria-selected', String(isBoard));
-  document.getElementById('tabBtnRules').setAttribute('aria-selected', String(isRules));
-  document.getElementById('tabBtnCharter').setAttribute('aria-selected', String(isCharter));
-  document.getElementById('tabBtnStatus').setAttribute('aria-selected', String(isStatus));
-  document.getElementById('tabBtnIntel').setAttribute('aria-selected', String(isIntel));
-  document.getElementById('tabBtnGoat').setAttribute('aria-selected', String(isGoat));
-  document.getElementById('tabBtnMock').setAttribute('aria-selected', String(isMock));
-  document.getElementById('tabBtnGrades').setAttribute('aria-selected', String(isGrades));
-  document.getElementById('tabBtnFa').setAttribute('aria-selected', String(isFa));
-  document.getElementById('tabBtnTx').setAttribute('aria-selected', String(isTx));
-  document.getElementById('tabBtnTrade').setAttribute('aria-selected', String(isTrade));
-  if (isCharter && !charterFrameLoaded){
-    document.getElementById('charterFrame').src = 'charter.html?embed=1&v=20260731-medals';
-    charterFrameLoaded = true;
+/* HQ nav: 4 primary groups, secondary tabs inside each. */
+const HQ_NAV = {
+  league: {
+    label: 'League',
+    defaultTab: 'status',
+    tabs: {
+      status: { panel: 'tabStatus', btn: 'tabBtnStatus', frame: 'leagueStatusFrame', src: 'league-status.html?embed=1&v=20260731-medals', loaded: 'statusFrameLoaded' },
+      intel:  { panel: 'tabIntel',  btn: 'tabBtnIntel',  frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260731-medals',     loaded: 'intelFrameLoaded' },
+      goat:   { panel: 'tabGoat',   btn: 'tabBtnGoat',   frame: 'goatTrackerFrame',   src: 'goat-tracker.html?embed=1&v=20260802-eff-wins', loaded: 'goatFrameLoaded' }
+    }
+  },
+  moves: {
+    label: 'Moves',
+    defaultTab: 'fa',
+    tabs: {
+      fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',     src: 'free-agents.html?embed=1&v=20260724-fa-pool',     loaded: 'faFrameLoaded' },
+      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',   src: 'transactions.html?embed=1&v=20260802-tx',         loaded: 'txFrameLoaded' },
+      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame',  src: 'trade-analyzer.html?embed=1&v=20260731-5050',    loaded: 'tradeFrameLoaded' }
+    }
+  },
+  draft: {
+    label: 'Draft',
+    defaultTab: 'board',
+    tabs: {
+      board:  { panel: 'tabBoard',  btn: 'tabBtnBoard',  frame: null,               src: null,                                    loaded: null },
+      grades: { panel: 'tabGrades', btn: 'tabBtnGrades', frame: 'draftGradesFrame', src: 'draft-grades.html?embed=1&v=20260731-5050', loaded: 'gradesFrameLoaded' },
+      mock:   { panel: 'tabMock',   btn: 'tabBtnMock',   frame: 'mockDraftFrame',   src: 'mock-draft.html?embed=1&v=20260731-noboost', loaded: 'mockFrameLoaded' }
+    }
+  },
+  rules: {
+    label: 'Rules',
+    defaultTab: 'charter',
+    tabs: {
+      charter: { panel: 'tabCharter', btn: 'tabBtnCharter', frame: 'charterFrame', src: 'charter.html?embed=1&v=20260731-medals', loaded: 'charterFrameLoaded' },
+      rules:   { panel: 'tabRules',   btn: 'tabBtnRules',   frame: null,           src: null,                                    loaded: null }
+    }
   }
-  if (isStatus && !statusFrameLoaded){
-    document.getElementById('leagueStatusFrame').src = 'league-status.html?embed=1&v=20260731-medals';
-    statusFrameLoaded = true;
-  }
-  if (isIntel && !intelFrameLoaded){
-    document.getElementById('teamIntelFrame').src = 'team-intel.html?embed=1&v=20260731-medals';
-    intelFrameLoaded = true;
-  }
-  if (isGoat && !goatFrameLoaded){
-    document.getElementById('goatTrackerFrame').src = 'goat-tracker.html?embed=1&v=20260802-eff-wins';
-    goatFrameLoaded = true;
-  }
-  if (isMock && !mockFrameLoaded){
-    document.getElementById('mockDraftFrame').src = 'mock-draft.html?embed=1&v=20260731-noboost';
-    mockFrameLoaded = true;
-  }
-  if (isGrades && !gradesFrameLoaded){
-    document.getElementById('draftGradesFrame').src = 'draft-grades.html?embed=1&v=20260731-5050';
-    gradesFrameLoaded = true;
-  }
-  if (isFa && !faFrameLoaded){
-    document.getElementById('freeAgentsFrame').src = 'free-agents.html?embed=1&v=20260724-fa-pool';
-    faFrameLoaded = true;
-  }
-  if (isTx && !txFrameLoaded){
-    document.getElementById('transactionsFrame').src = 'transactions.html?embed=1&v=20260802-tx';
-    txFrameLoaded = true;
-  }
-  if (isTrade && !tradeFrameLoaded){
-    document.getElementById('tradeAnalyzerFrame').src = 'trade-analyzer.html?embed=1&v=20260731-5050';
-    tradeFrameLoaded = true;
-  }
-}
+};
+const HQ_TAB_TO_GROUP = {};
+Object.keys(HQ_NAV).forEach(group => {
+  Object.keys(HQ_NAV[group].tabs).forEach(tab => { HQ_TAB_TO_GROUP[tab] = group; });
+});
 
-let charterFrameLoaded = false;
+const hqFrameLoaded = {
+  statusFrameLoaded: false,
+  intelFrameLoaded: false,
+  goatFrameLoaded: false,
+  mockFrameLoaded: false,
+  gradesFrameLoaded: false,
+  faFrameLoaded: false,
+  txFrameLoaded: false,
+  tradeFrameLoaded: false,
+  charterFrameLoaded: false
+};
+/* Back-compat aliases used elsewhere in this file. */
 let statusFrameLoaded = false;
 let intelFrameLoaded = false;
 let goatFrameLoaded = false;
@@ -2404,22 +2401,90 @@ let gradesFrameLoaded = false;
 let faFrameLoaded = false;
 let txFrameLoaded = false;
 let tradeFrameLoaded = false;
+let charterFrameLoaded = false;
+
+function syncFrameLoadedFlags(){
+  statusFrameLoaded = hqFrameLoaded.statusFrameLoaded;
+  intelFrameLoaded = hqFrameLoaded.intelFrameLoaded;
+  goatFrameLoaded = hqFrameLoaded.goatFrameLoaded;
+  mockFrameLoaded = hqFrameLoaded.mockFrameLoaded;
+  gradesFrameLoaded = hqFrameLoaded.gradesFrameLoaded;
+  faFrameLoaded = hqFrameLoaded.faFrameLoaded;
+  txFrameLoaded = hqFrameLoaded.txFrameLoaded;
+  tradeFrameLoaded = hqFrameLoaded.tradeFrameLoaded;
+  charterFrameLoaded = hqFrameLoaded.charterFrameLoaded;
+}
+
+const hqLastTab = {
+  league: 'status',
+  moves: 'fa',
+  draft: 'board',
+  rules: 'charter'
+};
+let hqActiveGroup = 'league';
+let hqActiveTab = 'status';
+
+function setHqGroup(group){
+  if (!HQ_NAV[group]) return;
+  const next = hqLastTab[group] || HQ_NAV[group].defaultTab;
+  setMainTab(next);
+}
+
+function setMainTab(tab){
+  const group = HQ_TAB_TO_GROUP[tab];
+  if (!group || !HQ_NAV[group] || !HQ_NAV[group].tabs[tab]) return;
+  hqActiveGroup = group;
+  hqActiveTab = tab;
+  hqLastTab[group] = tab;
+
+  const secondary = document.getElementById('navSecondary');
+  if (secondary){
+    secondary.setAttribute('aria-label', HQ_NAV[group].label + ' panels');
+  }
+
+  document.querySelectorAll('.nav-group').forEach(btn => {
+    const on = btn.dataset.group === group;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', String(on));
+  });
+
+  document.querySelectorAll('.nav-sub').forEach(btn => {
+    const inGroup = btn.dataset.group === group;
+    const on = btn.dataset.tab === tab;
+    btn.hidden = !inGroup;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', String(on));
+  });
+
+  Object.keys(HQ_NAV).forEach(g => {
+    Object.keys(HQ_NAV[g].tabs).forEach(t => {
+      const conf = HQ_NAV[g].tabs[t];
+      const panel = document.getElementById(conf.panel);
+      if (panel) panel.hidden = !(g === group && t === tab);
+    });
+  });
+
+  const conf = HQ_NAV[group].tabs[tab];
+  if (conf.frame && conf.src && conf.loaded && !hqFrameLoaded[conf.loaded]){
+    const frame = document.getElementById(conf.frame);
+    if (frame){
+      frame.src = conf.src;
+      hqFrameLoaded[conf.loaded] = true;
+      syncFrameLoadedFlags();
+    }
+  }
+}
 
 document.getElementById('charterNav').addEventListener('click', (e) => {
   e.preventDefault();
   setMainTab('charter');
 });
-document.getElementById('tabBtnBoard').addEventListener('click', () => setMainTab('board'));
-document.getElementById('tabBtnRules').addEventListener('click', () => setMainTab('rules'));
-document.getElementById('tabBtnCharter').addEventListener('click', () => setMainTab('charter'));
-document.getElementById('tabBtnStatus').addEventListener('click', () => setMainTab('status'));
-document.getElementById('tabBtnIntel').addEventListener('click', () => setMainTab('intel'));
-document.getElementById('tabBtnGoat').addEventListener('click', () => setMainTab('goat'));
-document.getElementById('tabBtnMock').addEventListener('click', () => setMainTab('mock'));
-document.getElementById('tabBtnGrades').addEventListener('click', () => setMainTab('grades'));
-document.getElementById('tabBtnFa').addEventListener('click', () => setMainTab('fa'));
-document.getElementById('tabBtnTx').addEventListener('click', () => setMainTab('tx'));
-document.getElementById('tabBtnTrade').addEventListener('click', () => setMainTab('trade'));
+document.querySelectorAll('.nav-group').forEach(btn => {
+  btn.addEventListener('click', () => setHqGroup(btn.dataset.group));
+});
+document.querySelectorAll('.nav-sub').forEach(btn => {
+  btn.addEventListener('click', () => setMainTab(btn.dataset.tab));
+});
 
 applyPresetPicks();
 renderCharterTicker();
@@ -2442,25 +2507,13 @@ if (DRAFT_FINALIZED){
 }
 
 function activeHqFrame(){
-  const frames = [
-    ['tabCharter', 'charterFrame', () => charterFrameLoaded],
-    ['tabStatus', 'leagueStatusFrame', () => statusFrameLoaded],
-    ['tabIntel', 'teamIntelFrame', () => intelFrameLoaded],
-    ['tabGoat', 'goatTrackerFrame', () => goatFrameLoaded],
-    ['tabMock', 'mockDraftFrame', () => mockFrameLoaded],
-    ['tabGrades', 'draftGradesFrame', () => gradesFrameLoaded],
-    ['tabFa', 'freeAgentsFrame', () => faFrameLoaded],
-    ['tabTx', 'transactionsFrame', () => txFrameLoaded],
-    ['tabTrade', 'tradeAnalyzerFrame', () => tradeFrameLoaded]
-  ];
-  for (let i = 0; i < frames.length; i++){
-    const tab = document.getElementById(frames[i][0]);
-    const frame = document.getElementById(frames[i][1]);
-    if (tab && !tab.hidden && frames[i][2]() && frame && frame.src && frame.src !== 'about:blank'){
-      return frame;
-    }
-  }
-  return null;
+  const group = HQ_NAV[hqActiveGroup];
+  const conf = group && group.tabs[hqActiveTab];
+  if (!conf || !conf.frame || !conf.loaded || !hqFrameLoaded[conf.loaded]) return null;
+  const panel = document.getElementById(conf.panel);
+  const frame = document.getElementById(conf.frame);
+  if (!panel || panel.hidden || !frame || !frame.src || frame.src === 'about:blank') return null;
+  return frame;
 }
 
 function refreshHqView(){
