@@ -273,7 +273,8 @@
     return { total: Number(opt.total) || 0, starterIds };
   }
 
-  /* Roster-context quality: lineup dynasty delta + cut-fat bonus − bench-clog penalty. */
+  /* Roster-context quality: lineup dynasty delta + cut-fat bonus − bench-clog penalty.
+     Dropping one of your worst players (roster-rules crunch) is a good move. */
   function rosterQualityDelta(beforePids, adds, drops, slots, maps, playerDb, asOfSeason, currentSeason){
     const before = (beforePids || []).map(String);
     const dropSet = new Set((drops || []).map(String));
@@ -286,21 +287,50 @@
     let delta = afterL.total - beforeL.total;
     const notes = [];
 
+    const ranked = before.map(pid => ({
+      pid: String(pid),
+      v: valueForPidAt(maps, pid, playerDb, asOfSeason, currentSeason)
+    })).sort((a, b) => a.v - b.v || a.pid.localeCompare(b.pid)); /* worst first */
+    const rankByPid = new Map();
+    ranked.forEach((row, i) => { rankByPid.set(row.pid, { rank: i, v: row.v }); });
+    const n = ranked.length;
+    const median = n ? ranked[Math.floor((n - 1) / 2)].v : 0;
+    const dropOnly = addList.length === 0 && dropSet.size > 0;
+
     (drops || []).forEach(pid => {
       const id = String(pid);
-      const v = valueForPidAt(maps, id, playerDb, asOfSeason, currentSeason);
-      if (!beforeL.starterIds.has(id)){
-        if (v < 15){
-          const bonus = Math.min(3.5, 1.2 + (15 - v) * 0.12);
-          delta += bonus;
-          notes.push('cut fat: ' + playerName(playerDb[id], id));
-        } else if (v < 22){
-          delta += 0.55;
-          notes.push('bench cut: ' + playerName(playerDb[id], id));
+      const info = rankByPid.get(id) || {
+        rank: n,
+        v: valueForPidAt(maps, id, playerDb, asOfSeason, currentSeason)
+      };
+      const v = info.v;
+      const isStarter = beforeL.starterIds.has(id);
+      const amongWorst = n > 0 && (info.rank <= 2 || info.rank / n <= 0.25);
+      const name = playerName(playerDb[id], id);
+
+      if (amongWorst && !isStarter){
+        /* Cutting one of your worst — good hygiene / roster-rules compliance. */
+        let bonus = 5.4 - info.rank * 0.55;
+        if (dropOnly) bonus += 1.4;
+        if (v < median) bonus += 0.4;
+        bonus = Math.max(3.4, Math.min(7.5, bonus));
+        delta += bonus;
+        notes.push('cut worst: ' + name);
+      } else if (!isStarter && v <= median){
+        delta += dropOnly ? 3.2 : 2.4;
+        notes.push('cut fat: ' + name);
+      } else if (!isStarter){
+        if (v < 22){
+          delta += dropOnly ? 1.6 : 0.9;
+          notes.push('bench cut: ' + name);
         } else {
           delta -= (v - 22) * 0.1;
-          notes.push('cut stash: ' + playerName(playerDb[id], id));
+          notes.push('cut stash: ' + name);
         }
+      } else if (amongWorst){
+        /* Weak "starter" on a thin roster — still a sensible cut. */
+        delta += dropOnly ? 2.4 : 1.5;
+        notes.push('cut weak starter: ' + name);
       }
     });
 
