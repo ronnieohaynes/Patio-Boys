@@ -142,10 +142,10 @@
           <th>Playoff W</th>
           <th>MVP</th>
           <th>Coach</th>
-          <th title="Career lineup efficiency (starter FP / optimal legal lineup). Display only — no GOAT points.">Eff</th>
           <th>GM</th>
           <th>MIP</th>
           <th>Wins</th>
+          <th title="Career lineup efficiency (starter FP / optimal legal lineup). Display only — no GOAT points.">Eff</th>
           <th>GS</th>
           <th>WS</th>
           <th>Hardware</th>
@@ -326,10 +326,10 @@ async function boot(){
         + '<td>' + countCell(r.playoffWins) + '</td>'
         + '<td>' + countCell(r.counts.mvp) + '</td>'
         + '<td>' + countCell(r.counts.coach) + '</td>'
-        + '<td>' + effCell(r.lineupEfficiency) + '</td>'
         + '<td>' + countCell(r.counts.gm) + '</td>'
         + '<td>' + countCell(r.counts.mip) + '</td>'
         + '<td>' + countCell(r.seasonWins) + '</td>'
+        + '<td>' + effCell(r.lineupEfficiency) + '</td>'
         + '<td>' + countCell(r.goodSeasons || r.counts.good_season) + '</td>'
         + '<td>' + countCell(r.winStreaks || r.counts.win_streak) + '</td>'
         + '<td>' + chipsHtml(r) + '</td>';
