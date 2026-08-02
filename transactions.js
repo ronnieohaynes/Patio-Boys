@@ -394,6 +394,7 @@
     const resolvePick = await buildPickResolver(seasons, unique);
 
     onProgress('Building dynasty maps by season…');
+    await ensureAwardsDynasty();
     const Awards = global.PatioBoysAwards;
     if (!Awards || !Awards.loadDynastyMaps){
       throw new Error('PatioBoysAwards.loadDynastyMaps unavailable');
