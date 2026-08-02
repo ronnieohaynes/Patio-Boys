@@ -37,19 +37,23 @@
     { id:'goat', name:'GOAT', short:'GOAT' }
   ];
 
-  /* Career GOAT tracker — awards + regular-season wins + playoff wins. GOAT itself awards 0.
+  /* Career GOAT tracker — awards + win bundles + playoff wins. GOAT itself awards 0.
      Good Season = NBA-style ~50-win bar: regular-season win% >= 61% (locks when season completes).
-     Win Streak = any regular-season streak of WIN_STREAK_THRESHOLD+ (rare; pays once per streak). */
+     Win Streak = any regular-season streak of WIN_STREAK_THRESHOLD+ (rare; pays once per streak).
+     Wins score in integer bundles only (no per-win decimals): every 10 RS wins = 5 pts,
+     every 2 playoff wins = 3 pts. */
   const GOOD_SEASON_WIN_PCT = 0.610;
   const WIN_STREAK_THRESHOLD = 10;
+  const RS_WIN_BUNDLE_SIZE = 10;
+  const PLAYOFF_WIN_BUNDLE_SIZE = 2;
   const GOAT_POINTS = {
     champion: 10,
     mvp: 7,
     coach: 5,
     gm: 5,
     mip: 3,
-    win: 0.5,
-    playoff_win: 1.5,
+    win: 5,           /* points per RS_WIN_BUNDLE_SIZE career regular-season wins */
+    playoff_win: 3,   /* points per PLAYOFF_WIN_BUNDLE_SIZE career playoff wins */
     runner_up: 5,
     third_place: 3,
     good_season: 3,
@@ -923,8 +927,8 @@
 
   function buildGoatStandings(seasonPacks){
     const byKey = {};
-    const winPts = Number(GOAT_POINTS.win) || 0;
-    const playoffPts = Number(GOAT_POINTS.playoff_win) || 0;
+    const winBundlePts = Number(GOAT_POINTS.win) || 0;
+    const playoffBundlePts = Number(GOAT_POINTS.playoff_win) || 0;
     const runnerPts = Number(GOAT_POINTS.runner_up) || 0;
     const thirdPts = Number(GOAT_POINTS.third_place) || 0;
     const goodPts = Number(GOAT_POINTS.good_season) || 0;
@@ -936,21 +940,7 @@
         const row = ensureGoatRow(byKey, id, r.manager || r.displayName, r.ownerId, r.displayName);
         if (!row) return;
         const w = Number(r.wins) || 0;
-        if (w > 0 && winPts){
-          row.seasonWins += w;
-          row.winPoints += w * winPts;
-          row.points += w * winPts;
-          row.hardware.push({
-            id: 'win',
-            name: 'Regular-season wins',
-            short: 'W',
-            season: pack.season,
-            yearLabel: yearLabel(pack.season),
-            seasonTag: pack.seasonTag,
-            points: w * winPts,
-            value: w
-          });
-        }
+        if (w > 0) row.seasonWins += w;
         /* Good Season locks with the year — same cadence as hardware accolades. */
         if (pack.complete && goodPts && isGoodSeasonRow(r)){
           const pct = seasonWinPct(r);
@@ -988,21 +978,7 @@
           });
         }
         const pw = Number(r.playoffWins) || 0;
-        if (pw > 0 && playoffPts){
-          row.playoffWins += pw;
-          row.playoffWinPoints += pw * playoffPts;
-          row.points += pw * playoffPts;
-          row.hardware.push({
-            id: 'playoff_win',
-            name: 'Playoff wins',
-            short: 'PW',
-            season: pack.season,
-            yearLabel: yearLabel(pack.season),
-            seasonTag: pack.seasonTag,
-            points: pw * playoffPts,
-            value: pw
-          });
-        }
+        if (pw > 0) row.playoffWins += pw;
         const ru = Number(r.runnerUp) || 0;
         if (ru > 0 && runnerPts){
           row.runnerUps += ru;
@@ -1073,6 +1049,44 @@
       });
     });
 
+    /* Career win bundles — integer only, no leftover fractional points. */
+    Object.values(byKey).forEach(row => {
+      const rsBundles = Math.floor((Number(row.seasonWins) || 0) / RS_WIN_BUNDLE_SIZE);
+      if (rsBundles > 0 && winBundlePts){
+        const pts = rsBundles * winBundlePts;
+        row.winPoints = pts;
+        row.points += pts;
+        row.counts.win = rsBundles;
+        row.hardware.push({
+          id: 'win',
+          name: 'Regular-season win bundles',
+          short: 'W',
+          season: 'career',
+          yearLabel: 'Career',
+          seasonTag: 'career',
+          points: pts,
+          value: rsBundles * RS_WIN_BUNDLE_SIZE
+        });
+      }
+      const poBundles = Math.floor((Number(row.playoffWins) || 0) / PLAYOFF_WIN_BUNDLE_SIZE);
+      if (poBundles > 0 && playoffBundlePts){
+        const pts = poBundles * playoffBundlePts;
+        row.playoffWinPoints = pts;
+        row.points += pts;
+        row.counts.playoff_win = poBundles;
+        row.hardware.push({
+          id: 'playoff_win',
+          name: 'Playoff win bundles',
+          short: 'PW',
+          season: 'career',
+          yearLabel: 'Career',
+          seasonTag: 'career',
+          points: pts,
+          value: poBundles * PLAYOFF_WIN_BUNDLE_SIZE
+        });
+      }
+    });
+
     const rows = Object.values(byKey).sort((a, b) =>
       b.points - a.points
       || (b.counts.champion || 0) - (a.counts.champion || 0)
@@ -1094,6 +1108,8 @@
       points: Object.assign({}, GOAT_POINTS),
       goodSeasonWinPct: GOOD_SEASON_WIN_PCT,
       winStreakThreshold: WIN_STREAK_THRESHOLD,
+      rsWinBundleSize: RS_WIN_BUNDLE_SIZE,
+      playoffWinBundleSize: PLAYOFF_WIN_BUNDLE_SIZE,
       rows,
       goat: goat ? {
         key: goat.key,
@@ -1348,6 +1364,8 @@
     GOAT_POINTS,
     GOOD_SEASON_WIN_PCT,
     WIN_STREAK_THRESHOLD,
+    RS_WIN_BUNDLE_SIZE,
+    PLAYOFF_WIN_BUNDLE_SIZE,
     franchiseKey,
     yearLabel,
     seasonTag,

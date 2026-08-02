@@ -108,14 +108,14 @@
 <div class="wrap hero">
   <p class="eyebrow">Career &middot; Managers &middot; Finalized awards + wins</p>
   <h1 class="display">Who Owns<br>This League</h1>
-  <p>Every accolade, every regular-season win, every playoff win, podium finishes, Good Seasons (61%+ win rate), and 10+ win streaks pay GOAT points. The manager with the most GOAT points is the league GOAT &mdash; a career title that updates as wins land and seasons lock.</p>
+  <p>Every accolade, win bundles, playoff-win bundles, podium finishes, Good Seasons (61%+ win rate), and 10+ win streaks pay GOAT points. The manager with the most GOAT points is the league GOAT &mdash; a career title that updates as wins land and seasons lock.</p>
 </div>
 
 <div class="wrap">
   <section>
     <p class="eyebrow">Point Values</p>
     <h2>How It Scores</h2>
-    <p class="caption" style="margin-top:0">GOAT points follow the manager, not the franchise name. Finalized season awards, regular-season wins (0.5 each), winners-bracket playoff wins, runner-up, 3rd place, Good Season bonuses, and 10+ win streaks count. Live wins and win streaks count as they happen; accolades and Good Seasons only land when the season locks. A Good Season is a regular-season win rate of 61% or better (NBA 50-win pace). A 10+ streak is rare enough to pay on its own. The GOAT title itself is worth 0 &mdash; it is the scoreboard, not another stackable award.</p>
+    <p class="caption" style="margin-top:0">GOAT points follow the manager, not the franchise name. Finalized season awards, career win bundles, podium finishes, Good Season bonuses, and 10+ win streaks count. Every 10 career regular-season wins = 5 points; every 2 career playoff wins = 3 points (leftovers bank until the next bundle). Live wins and win streaks count as they happen; accolades and Good Seasons only land when the season locks. A Good Season is a regular-season win rate of 61% or better (NBA 50-win pace). The GOAT title itself is worth 0 &mdash; it is the scoreboard, not another stackable award.</p>
     <div class="legend" id="pointsLegend"></div>
   </section>
 
@@ -223,11 +223,13 @@ async function boot(){
     win_streak: '10+ win streak',
     runner_up: 'Runner-up',
     third_place: '3rd place',
-    win: 'Regular-season win',
-    playoff_win: 'Playoff win'
+    win: '10 RS wins',
+    playoff_win: '2 playoff wins'
   };
   const goodPct = Number(PatioBoysAwards.GOOD_SEASON_WIN_PCT || 0.610);
   const streakN = Number(PatioBoysAwards.WIN_STREAK_THRESHOLD || 10);
+  const rsBundle = Number(PatioBoysAwards.RS_WIN_BUNDLE_SIZE || 10);
+  const poBundle = Number(PatioBoysAwards.PLAYOFF_WIN_BUNDLE_SIZE || 2);
   legend.innerHTML = ORDER.map(id => {
     const medal = PatioBoysAwards.medalClass ? PatioBoysAwards.medalClass(id) : '';
     const val = Number(pts[id] || 0);
@@ -238,6 +240,14 @@ async function boot(){
     if (id === 'win_streak'){
       detail += ' · regular season';
       names.win_streak = streakN + '+ win streak';
+    }
+    if (id === 'win'){
+      names.win = rsBundle + ' RS wins';
+      detail += ' · career bundle';
+    }
+    if (id === 'playoff_win'){
+      names.playoff_win = poBundle + ' playoff wins';
+      detail += ' · career bundle';
     }
     return '<div class="legend-item' + (medal ? ' ' + medal : '') + '"><p class="nm">'
       + escapeHtml(names[id]) + '</p>'
@@ -332,8 +342,8 @@ async function boot(){
     const totalWs = rows.reduce((s, r) => s + (r.winStreaks || 0), 0);
     const totalRu = rows.reduce((s, r) => s + (r.runnerUps || 0), 0);
     const total3 = rows.reduce((s, r) => s + (r.thirdPlaces || 0), 0);
-    statusEl.textContent = totalWins + ' regular wins (+' + fmtPts(pts.win || 0) + ' ea)'
-      + ' \u00b7 ' + totalPw + ' playoff wins (+' + fmtPts(pts.playoff_win || 0) + ' ea)'
+    statusEl.textContent = totalWins + ' regular wins (every ' + rsBundle + ' = +' + fmtPts(pts.win || 0) + ')'
+      + ' \u00b7 ' + totalPw + ' playoff wins (every ' + poBundle + ' = +' + fmtPts(pts.playoff_win || 0) + ')'
       + ' \u00b7 ' + totalGs + ' good seasons (+' + fmtPts(pts.good_season || 0) + ' ea)'
       + ' \u00b7 ' + totalWs + ' win streaks (+' + fmtPts(pts.win_streak || 0) + ' ea)'
       + ' \u00b7 ' + totalRu + ' runner-up (+' + fmtPts(pts.runner_up || 0) + ' ea)'
