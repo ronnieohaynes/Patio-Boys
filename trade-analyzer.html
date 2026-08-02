@@ -256,8 +256,14 @@
   </div>
 </div>
 
-<script src="2k-ratings-snapshot.js"></script>
-<script src="nba-proj-consensus.js"></script>
+<script>
+(function(){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260802';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js'].forEach(function(src){
+    document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
+  });
+})();
+</script>
 <script>
 const LEAGUE_ID = '1350649177381552128';
 const MY_TEAM = 'Freakonomics';

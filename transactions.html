@@ -145,10 +145,14 @@
   </section>
 </div>
 
-<script src="2k-ratings-snapshot.js?v=20260802-tx2"></script>
-<script src="nba-proj-consensus.js?v=20260802-tx2"></script>
-<script src="league-awards.js?v=20260802-tx2"></script>
-<script src="transactions.js?v=20260802-tx2"></script>
+<script>
+(function(){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260802-tx2';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','league-awards.js','transactions.js'].forEach(function(src){
+    document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
+  });
+})();
+</script>
 <script>
 const LEAGUE_ID = '1350649177381552128';
 const state = { pack: null };

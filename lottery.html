@@ -2468,11 +2468,24 @@ function setMainTab(tab){
   if (conf.frame && conf.src && conf.loaded && !hqFrameLoaded[conf.loaded]){
     const frame = document.getElementById(conf.frame);
     if (frame){
-      frame.src = conf.src;
+      frame.src = hqFrameSrc(conf.src);
       hqFrameLoaded[conf.loaded] = true;
       syncFrameLoadedFlags();
     }
   }
+}
+
+/* Stamp iframe URLs so Refresh / nocache also busts nested script caches. */
+function hqCacheToken(){
+  return new URLSearchParams(location.search).get('nocache') || '';
+}
+function hqFrameSrc(src){
+  const url = new URL(src, location.href);
+  const token = hqCacheToken();
+  if (token) url.searchParams.set('nocache', token);
+  const file = url.pathname.split('/').pop();
+  const q = url.searchParams.toString();
+  return file + (q ? '?' + q : '');
 }
 
 document.getElementById('charterNav').addEventListener('click', (e) => {
@@ -2517,19 +2530,35 @@ function activeHqFrame(){
 }
 
 function refreshHqView(){
-  const frame = activeHqFrame();
-  if (frame){
-    const url = new URL(frame.src, location.href);
-    url.searchParams.set('t', String(Date.now()));
-    frame.src = url.toString();
+  /* Hard-reload the HQ shell with a fresh cache token, restoring the active tab.
+     Embed pages read `nocache` and append it to their script URLs so Safari/GitHub
+     Pages don't keep serving stale JS. */
+  const url = new URL(location.href);
+  const token = String(Date.now());
+  url.searchParams.set('nocache', token);
+  url.searchParams.set('tab', hqActiveTab || 'status');
+  const go = () => {
+    location.replace(url.pathname + '?' + url.searchParams.toString() + url.hash);
+  };
+  if (window.caches && typeof caches.keys === 'function'){
+    caches.keys()
+      .then(keys => Promise.all(keys.map(k => caches.delete(k))))
+      .catch(() => {})
+      .then(go);
     return;
   }
-  location.reload();
+  go();
 }
 
 document.getElementById('refreshBtn').addEventListener('click', refreshHqView);
+const refreshBtn = document.getElementById('refreshBtn');
+if (refreshBtn){
+  refreshBtn.title = 'Reload HQ and bypass cached scripts';
+  refreshBtn.setAttribute('aria-label', 'Refresh and clear cache');
+}
 
-setMainTab('status');
+const bootTab = new URLSearchParams(location.search).get('tab');
+setMainTab(bootTab && HQ_TAB_TO_GROUP[bootTab] ? bootTab : 'status');
 const leagueDataPromise = loadLeagueData();
 // The stats/trades cache only feeds the League Wire, which is hidden along
 // with the whole sidebar in finalized mode; skip those Sleeper calls.
