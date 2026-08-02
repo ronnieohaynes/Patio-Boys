@@ -431,10 +431,14 @@
     });
 
     const byKey = {};
+    const weeksByKey = {};
     Object.keys(sums).forEach(key => {
-      if (counts[key] > 0) byKey[key] = sums[key] / counts[key];
+      if (counts[key] > 0){
+        byKey[key] = sums[key] / counts[key];
+        weeksByKey[key] = counts[key];
+      }
     });
-    return { byKey, weeksUsed };
+    return { byKey, weeksByKey, weeksUsed };
   }
 
   async function loadLeagueBundle(leagueId){
@@ -546,9 +550,14 @@
         manager: t.manager || '',
         ownerId: t.ownerId || null,
         coachEff: coach.byKey[t.key],
+        coachWeeks: coach.weeksByKey[t.key] || 0,
         maxPts: (rows.find(r => r.key === t.key) || {}).maxPts,
         pf: t.pf
       }));
+      rows.forEach(r => {
+        if (coach.byKey[r.key] != null) r.coachEff = coach.byKey[r.key];
+        if (coach.weeksByKey[r.key]) r.coachWeeks = coach.weeksByKey[r.key];
+      });
       coachWinner = pickWinner(coachRows, 'coachEff');
     }
     awards.push(awardRecord('coach', season, coachWinner, pending || !coachWinner));
@@ -909,6 +918,9 @@
       thirdPlaces: 0,
       goodSeasons: 0,
       winStreaks: 0,
+      lineupEffSum: 0,
+      lineupEffWeeks: 0,
+      lineupEfficiency: null,
       counts: {},
       hardware: [],
       rank: null
@@ -941,6 +953,16 @@
         if (!row) return;
         const w = Number(r.wins) || 0;
         if (w > 0) row.seasonWins += w;
+        /* Career lineup efficiency (display only — no GOAT points). */
+        const eff = Number(r.coachEff);
+        const effWeeks = Number(r.coachWeeks) || 0;
+        if (Number.isFinite(eff) && effWeeks > 0){
+          row.lineupEffSum += eff * effWeeks;
+          row.lineupEffWeeks += effWeeks;
+        } else if (Number.isFinite(eff)){
+          row.lineupEffSum += eff;
+          row.lineupEffWeeks += 1;
+        }
         /* Good Season locks with the year — same cadence as hardware accolades. */
         if (pack.complete && goodPts && isGoodSeasonRow(r)){
           const pct = seasonWinPct(r);
@@ -1049,8 +1071,12 @@
       });
     });
 
-    /* Career win bundles — integer only, no leftover fractional points. */
+    /* Career win bundles — integer only, no leftover fractional points.
+       Lineup efficiency is tracked for the board only (no GOAT points). */
     Object.values(byKey).forEach(row => {
+      if (row.lineupEffWeeks > 0){
+        row.lineupEfficiency = row.lineupEffSum / row.lineupEffWeeks;
+      }
       const rsBundles = Math.floor((Number(row.seasonWins) || 0) / RS_WIN_BUNDLE_SIZE);
       if (rsBundles > 0 && winBundlePts){
         const pts = rsBundles * winBundlePts;
@@ -1126,6 +1152,7 @@
         thirdPlaces: goat.thirdPlaces,
         goodSeasons: goat.goodSeasons,
         winStreaks: goat.winStreaks,
+        lineupEfficiency: goat.lineupEfficiency,
         awardPoints: goat.awardPoints,
         winPoints: goat.winPoints,
         playoffWinPoints: goat.playoffWinPoints,

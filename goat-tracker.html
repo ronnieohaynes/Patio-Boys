@@ -120,7 +120,7 @@
   <section>
     <p class="eyebrow">Point Values</p>
     <h2>How It Scores</h2>
-    <p class="caption" style="margin-top:0">GOAT points follow the manager, not the franchise name. Scoring stacks in three lanes: playoff accolades first, then yearly awards, then regular-season grind. Live wins and win streaks count as they happen; yearly awards and Good Seasons only land when the season locks. The GOAT title itself is worth 0 &mdash; it is the scoreboard, not another stackable award.</p>
+    <p class="caption" style="margin-top:0">GOAT points follow the manager, not the franchise name. Scoring stacks in three lanes: playoff accolades first, then yearly awards, then regular-season grind. Live wins and win streaks count as they happen; yearly awards and Good Seasons only land when the season locks. Career lineup efficiency is shown for context (same metric as Coach of the Year) but awards no GOAT points. The GOAT title itself is worth 0 &mdash; it is the scoreboard, not another stackable award.</p>
     <div class="score-groups" id="pointsLegend"></div>
   </section>
 
@@ -142,6 +142,7 @@
           <th>Playoff W</th>
           <th>MVP</th>
           <th>Coach</th>
+          <th title="Career lineup efficiency (starter FP / optimal legal lineup). Display only — no GOAT points.">Eff</th>
           <th>GM</th>
           <th>MIP</th>
           <th>Wins</th>
@@ -205,6 +206,12 @@ function escapeHtml(s){
 
 function countCell(n){
   return n ? String(n) : '<span class="dim">\u2014</span>';
+}
+
+function effCell(v){
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return '<span class="dim">\u2014</span>';
+  return (n * 100).toFixed(1) + '%';
 }
 
 function chipsHtml(row){
@@ -319,6 +326,7 @@ async function boot(){
         + '<td>' + countCell(r.playoffWins) + '</td>'
         + '<td>' + countCell(r.counts.mvp) + '</td>'
         + '<td>' + countCell(r.counts.coach) + '</td>'
+        + '<td>' + effCell(r.lineupEfficiency) + '</td>'
         + '<td>' + countCell(r.counts.gm) + '</td>'
         + '<td>' + countCell(r.counts.mip) + '</td>'
         + '<td>' + countCell(r.seasonWins) + '</td>'
