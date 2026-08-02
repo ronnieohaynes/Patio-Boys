@@ -224,6 +224,28 @@
   }
   ul.needs .need-tag.critical{background:var(--coral);color:#fff}
   ul.needs .num{color:var(--gold);font-weight:600}
+  .roster-rules{
+    margin:0 0 12px;padding:10px 12px;
+    background:color-mix(in srgb, var(--surface-2, #222A37) 88%, var(--team));
+    border:1px solid color-mix(in srgb, var(--hairline) 70%, var(--team));
+  }
+  .roster-rules .rr-title{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--ink-dim);margin:0 0 6px;
+  }
+  .roster-rules .rr-grid{
+    display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;
+  }
+  .roster-rules .rr-row{font-size:13px;line-height:1.35;color:#C9CDD8}
+  .roster-rules .rr-row strong{color:var(--ink);font-weight:600}
+  .roster-rules .rr-row .rr-meta{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;
+    letter-spacing:.04em;color:var(--ink-dim);margin-top:2px;
+  }
+  .roster-rules .rr-row.over strong{color:var(--coral)}
+  .roster-rules .rr-foot{
+    margin:8px 0 0;font-size:11.5px;line-height:1.4;color:var(--ink-dim);
+  }
 
   /* trade intel */
   .trade-row{
@@ -416,6 +438,8 @@ function buildTeams(users, rosters){
       wins, losses, ties, rawPf,
       record: wins + '-' + losses + (ties ? '-' + ties : ''),
       players: r.players || [],
+      taxi: r.taxi || [],
+      reserve: r.reserve || [],
       rosterSize: (r.players || []).length,
       maxPts: null, maxPtsGrade: null, maxPtsRank: null
     };
@@ -814,8 +838,21 @@ function renderObservations(t){
     statusTag.textContent = '';
   }
 
-  const avgRoster = state.teams.reduce((s, x) => s + x.rosterSize, 0) / n;
-  items.push('Carrying <strong>' + t.rosterSize + ' players</strong> against a league average of ' + avgRoster.toFixed(1) + '.');
+  if (window.TeamNeedsModel && state.league){
+    const rules = TeamNeedsModel.parseRosterRules(state.league);
+    const cap = TeamNeedsModel.rosterCapacity(t, rules);
+    const openBits = [];
+    if (cap.activeOpen) openBits.push(cap.activeOpen + ' active open');
+    if (cap.taxiOpen) openBits.push(cap.taxiOpen + ' taxi open');
+    items.push('Roster rules: <strong>' + cap.activeCount + '/' + rules.activeMax + ' active</strong>'
+      + (rules.taxiSlots ? (', <strong>' + cap.taxiCount + '/' + rules.taxiSlots + ' taxi</strong>') : '')
+      + (openBits.length ? ' (' + openBits.join(', ') + ')' : '')
+      + (cap.overActive ? ' — <span class="hl">' + cap.overActive + ' over the active limit</span>' : '')
+      + '.');
+  } else {
+    const avgRoster = state.teams.reduce((s, x) => s + x.rosterSize, 0) / n;
+    items.push('Carrying <strong>' + t.rosterSize + ' players</strong> against a league average of ' + avgRoster.toFixed(1) + '.');
+  }
 
   const hist = state.historyByOwner[t.ownerId] || [];
   hist.forEach(h => {
@@ -853,6 +890,12 @@ function benchGrade(percentile){
     : percentile >= 0.05 ? 'D' : 'F';
 }
 
+function teamActivePlayers(team){
+  if (!window.TeamNeedsModel || !state.league) return team.players || [];
+  const cap = TeamNeedsModel.rosterCapacity(team, TeamNeedsModel.parseRosterRules(state.league));
+  return cap.activeIds;
+}
+
 /* Bench = the five strongest players left after optimizing the legal starters.
    Rating is their average projected FP/G (weekly ceiling when projections are unavailable). */
 function benchSnapshot(team){
@@ -861,7 +904,7 @@ function benchSnapshot(team){
   const usingProj = !!state.projById;
   if (!slots.length || (!usingProj && !state.ceilings)) return null;
 
-  const records = team.players.map(needsPlayerRecord);
+  const records = teamActivePlayers(team).map(needsPlayerRecord);
   const opt = TeamNeedsModel.optimize(records, slots);
   const starterIds = new Set(opt.fills.filter(Boolean).map(f => String(f.player.id)));
   const players = records
@@ -946,10 +989,14 @@ function renderNeeds(t){
     return;
   }
 
+  const rules = TeamNeedsModel.parseRosterRules(state.league);
+  const cap = TeamNeedsModel.rosterCapacity(t, rules);
+
   // Optimize every team once so slot values can be benchmarked league-wide.
+  // Active roster only — taxi/IR cannot fill starting slots until activated.
   const optByKey = {};
   state.teams.forEach(team => {
-    optByKey[team.key] = TeamNeedsModel.optimize(team.players.map(needsPlayerRecord), slots);
+    optByKey[team.key] = TeamNeedsModel.optimize(teamActivePlayers(team).map(needsPlayerRecord), slots);
   });
   const opt = optByKey[t.key];
 
@@ -979,9 +1026,34 @@ function renderNeeds(t){
   });
   function median(a){ a = a.slice().sort((x, y) => x - y); const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
 
-  tag.textContent = 'Opt. lineup ' + opt.total.toFixed(1) + ' FP/G';
+  tag.textContent = cap.activeCount + '/' + rules.activeMax + ' active · '
+    + cap.taxiCount + '/' + rules.taxiSlots + ' taxi · opt ' + opt.total.toFixed(1);
 
   const items = [];
+  if (cap.overActive){
+    items.push({severity:'critical', gap:100 + cap.overActive,
+      label:'Over active roster limit',
+      text:'Holding ' + cap.activeCount + ' of ' + rules.activeMax + ' active spots ('
+        + cap.overActive + ' over). Cut, trade, or move eligible depth to taxi before Week 1 locks.'});
+  }
+  if (cap.overTaxi){
+    items.push({severity:'critical', gap:90 + cap.overTaxi,
+      label:'Over taxi limit',
+      text:'Taxi is ' + cap.taxiCount + '/' + rules.taxiSlots + ' — promote or cut '
+        + cap.overTaxi + ' taxi player' + (cap.overTaxi === 1 ? '' : 's') + '.'});
+  }
+  if (!cap.overActive && !cap.activeOpen && cap.taxiOpen){
+    items.push({severity:'moderate', gap:8,
+      label:'Active roster full',
+      text:'All ' + rules.activeMax + ' active spots are filled, with ' + cap.taxiOpen
+        + ' of ' + rules.taxiSlots + ' taxi spots still open for developmental adds.'});
+  } else if (cap.activeOpen){
+    items.push({severity:'moderate', gap:4 + cap.activeOpen * 0.1,
+      label:'Open active spots',
+      text:cap.activeOpen + ' of ' + rules.activeMax + ' active roster spots are open'
+        + (cap.taxiOpen ? (', plus ' + cap.taxiOpen + ' taxi') : '')
+        + ' — room to add without a corresponding cut.'});
+  }
   rows.filter(r => !r.player).forEach(r => {
     items.push({severity:'critical', label:r.slot + ' slot is empty', gap:Infinity,
       text:'No eligible player is left for this starting slot after the optimal assignment; any eligible add is a direct gain to the weekly lineup.'});
@@ -1014,6 +1086,24 @@ function renderNeeds(t){
         + ' with no aging (33+) locks; favor the best projected young/prime value available.'});
   }
 
+  const rulesHtml = '<div class="roster-rules"><p class="rr-title">Roster rules</p>'
+    + '<div class="rr-grid">'
+    + '<div class="rr-row' + (cap.overActive ? ' over' : '') + '"><strong>'
+    + cap.activeCount + ' / ' + rules.activeMax + ' active</strong>'
+    + '<span class="rr-meta">' + (cap.overActive
+      ? (cap.overActive + ' over limit')
+      : (cap.activeOpen ? (cap.activeOpen + ' open') : 'full'))
+    + ' · starters + bench</span></div>'
+    + '<div class="rr-row' + (cap.overTaxi ? ' over' : '') + '"><strong>'
+    + cap.taxiCount + ' / ' + rules.taxiSlots + ' taxi</strong>'
+    + '<span class="rr-meta">' + (cap.overTaxi
+      ? (cap.overTaxi + ' over limit')
+      : (cap.taxiOpen ? (cap.taxiOpen + ' open') : 'full'))
+    + ' · extra developmental</span></div>'
+    + '</div>'
+    + '<p class="rr-foot">Max ' + rules.activeMax + ' active roster spots, plus '
+    + rules.taxiSlots + ' taxi. Lineup needs use the active roster only; taxi/IR must be activated first.</p>'
+    + '</div>';
   const note = '<p class="pending" style="margin:0 0 8px">Optimal lineup fills the league\u2019s '
     + slots.length + ' starting slots (' + escapeHtml(slots.join(', ')) + ') maximizing ' + escapeHtml(metricLabel)
     + ' \u2014 each player counts at one slot only; equal-scoring lineups lock stronger eligible players into named positions before flex/UTIL. Needs also flag position age when a lock is 33+.'
@@ -1033,7 +1123,7 @@ function renderNeeds(t){
         : '<span class="need-tag critical">Empty</span>')
       + '</li>';
   }).join('') + '</ul>';
-  body.innerHTML = note + lineupHtml + '<ul class="needs">' + items.slice(0, 6).map(n =>
+  body.innerHTML = rulesHtml + note + lineupHtml + '<ul class="needs">' + items.slice(0, 7).map(n =>
     '<li><span class="need-tag ' + n.severity + '">' + (n.severity === 'critical' ? 'Critical' : 'Moderate')
       + '</span><span class="need-label">' + escapeHtml(n.label) + ':</span> ' + escapeHtml(n.text) + '</li>'
   ).join('') + '</ul>';
