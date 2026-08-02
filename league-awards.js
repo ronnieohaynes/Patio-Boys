@@ -641,14 +641,18 @@
     const consById = new Map();
     const consByName = new Map();
     const pack = global.NBA_PROJ_CONSENSUS || {};
-    Object.keys(pack.players || {}).forEach(key => {
-      const row = pack.players[key];
-      const fp = scoreStatLine(row.stats, scoring);
-      if (fp == null) return;
-      if (row.sleeperId) consById.set(String(row.sleeperId), fp);
-      consByName.set(normalizePlayerName(row.name), fp);
-      consByName.set(key, fp);
-    });
+    /* Consensus snapshot is current-season only — skip it for historical at-time grades. */
+    const useConsensus = !pack.season || String(pack.season) === String(season);
+    if (useConsensus){
+      Object.keys(pack.players || {}).forEach(key => {
+        const row = pack.players[key];
+        const fp = scoreStatLine(row.stats, scoring);
+        if (fp == null) return;
+        if (row.sleeperId) consById.set(String(row.sleeperId), fp);
+        consByName.set(normalizePlayerName(row.name), fp);
+        consByName.set(key, fp);
+      });
+    }
 
     const sleeperById = new Map();
     const sleeperByName = new Map();
@@ -1398,6 +1402,7 @@
     seasonTag,
     compute,
     buildGoatStandings,
+    loadDynastyMaps,
     formatValue,
     formatCandidateValue,
     formatGoatPoints,

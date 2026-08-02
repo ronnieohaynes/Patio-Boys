@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patio Boys — Transactions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14181F; --surface:#1B212C; --surface-2:#222A37;
+    --ink:#ECEEF3; --ink-dim:#8B93A6; --hairline:#2E3645;
+    --gold:#C9963A; --coral:#D8553A; --teal:#1D9E75;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;line-height:1.5}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px 80px}
+  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:0 0 10px}
+  .display{font-family:'Anton',sans-serif;text-transform:uppercase;line-height:.95;margin:0}
+  .topbar{padding:20px 0;border-bottom:1px solid var(--hairline);font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.08em}
+  .hero{padding:40px 0 32px;border-bottom:1px solid var(--hairline)}
+  .hero .display{font-size:clamp(30px,6vw,52px)}
+  .hero p{max-width:640px;color:var(--ink-dim);margin:14px 0 0}
+  section{margin-top:36px}
+  section h2{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:24px;margin:0 0 4px}
+  .status{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--gold);margin:14px 0 16px}
+  .status.error{color:var(--coral)}
+  .caption{font-size:13px;color:var(--ink-dim);margin-top:10px}
+  .controls{
+    display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;
+    margin:16px 0 18px;padding-bottom:14px;border-bottom:1px solid var(--hairline);
+  }
+  .field{display:flex;flex-direction:column;gap:5px;min-width:130px}
+  .field label{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.08em;text-transform:uppercase;
+  }
+  .field select{
+    background:var(--surface);border:1px solid var(--hairline);border-radius:6px;
+    color:var(--ink);font:inherit;font-size:13px;padding:8px 10px;
+  }
+  .tx-list{display:flex;flex-direction:column;gap:12px}
+  .tx-card{
+    background:var(--surface);border:1px solid var(--hairline);border-radius:8px;
+    padding:14px 16px;border-top:3px solid var(--gold);
+  }
+  .tx-card.pending{border-top-color:var(--ink-dim)}
+  .tx-card.waiver{border-top-color:var(--teal)}
+  .tx-head{
+    display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline;
+  }
+  .tx-meta{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.06em;margin:0;
+  }
+  .tx-grade{
+    font-family:'Anton',sans-serif;font-size:28px;line-height:1;color:var(--gold);margin:0;
+  }
+  .tx-grade.dim{color:var(--ink-dim);font-size:18px;letter-spacing:.04em}
+  .tx-title{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:20px;margin:8px 0 0;
+  }
+  .tx-sub{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);margin:6px 0 0;
+  }
+  .sides{
+    display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;
+  }
+  @media(max-width:720px){ .sides{grid-template-columns:1fr} }
+  .side{
+    background:var(--surface-2);border:1px solid var(--hairline);border-radius:6px;padding:12px;
+  }
+  .side .lbl{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.08em;margin:0 0 6px;
+  }
+  .side .team{font-weight:600;margin:0 0 8px}
+  .asset{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;margin:0 0 4px;color:#C9CDD8;
+  }
+  .asset .dv{color:var(--gold)}
+  .asset.pending{color:var(--ink-dim)}
+  .asset.drop{color:var(--coral)}
+  .empty{
+    padding:28px;text-align:center;color:var(--ink-dim);
+    font-family:'IBM Plex Mono',monospace;font-size:12px;
+    border:1px solid var(--hairline);border-radius:8px;
+  }
+  body.embed .topbar,
+  body.embed .hero{display:none}
+  body.embed .wrap{max-width:none;padding:12px 14px 24px}
+  body.embed section{margin-top:20px}
+  body.embed section:first-of-type{margin-top:0}
+</style>
+</head>
+<body>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
+
+<div class="wrap topbar">Patio Boys &middot; Transactions</div>
+
+<div class="wrap hero">
+  <p class="eyebrow">Ledger &middot; Dynasty at the time</p>
+  <h1 class="display">Trades &amp;<br>Waivers</h1>
+  <p>Every completed trade and waiver/FA move across seasons, graded with dynasty value as of that season. Future picks stay ungraded until the draft runs and they become players.</p>
+</div>
+
+<div class="wrap">
+  <section>
+    <p class="eyebrow">Filters</p>
+    <h2>League Moves</h2>
+    <p class="status" id="txStatus">Loading transactions&hellip;</p>
+    <div class="controls" id="controls" hidden>
+      <div class="field">
+        <label for="typeFilter">Type</label>
+        <select id="typeFilter">
+          <option value="all">All</option>
+          <option value="trade">Trades</option>
+          <option value="waiver">Waivers / FA</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="seasonFilter">Season</label>
+        <select id="seasonFilter"><option value="all">All</option></select>
+      </div>
+      <div class="field">
+        <label for="teamFilter">Team</label>
+        <select id="teamFilter"><option value="all">All teams</option></select>
+      </div>
+      <div class="field">
+        <label for="gradeFilter">Grade</label>
+        <select id="gradeFilter">
+          <option value="all">All</option>
+          <option value="graded">Graded only</option>
+          <option value="pending">Pending picks</option>
+        </select>
+      </div>
+    </div>
+    <p class="caption" id="txCaption" hidden>
+      Trades use the Trade Analyzer fairness bands on dynasty received each way.
+      Waivers grade the net dynasty change (add minus drop). Unresolved picks do not count until they resolve to a drafted player.
+    </p>
+    <div class="tx-list" id="txList"></div>
+    <div class="empty" id="txEmpty" hidden>No transactions match those filters.</div>
+  </section>
+</div>
+
+<script src="2k-ratings-snapshot.js"></script>
+<script src="nba-proj-consensus.js"></script>
+<script src="league-awards.js"></script>
+<script src="transactions.js"></script>
+<script>
+const LEAGUE_ID = '1350649177381552128';
+const state = { pack: null };
+
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function fmtDyn(v){
+  if (v == null || !Number.isFinite(Number(v))) return '—';
+  return Number(v).toFixed(1);
+}
+
+function filteredRows(){
+  if (!state.pack) return [];
+  const type = document.getElementById('typeFilter').value;
+  const season = document.getElementById('seasonFilter').value;
+  const team = document.getElementById('teamFilter').value;
+  const grade = document.getElementById('gradeFilter').value;
+  return (state.pack.rows || []).filter(r => {
+    if (type === 'trade' && r.type !== 'trade') return false;
+    if (type === 'waiver' && r.type === 'trade') return false;
+    if (season !== 'all' && String(r.season) !== season) return false;
+    if (team !== 'all'){
+      const hit = (r.franchises || []).some(f => f === team)
+        || (r.teams || []).some(t => t === team);
+      if (!hit) return false;
+    }
+    if (grade === 'graded' && !r.grade) return false;
+    if (grade === 'pending' && !r.pending) return false;
+    return true;
+  });
+}
+
+function renderAssets(assets, drops){
+  const lines = [];
+  (assets || []).forEach(a => {
+    if (a.graded){
+      lines.push('<p class="asset">' + escapeHtml(a.label)
+        + ' <span class="dv">' + fmtDyn(a.dynasty) + '</span></p>');
+    } else {
+      lines.push('<p class="asset pending">' + escapeHtml(a.label) + ' · ungraded</p>');
+    }
+  });
+  (drops || []).forEach(a => {
+    lines.push('<p class="asset drop">− ' + escapeHtml(a.label)
+      + ' <span class="dv">' + fmtDyn(a.dynasty) + '</span></p>');
+  });
+  return lines.join('') || '<p class="asset pending">—</p>';
+}
+
+function renderTradeCard(r){
+  const a = (r.sides && r.sides[0]) || {};
+  const b = (r.sides && r.sides[1]) || {};
+  const gradeHtml = r.grade
+    ? '<p class="tx-grade">' + escapeHtml(r.grade) + '</p>'
+    : '<p class="tx-grade dim">Pending</p>';
+  const sub = [];
+  if (r.winner) sub.push(escapeHtml(r.winner) + ' won the haul');
+  sub.push(fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB) + ' dyn');
+  if (r.reason) sub.push(escapeHtml(r.reason));
+  return '<article class="tx-card' + (r.pending ? ' pending' : '') + '">'
+    + '<div class="tx-head"><p class="tx-meta">' + escapeHtml(r.dateLabel)
+    + ' · Season ' + escapeHtml(r.season) + ' · Trade</p>' + gradeHtml + '</div>'
+    + '<h3 class="tx-title">' + escapeHtml(a.team || 'Side A') + ' ↔ ' + escapeHtml(b.team || 'Side B') + '</h3>'
+    + '<p class="tx-sub">' + sub.join(' · ') + '</p>'
+    + '<div class="sides">'
+    + '<div class="side"><p class="lbl">Received</p><p class="team">' + escapeHtml(a.team || '—') + '</p>'
+    + renderAssets(a.assets) + '</div>'
+    + '<div class="side"><p class="lbl">Received</p><p class="team">' + escapeHtml(b.team || '—') + '</p>'
+    + renderAssets(b.assets) + '</div>'
+    + '</div></article>';
+}
+
+function renderWaiverCard(r){
+  const side = (r.sides && r.sides[0]) || {};
+  const gradeHtml = r.grade
+    ? '<p class="tx-grade">' + escapeHtml(r.grade) + '</p>'
+    : '<p class="tx-grade dim">—</p>';
+  const bid = r.waiverBid != null ? ' · $' + r.waiverBid + ' FAAB' : '';
+  return '<article class="tx-card waiver">'
+    + '<div class="tx-head"><p class="tx-meta">' + escapeHtml(r.dateLabel)
+    + ' · Season ' + escapeHtml(r.season) + ' · ' + escapeHtml(r.typeLabel) + bid + '</p>'
+    + gradeHtml + '</div>'
+    + '<h3 class="tx-title">' + escapeHtml(side.team || r.teams[0] || 'Team') + '</h3>'
+    + '<p class="tx-sub">Net <strong>' + (r.net >= 0 ? '+' : '') + fmtDyn(r.net)
+    + '</strong> dyn · added ' + fmtDyn(r.valueA) + ' · dropped ' + fmtDyn(r.valueB) + '</p>'
+    + '<div class="sides" style="grid-template-columns:1fr">'
+    + '<div class="side"><p class="lbl">Roster change</p>'
+    + renderAssets(side.assets, side.drops)
+    + '</div></div></article>';
+}
+
+function render(){
+  const list = document.getElementById('txList');
+  const empty = document.getElementById('txEmpty');
+  const rows = filteredRows();
+  if (!rows.length){
+    list.innerHTML = '';
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  list.innerHTML = rows.map(r => r.type === 'trade' ? renderTradeCard(r) : renderWaiverCard(r)).join('');
+}
+
+async function boot(){
+  const status = document.getElementById('txStatus');
+  if (!window.PatioBoysTransactions || !window.PatioBoysAwards){
+    status.className = 'status error';
+    status.textContent = 'Transaction engine failed to load.';
+    return;
+  }
+  try {
+    const pack = await PatioBoysTransactions.compute(LEAGUE_ID, {
+      onProgress: msg => { status.textContent = msg; }
+    });
+    state.pack = pack;
+    const seasonSel = document.getElementById('seasonFilter');
+    (pack.seasons || []).forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      seasonSel.appendChild(opt);
+    });
+    const teamSel = document.getElementById('teamFilter');
+    (pack.teams || []).slice().sort((a, b) => a.displayName.localeCompare(b.displayName)).forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.franchise;
+      opt.textContent = t.displayName;
+      teamSel.appendChild(opt);
+    });
+    document.getElementById('controls').hidden = false;
+    document.getElementById('txCaption').hidden = false;
+    ['typeFilter','seasonFilter','teamFilter','gradeFilter'].forEach(id => {
+      document.getElementById(id).addEventListener('change', render);
+    });
+    const c = pack.counts || {};
+    status.classList.remove('error');
+    status.textContent = (c.total || 0) + ' moves · ' + (c.trades || 0) + ' trades · '
+      + (c.waivers || 0) + ' waivers/FA · ' + (c.graded || 0) + ' graded'
+      + (c.pending ? ' · ' + c.pending + ' waiting on picks' : '') + '.';
+    render();
+  } catch (e){
+    status.className = 'status error';
+    status.textContent = 'Could not load transactions: ' + (e.message || e);
+  }
+}
+
+boot();
+</script>
+</body>
+</html>

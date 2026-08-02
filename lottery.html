@@ -467,6 +467,7 @@
       <button class="main-tab" id="tabBtnIntel" type="button" role="tab" aria-selected="false" aria-controls="tabIntel">Team Intel</button>
       <button class="main-tab" id="tabBtnGoat" type="button" role="tab" aria-selected="false" aria-controls="tabGoat">GOAT Race</button>
       <button class="main-tab" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa">Free Agents</button>
+      <button class="main-tab" id="tabBtnTx" type="button" role="tab" aria-selected="false" aria-controls="tabTx">Transactions</button>
       <button class="main-tab" id="tabBtnTrade" type="button" role="tab" aria-selected="false" aria-controls="tabTrade">Trade Analyzer</button>
       <button class="main-tab" id="tabBtnGrades" type="button" role="tab" aria-selected="false" aria-controls="tabGrades">Draft Grades</button>
       <button class="main-tab" id="tabBtnBoard" type="button" role="tab" aria-selected="false" aria-controls="tabBoard">Draft Board</button>
@@ -540,6 +541,9 @@
     </div>
     <div class="boardsection status-panel" id="tabFa" role="tabpanel" aria-labelledby="tabBtnFa" hidden>
       <iframe class="status-frame" id="freeAgentsFrame" title="Free Agents" src="about:blank"></iframe>
+    </div>
+    <div class="boardsection status-panel" id="tabTx" role="tabpanel" aria-labelledby="tabBtnTx" hidden>
+      <iframe class="status-frame" id="transactionsFrame" title="Transactions" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabTrade" role="tabpanel" aria-labelledby="tabBtnTrade" hidden>
       <iframe class="status-frame" id="tradeAnalyzerFrame" title="Trade Analyzer" src="about:blank"></iframe>
@@ -2318,6 +2322,7 @@ function setMainTab(tab){
   const isMock = tab === 'mock';
   const isGrades = tab === 'grades';
   const isFa = tab === 'fa';
+  const isTx = tab === 'tx';
   const isTrade = tab === 'trade';
   document.getElementById('tabBoard').hidden = !isBoard;
   document.getElementById('tabRules').hidden = !isRules;
@@ -2328,6 +2333,7 @@ function setMainTab(tab){
   document.getElementById('tabMock').hidden = !isMock;
   document.getElementById('tabGrades').hidden = !isGrades;
   document.getElementById('tabFa').hidden = !isFa;
+  document.getElementById('tabTx').hidden = !isTx;
   document.getElementById('tabTrade').hidden = !isTrade;
   document.getElementById('tabBtnBoard').classList.toggle('active', isBoard);
   document.getElementById('tabBtnRules').classList.toggle('active', isRules);
@@ -2338,6 +2344,7 @@ function setMainTab(tab){
   document.getElementById('tabBtnMock').classList.toggle('active', isMock);
   document.getElementById('tabBtnGrades').classList.toggle('active', isGrades);
   document.getElementById('tabBtnFa').classList.toggle('active', isFa);
+  document.getElementById('tabBtnTx').classList.toggle('active', isTx);
   document.getElementById('tabBtnTrade').classList.toggle('active', isTrade);
   document.getElementById('tabBtnBoard').setAttribute('aria-selected', String(isBoard));
   document.getElementById('tabBtnRules').setAttribute('aria-selected', String(isRules));
@@ -2348,6 +2355,7 @@ function setMainTab(tab){
   document.getElementById('tabBtnMock').setAttribute('aria-selected', String(isMock));
   document.getElementById('tabBtnGrades').setAttribute('aria-selected', String(isGrades));
   document.getElementById('tabBtnFa').setAttribute('aria-selected', String(isFa));
+  document.getElementById('tabBtnTx').setAttribute('aria-selected', String(isTx));
   document.getElementById('tabBtnTrade').setAttribute('aria-selected', String(isTrade));
   if (isCharter && !charterFrameLoaded){
     document.getElementById('charterFrame').src = 'charter.html?embed=1&v=20260731-medals';
@@ -2377,6 +2385,10 @@ function setMainTab(tab){
     document.getElementById('freeAgentsFrame').src = 'free-agents.html?embed=1&v=20260724-fa-pool';
     faFrameLoaded = true;
   }
+  if (isTx && !txFrameLoaded){
+    document.getElementById('transactionsFrame').src = 'transactions.html?embed=1&v=20260802-tx';
+    txFrameLoaded = true;
+  }
   if (isTrade && !tradeFrameLoaded){
     document.getElementById('tradeAnalyzerFrame').src = 'trade-analyzer.html?embed=1&v=20260731-5050';
     tradeFrameLoaded = true;
@@ -2390,6 +2402,7 @@ let goatFrameLoaded = false;
 let mockFrameLoaded = false;
 let gradesFrameLoaded = false;
 let faFrameLoaded = false;
+let txFrameLoaded = false;
 let tradeFrameLoaded = false;
 
 document.getElementById('charterNav').addEventListener('click', (e) => {
@@ -2405,6 +2418,7 @@ document.getElementById('tabBtnGoat').addEventListener('click', () => setMainTab
 document.getElementById('tabBtnMock').addEventListener('click', () => setMainTab('mock'));
 document.getElementById('tabBtnGrades').addEventListener('click', () => setMainTab('grades'));
 document.getElementById('tabBtnFa').addEventListener('click', () => setMainTab('fa'));
+document.getElementById('tabBtnTx').addEventListener('click', () => setMainTab('tx'));
 document.getElementById('tabBtnTrade').addEventListener('click', () => setMainTab('trade'));
 
 applyPresetPicks();
@@ -2436,6 +2450,7 @@ function activeHqFrame(){
     ['tabMock', 'mockDraftFrame', () => mockFrameLoaded],
     ['tabGrades', 'draftGradesFrame', () => gradesFrameLoaded],
     ['tabFa', 'freeAgentsFrame', () => faFrameLoaded],
+    ['tabTx', 'transactionsFrame', () => txFrameLoaded],
     ['tabTrade', 'tradeAnalyzerFrame', () => tradeFrameLoaded]
   ];
   for (let i = 0; i < frames.length; i++){
