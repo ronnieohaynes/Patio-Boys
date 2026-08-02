@@ -102,7 +102,7 @@
 <div class="wrap hero">
   <p class="eyebrow">Ledger &middot; Dynasty at the time</p>
   <h1 class="display">Trades &amp;<br>Waivers</h1>
-  <p>Every completed trade and waiver/FA move across seasons, graded with dynasty value as of that season &mdash; in the context of the roster that made the move. Cutting dead weight can grade well; adding a redundant piece can grade poorly. Future picks stay ungraded until they become players.</p>
+  <p>Every completed trade and waiver/FA move across seasons, graded with dynasty value as of that season. Waivers also weigh roster fit (cutting your worst players can grade well; clogging the bench can grade poorly). Trades stay pure dynasty fairness. Future picks stay ungraded until they become players.</p>
 </div>
 
 <div class="wrap">
@@ -137,8 +137,8 @@
       </div>
     </div>
     <p class="caption" id="txCaption" hidden>
-      Grades use dynasty-at-time <em>and</em> roster fit: lineup lift from the optimal starters, strong credit for cutting one of your worst players (roster-rules crunch), and penalties for clogging the bench.
-      Trades compare each side&rsquo;s roster-fit haul. Unresolved picks do not count until they resolve to a drafted player.
+      Waivers use dynasty-at-time plus roster fit (lineup lift, credit for cutting worst players, clog penalties).
+      Trades use dynasty-at-time fairness only &mdash; no fit. Unresolved picks do not count until they resolve to a drafted player.
     </p>
     <div class="tx-list" id="txList"></div>
     <div class="empty" id="txEmpty" hidden>No transactions match those filters.</div>
@@ -214,7 +214,7 @@ function renderTradeCard(r){
     : '<p class="tx-grade dim">Pending</p>';
   const sub = [];
   if (r.winner) sub.push(escapeHtml(r.winner) + ' won the haul');
-  sub.push(fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB) + ' fit');
+  sub.push(fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB) + ' dyn');
   if (r.reason) sub.push(escapeHtml(r.reason));
   return '<article class="tx-card' + (r.pending ? ' pending' : '') + '">'
     + '<div class="tx-head"><p class="tx-meta">' + escapeHtml(r.dateLabel)
@@ -222,11 +222,9 @@ function renderTradeCard(r){
     + '<h3 class="tx-title">' + escapeHtml(a.team || 'Side A') + ' ↔ ' + escapeHtml(b.team || 'Side B') + '</h3>'
     + '<p class="tx-sub">' + sub.join(' · ') + '</p>'
     + '<div class="sides">'
-    + '<div class="side"><p class="lbl">Received · fit '
-    + ((Number(a.rosterDelta) || 0) >= 0 ? '+' : '') + fmtDyn(a.rosterDelta) + '</p><p class="team">' + escapeHtml(a.team || '—') + '</p>'
+    + '<div class="side"><p class="lbl">Received</p><p class="team">' + escapeHtml(a.team || '—') + '</p>'
     + renderAssets(a.assets) + '</div>'
-    + '<div class="side"><p class="lbl">Received · fit '
-    + ((Number(b.rosterDelta) || 0) >= 0 ? '+' : '') + fmtDyn(b.rosterDelta) + '</p><p class="team">' + escapeHtml(b.team || '—') + '</p>'
+    + '<div class="side"><p class="lbl">Received</p><p class="team">' + escapeHtml(b.team || '—') + '</p>'
     + renderAssets(b.assets) + '</div>'
     + '</div></article>';
 }

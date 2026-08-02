@@ -409,11 +409,11 @@
     return 'Rd ' + asset.round + ' pick (' + asset.season + ')';
   }
 
-  function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason, preRosters, slots){
+  /* Trades: raw dynasty-at-time fairness only (no roster-fit). */
+  function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason){
     const sideVals = sides.map(side => {
-      let rawDynasty = 0;
+      let graded = 0;
       let pendingPicks = 0;
-      const recvPids = [];
       const assets = (side.assets || []).map(a => {
         if (a.kind === 'pick' && !a.resolvedPid){
           pendingPicks++;
@@ -421,41 +421,28 @@
         }
         const pid = a.kind === 'player' ? a.pid : a.resolvedPid;
         const v = valueForPidAt(maps, pid, playerDb, asOfSeason, currentSeason);
-        recvPids.push(String(pid));
-        rawDynasty += v;
         return Object.assign({}, a, {
           dynasty: v,
           graded: true,
           label: assetLabel(Object.assign({}, a, { name: a.name || playerName(playerDb[pid], pid) }))
         });
       });
-      const sentPids = (side.sentPids || []).map(String);
-      const before = (preRosters && preRosters[String(side.rosterId)]) || [];
-      const fit = rosterQualityDelta(
-        before, recvPids, sentPids, slots, maps, playerDb, asOfSeason, currentSeason
-      );
-      /* Haul value in roster context = lineup after sends&receives minus lineup after sends only. */
-      const afterSends = before.filter(pid => !sentPids.includes(String(pid)));
-      const sendOnly = lineupSnapshot(afterSends, slots, maps, playerDb, asOfSeason, currentSeason);
-      const haulFit = fit.afterTotal - sendOnly.total;
+      assets.filter(a => a.graded).forEach(a => { graded += a.dynasty || 0; });
       return {
         rosterId: side.rosterId,
         team: side.team,
         franchise: side.franchise,
         manager: side.manager,
         assets,
-        dynastyIn: rawDynasty,
-        fitIn: haulFit,
-        rosterDelta: fit.delta,
-        fitNotes: fit.notes,
+        dynastyIn: graded,
         pendingPicks
       };
     });
 
     const gradedSides = sideVals.filter(s => s.assets.some(a => a.graded));
     const pendingPicks = sideVals.reduce((n, s) => n + s.pendingPicks, 0);
-    const a = sideVals[0] || { dynastyIn: 0, fitIn: 0, team: null };
-    const b = sideVals[1] || { dynastyIn: 0, fitIn: 0, team: null };
+    const a = sideVals[0] || { dynastyIn: 0, team: null };
+    const b = sideVals[1] || { dynastyIn: 0, team: null };
     if (gradedSides.length < 2){
       return {
         sides: sideVals,
@@ -463,24 +450,19 @@
         pending: true,
         pendingPicks,
         reason: pendingPicks ? 'Waiting on undrafted picks' : 'Not enough graded assets',
-        valueA: a.fitIn || 0,
-        valueB: b.fitIn || 0,
+        valueA: a.dynastyIn || 0,
+        valueB: b.dynastyIn || 0,
         winner: null,
         ratio: null
       };
     }
 
-    const high = Math.max(a.fitIn, b.fitIn, 0.01);
-    const low = Math.min(a.fitIn, b.fitIn);
-    /* If both hauls are tiny/negative, fall back to raw dynasty fairness. */
-    const useFit = a.fitIn > 0.25 || b.fitIn > 0.25;
-    const ah = useFit ? Math.max(a.fitIn, 0) : a.dynastyIn;
-    const bh = useFit ? Math.max(b.fitIn, 0) : b.dynastyIn;
-    const high2 = Math.max(ah, bh, 0.01);
-    const low2 = Math.min(ah, bh);
-    const ratio = low2 / high2;
+    const high = Math.max(a.dynastyIn, b.dynastyIn, 0.01);
+    const low = Math.min(a.dynastyIn, b.dynastyIn);
+    const ratio = low / high;
     const grade = fairnessGrade(ratio);
-    const winner = ah === bh ? null : (ah > bh ? a.team : b.team);
+    const winner = a.dynastyIn === b.dynastyIn ? null
+      : (a.dynastyIn > b.dynastyIn ? a.team : b.team);
     return {
       sides: sideVals,
       grade,
@@ -490,9 +472,9 @@
       reason: pendingPicks
         ? 'Grade uses resolved players only; ' + pendingPicks + ' pick'
           + (pendingPicks === 1 ? '' : 's') + ' still open'
-        : (useFit ? 'Roster-fit haul (lineup dynasty at the time)' : null),
-      valueA: useFit ? a.fitIn : a.dynastyIn,
-      valueB: useFit ? b.fitIn : b.dynastyIn,
+        : null,
+      valueA: a.dynastyIn,
+      valueB: b.dynastyIn,
       winner
     };
   }
@@ -637,7 +619,6 @@
         const metaA = rosterMap[rA] || { displayName: 'Roster ' + rA, franchise: 'Roster ' + rA, manager: '', rosterId: rA };
         const metaB = rosterMap[rB] || { displayName: 'Roster ' + rB, franchise: 'Roster ' + rB, manager: '', rosterId: rB };
         const adds = tx.adds || {};
-        const drops = tx.drops || {};
         const picks = tx.draft_picks || [];
 
         function sideAssets(rid){
@@ -668,29 +649,21 @@
           });
           return assets;
         }
-        function sentPids(rid){
-          return Object.entries(drops)
-            .filter(([, fromRid]) => String(fromRid) === String(rid))
-            .map(([pid]) => String(pid));
-        }
-
         const graded = gradeTrade(
           [
             {
               rosterId: rA, team: metaA.displayName, franchise: metaA.franchise,
-              manager: metaA.manager, assets: sideAssets(rA), sentPids: sentPids(rA)
+              manager: metaA.manager, assets: sideAssets(rA)
             },
             {
               rosterId: rB, team: metaB.displayName, franchise: metaB.franchise,
-              manager: metaB.manager, assets: sideAssets(rB), sentPids: sentPids(rB)
+              manager: metaB.manager, assets: sideAssets(rB)
             }
           ],
           maps,
           playerDb,
           asOf,
-          currentSeason,
-          preRosters,
-          slots
+          currentSeason
         );
 
         return {
