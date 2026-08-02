@@ -1371,6 +1371,7 @@
     seasonTag,
     compute,
     buildGoatStandings,
+    loadDynastyMaps,
     formatValue,
     formatCandidateValue,
     formatGoatPoints,
