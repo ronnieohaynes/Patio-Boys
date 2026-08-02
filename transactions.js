@@ -409,10 +409,13 @@
     return 'Rd ' + asset.round + ' pick (' + asset.season + ')';
   }
 
-  /* Trades: raw dynasty-at-time fairness only (no roster-fit). */
+  /* Trades: dynasty-at-time fairness (no roster-fit).
+     When asset counts differ, blend total haul with per-asset average so
+     2-for-1 / 3-for-1 deals aren't graded on volume alone. */
   function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason){
     const sideVals = sides.map(side => {
       let graded = 0;
+      let gradedCount = 0;
       let pendingPicks = 0;
       const assets = (side.assets || []).map(a => {
         if (a.kind === 'pick' && !a.resolvedPid){
@@ -427,7 +430,10 @@
           label: assetLabel(Object.assign({}, a, { name: a.name || playerName(playerDb[pid], pid) }))
         });
       });
-      assets.filter(a => a.graded).forEach(a => { graded += a.dynasty || 0; });
+      assets.filter(a => a.graded).forEach(a => {
+        graded += a.dynasty || 0;
+        gradedCount += 1;
+      });
       return {
         rosterId: side.rosterId,
         team: side.team,
@@ -435,14 +441,16 @@
         manager: side.manager,
         assets,
         dynastyIn: graded,
+        assetCount: gradedCount,
+        avgDynasty: gradedCount > 0 ? graded / gradedCount : 0,
         pendingPicks
       };
     });
 
     const gradedSides = sideVals.filter(s => s.assets.some(a => a.graded));
     const pendingPicks = sideVals.reduce((n, s) => n + s.pendingPicks, 0);
-    const a = sideVals[0] || { dynastyIn: 0, team: null };
-    const b = sideVals[1] || { dynastyIn: 0, team: null };
+    const a = sideVals[0] || { dynastyIn: 0, assetCount: 0, avgDynasty: 0, team: null };
+    const b = sideVals[1] || { dynastyIn: 0, assetCount: 0, avgDynasty: 0, team: null };
     if (gradedSides.length < 2){
       return {
         sides: sideVals,
@@ -452,29 +460,51 @@
         reason: pendingPicks ? 'Waiting on undrafted picks' : 'Not enough graded assets',
         valueA: a.dynastyIn || 0,
         valueB: b.dynastyIn || 0,
+        avgA: a.avgDynasty || 0,
+        avgB: b.avgDynasty || 0,
+        uneven: false,
         winner: null,
         ratio: null
       };
     }
 
-    const high = Math.max(a.dynastyIn, b.dynastyIn, 0.01);
-    const low = Math.min(a.dynastyIn, b.dynastyIn);
-    const ratio = low / high;
+    const uneven = a.assetCount !== b.assetCount;
+    const maxN = Math.max(a.assetCount, b.assetCount, 1);
+    function sideScore(side){
+      if (!uneven) return side.dynastyIn;
+      /* 55% total haul + 45% average scaled to the larger side's count. */
+      return 0.55 * side.dynastyIn + 0.45 * side.avgDynasty * maxN;
+    }
+    const scoreA = sideScore(a);
+    const scoreB = sideScore(b);
+
+    const totalHigh = Math.max(a.dynastyIn, b.dynastyIn, 0.01);
+    const totalLow = Math.min(a.dynastyIn, b.dynastyIn);
+    const ratioTotal = totalLow / totalHigh;
+    const avgHigh = Math.max(a.avgDynasty, b.avgDynasty, 0.01);
+    const avgLow = Math.min(a.avgDynasty, b.avgDynasty);
+    const ratioAvg = avgLow / avgHigh;
+    const ratio = uneven ? (0.5 * ratioTotal + 0.5 * ratioAvg) : ratioTotal;
     const grade = fairnessGrade(ratio);
-    const winner = a.dynastyIn === b.dynastyIn ? null
-      : (a.dynastyIn > b.dynastyIn ? a.team : b.team);
+    const winner = scoreA === scoreB ? null : (scoreA > scoreB ? a.team : b.team);
     return {
       sides: sideVals,
       grade,
       ratio,
       pending: pendingPicks > 0,
       pendingPicks,
+      uneven,
       reason: pendingPicks
         ? 'Grade uses resolved players only; ' + pendingPicks + ' pick'
           + (pendingPicks === 1 ? '' : 's') + ' still open'
-        : null,
+        : (uneven
+          ? ('Uneven haul (' + a.assetCount + ' vs ' + b.assetCount
+            + ') — fairness blends total + avg dynasty')
+          : null),
       valueA: a.dynastyIn,
       valueB: b.dynastyIn,
+      avgA: a.avgDynasty,
+      avgB: b.avgDynasty,
       winner
     };
   }
@@ -683,6 +713,9 @@
           winner: graded.winner,
           valueA: graded.valueA,
           valueB: graded.valueB,
+          avgA: graded.avgA,
+          avgB: graded.avgB,
+          uneven: !!graded.uneven,
           ratio: graded.ratio,
           sides: graded.sides,
           waiverBid: null

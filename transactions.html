@@ -138,7 +138,7 @@
     </div>
     <p class="caption" id="txCaption" hidden>
       Waivers use dynasty-at-time plus roster fit (lineup lift, credit for cutting worst players, clog penalties).
-      Trades use dynasty-at-time fairness only &mdash; no fit. Unresolved picks do not count until they resolve to a drafted player.
+      Trades use dynasty-at-time fairness with no fit; when one side gets more players/picks, the grade also blends in average dynasty per asset. Unresolved picks do not count until they resolve to a drafted player.
     </p>
     <div class="tx-list" id="txList"></div>
     <div class="empty" id="txEmpty" hidden>No transactions match those filters.</div>
@@ -215,16 +215,25 @@ function renderTradeCard(r){
   const sub = [];
   if (r.winner) sub.push(escapeHtml(r.winner) + ' won the haul');
   sub.push(fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB) + ' dyn');
+  if (r.uneven){
+    sub.push('avg ' + fmtDyn(r.avgA) + ' / ' + fmtDyn(r.avgB));
+  }
   if (r.reason) sub.push(escapeHtml(r.reason));
+  const countA = Number(a.assetCount) || (a.assets || []).filter(x => x.graded).length;
+  const countB = Number(b.assetCount) || (b.assets || []).filter(x => x.graded).length;
   return '<article class="tx-card' + (r.pending ? ' pending' : '') + '">'
     + '<div class="tx-head"><p class="tx-meta">' + escapeHtml(r.dateLabel)
     + ' · Season ' + escapeHtml(r.season) + ' · Trade</p>' + gradeHtml + '</div>'
     + '<h3 class="tx-title">' + escapeHtml(a.team || 'Side A') + ' ↔ ' + escapeHtml(b.team || 'Side B') + '</h3>'
     + '<p class="tx-sub">' + sub.join(' · ') + '</p>'
     + '<div class="sides">'
-    + '<div class="side"><p class="lbl">Received</p><p class="team">' + escapeHtml(a.team || '—') + '</p>'
+    + '<div class="side"><p class="lbl">Received · ' + countA + ' asset' + (countA === 1 ? '' : 's')
+    + (r.uneven ? ' · avg ' + fmtDyn(a.avgDynasty != null ? a.avgDynasty : r.avgA) : '')
+    + '</p><p class="team">' + escapeHtml(a.team || '—') + '</p>'
     + renderAssets(a.assets) + '</div>'
-    + '<div class="side"><p class="lbl">Received</p><p class="team">' + escapeHtml(b.team || '—') + '</p>'
+    + '<div class="side"><p class="lbl">Received · ' + countB + ' asset' + (countB === 1 ? '' : 's')
+    + (r.uneven ? ' · avg ' + fmtDyn(b.avgDynasty != null ? b.avgDynasty : r.avgB) : '')
+    + '</p><p class="team">' + escapeHtml(b.team || '—') + '</p>'
     + renderAssets(b.assets) + '</div>'
     + '</div></article>';
 }
