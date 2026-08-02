@@ -7,8 +7,52 @@
 
   const CORE = ['PG','SG','SF','PF','C'];
   const NON_STARTING = new Set(['BN','IR','TAXI','RES','RESERVE','IL']);
+  /* Active roster = starters + bench. Taxi is extra developmental capacity. */
+  const DEFAULT_ROSTER_RULES = { activeMax: 18, taxiSlots: 2 };
   const EPS = 1e-7;
   const AGE_BAND_ORDER = { young: 0, prime: 1, unknown: 2, decline: 3 };
+
+  /* Prefer league settings / roster_positions; fall back to Patio Boys charter. */
+  function parseRosterRules(league){
+    const settings = (league && league.settings) || {};
+    const positions = (league && league.roster_positions) || [];
+    const activeFromPositions = positions.filter(s => {
+      const u = String(s || '').toUpperCase();
+      return u && u !== 'IR' && u !== 'TAXI' && u !== 'RES' && u !== 'RESERVE' && u !== 'IL';
+    }).length;
+    const taxi = Number(settings.taxi_slots);
+    return {
+      activeMax: activeFromPositions || DEFAULT_ROSTER_RULES.activeMax,
+      taxiSlots: Number.isFinite(taxi) && taxi >= 0 ? taxi : DEFAULT_ROSTER_RULES.taxiSlots
+    };
+  }
+
+  /* Sleeper lists taxi/IR players inside `players` as well as `taxi`/`reserve`. */
+  function rosterCapacity(roster, rules){
+    const r = rules || DEFAULT_ROSTER_RULES;
+    const taxiSet = new Set((roster && roster.taxi || []).map(String));
+    const reserveSet = new Set((roster && roster.reserve || []).map(String));
+    const all = (roster && roster.players || []).map(String);
+    const activeIds = all.filter(id => !taxiSet.has(id) && !reserveSet.has(id));
+    const taxiIds = [...taxiSet];
+    const reserveIds = [...reserveSet];
+    const activeCount = activeIds.length;
+    const taxiCount = taxiIds.length;
+    return {
+      activeMax: r.activeMax,
+      taxiSlots: r.taxiSlots,
+      activeIds,
+      taxiIds,
+      reserveIds,
+      activeCount,
+      taxiCount,
+      reserveCount: reserveIds.length,
+      activeOpen: Math.max(0, r.activeMax - activeCount),
+      taxiOpen: Math.max(0, r.taxiSlots - taxiCount),
+      overActive: Math.max(0, activeCount - r.activeMax),
+      overTaxi: Math.max(0, taxiCount - r.taxiSlots)
+    };
+  }
 
   /* <24 young · 25–32 prime · 33+ decline. Rookies without age count as young. */
   function ageBand(playerOrAge, source){
@@ -298,7 +342,9 @@
   }
 
   global.TeamNeedsModel = {
-    CORE, parseSlots, positions, eligibleForSlot, slotTier, optimize, candidateGain,
+    CORE, NON_STARTING, DEFAULT_ROSTER_RULES,
+    parseSlots, parseRosterRules, rosterCapacity,
+    positions, eligibleForSlot, slotTier, optimize, candidateGain,
     ageBand, agePressure, youthUpgradeBonus, AGE_BAND_ORDER
   };
 })(window);
