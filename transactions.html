@@ -145,10 +145,10 @@
   </section>
 </div>
 
-<script src="2k-ratings-snapshot.js"></script>
-<script src="nba-proj-consensus.js"></script>
-<script src="league-awards.js"></script>
-<script src="transactions.js"></script>
+<script src="2k-ratings-snapshot.js?v=20260802-tx2"></script>
+<script src="nba-proj-consensus.js?v=20260802-tx2"></script>
+<script src="league-awards.js?v=20260802-tx2"></script>
+<script src="transactions.js?v=20260802-tx2"></script>
 <script>
 const LEAGUE_ID = '1350649177381552128';
 const state = { pack: null };
@@ -259,9 +259,14 @@ function render(){
 
 async function boot(){
   const status = document.getElementById('txStatus');
-  if (!window.PatioBoysTransactions || !window.PatioBoysAwards){
+  if (!window.PatioBoysTransactions){
     status.className = 'status error';
     status.textContent = 'Transaction engine failed to load.';
+    return;
+  }
+  if (!window.PatioBoysAwards || typeof PatioBoysAwards.loadDynastyMaps !== 'function'){
+    status.className = 'status error';
+    status.textContent = 'Dynasty engine failed to load (stale league-awards.js cache). Hit Refresh in the HQ header.';
     return;
   }
   try {

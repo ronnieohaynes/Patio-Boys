@@ -342,6 +342,20 @@
     };
   }
 
+  /* Bust stale GitHub Pages / Safari caches that still have pre-export awards.js. */
+  function ensureAwardsDynasty(){
+    if (global.PatioBoysAwards && typeof global.PatioBoysAwards.loadDynastyMaps === 'function'){
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'league-awards.js?v=tx-dynasty-' + Date.now();
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error('Failed to reload league-awards.js'));
+      (document.head || document.documentElement).appendChild(s);
+    });
+  }
+
   async function compute(leagueId, opts){
     const startId = leagueId || LEAGUE_ID;
     const onProgress = (opts && opts.onProgress) || function(){};
