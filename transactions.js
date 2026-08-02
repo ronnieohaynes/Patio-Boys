@@ -5,9 +5,7 @@
   'use strict';
 
   const LEAGUE_ID = '1350649177381552128';
-  /* Graded ledger types. Commissioner moves are applied only for roster reconstruction. */
-  const GRADE_TYPES = { trade: 1, waiver: 1, free_agent: 1 };
-  const STATE_TYPES = { trade: 1, waiver: 1, free_agent: 1, commissioner: 1 };
+  const INCLUDE_TYPES = { trade: 1, waiver: 1, free_agent: 1 };
   const TEAM_COLORS = {
     'Funeral Home':1, 'BoobieDominguez':1, '2011-12 Champs':1,
     'Freakonomics':1, 'Papa Book':1, 'Bam Add the Mayo':1,
@@ -67,15 +65,15 @@
     return 'F';
   }
 
-  /* Roster-fit quality delta → letter (lineup lift + cut/clog adjustments). */
+  /* Absolute net dynasty change — used for waivers / FA claims. */
   function netToGrade(net){
-    if (net > 10) return 'A+';
-    if (net > 6.5) return 'A';
-    if (net > 4) return 'B+';
+    if (net > 12) return 'A+';
+    if (net > 8) return 'A';
+    if (net > 5) return 'B+';
     if (net > 2) return 'B';
-    if (net > 0.6) return 'C+';
-    if (net > -0.6) return 'C';
-    if (net > -2.5) return 'D';
+    if (net > 0.5) return 'C+';
+    if (net > -0.5) return 'C';
+    if (net > -3) return 'D';
     return 'F';
   }
 
@@ -136,45 +134,32 @@
       const userById = {};
       users.forEach(u => { userById[u.user_id] = u; });
       const rosterMap = {};
-      const finalRosters = {};
       rosters.forEach(r => {
         const u = userById[r.owner_id] || {};
         const raw = (u.metadata && u.metadata.team_name) || u.display_name || ('Roster ' + r.roster_id);
         const key = franchiseKey(raw, u.display_name);
-        const rid = String(r.roster_id);
-        rosterMap[rid] = {
+        rosterMap[String(r.roster_id)] = {
           rosterId: r.roster_id,
           displayName: raw,
           franchise: key,
           manager: u.display_name || '',
           ownerId: r.owner_id || null
         };
-        finalRosters[rid] = []
-          .concat(r.players || [])
-          .concat(r.reserve || [])
-          .concat(r.taxi || [])
-          .map(String);
       });
-      const Needs = global.TeamNeedsModel;
-      const slots = Needs && Needs.parseSlots
-        ? Needs.parseSlots(league.roster_positions || [])
-        : [];
       seasons.push({
         leagueId: String(league.league_id),
         season: String(league.season),
         draftId: league.draft_id || null,
         scoring: league.scoring_settings || {},
         league,
-        rosterMap,
-        finalRosters,
-        slots
+        rosterMap
       });
       id = league.previous_league_id || null;
     }
     return seasons;
   }
 
-  async function fetchSeasonTransactions(leagueId, typeSet){
+  async function fetchSeasonTransactions(leagueId){
     const weekFetches = Array.from({ length: 25 }, (_, i) => i + 1).map(w =>
       fetch('https://api.sleeper.app/v1/league/' + leagueId + '/transactions/' + w)
         .then(r => r.ok ? r.json() : null).catch(() => null)
@@ -185,145 +170,11 @@
       if (!Array.isArray(txns)) return;
       txns.forEach(tx => {
         if (!tx || tx.status !== 'complete') return;
-        if (!typeSet[tx.type]) return;
+        if (!INCLUDE_TYPES[tx.type]) return;
         out.push({ ...tx, _week: wi + 1 });
       });
     });
     return out;
-  }
-
-  function applyTxnToState(state, tx){
-    Object.entries(tx.drops || {}).forEach(([pid, rid]) => {
-      const set = state[String(rid)];
-      if (set) set.delete(String(pid));
-    });
-    Object.entries(tx.adds || {}).forEach(([pid, rid]) => {
-      const key = String(rid);
-      if (!state[key]) state[key] = new Set();
-      state[key].add(String(pid));
-    });
-  }
-
-  function undoTxnOnState(state, tx){
-    Object.entries(tx.adds || {}).forEach(([pid, rid]) => {
-      const set = state[String(rid)];
-      if (set) set.delete(String(pid));
-    });
-    Object.entries(tx.drops || {}).forEach(([pid, rid]) => {
-      const key = String(rid);
-      if (!state[key]) state[key] = new Set();
-      state[key].add(String(pid));
-    });
-  }
-
-  function cloneRosterState(state){
-    const out = {};
-    Object.keys(state).forEach(rid => { out[rid] = [...state[rid]]; });
-    return out;
-  }
-
-  function buildPreRostersByTxn(seasons, stateTxns){
-    const pre = {};
-    seasons.forEach(season => {
-      const list = stateTxns
-        .filter(t => String(t.season) === String(season.season))
-        .slice()
-        .sort((a, b) => (a.status_updated || 0) - (b.status_updated || 0)
-          || String(a.transaction_id).localeCompare(String(b.transaction_id)));
-      const state = {};
-      Object.keys(season.finalRosters || {}).forEach(rid => {
-        state[rid] = new Set(season.finalRosters[rid] || []);
-      });
-      for (let i = list.length - 1; i >= 0; i--) undoTxnOnState(state, list[i]);
-      list.forEach(tx => {
-        pre[String(tx.transaction_id)] = cloneRosterState(state);
-        applyTxnToState(state, tx);
-      });
-    });
-    return pre;
-  }
-
-  function toLineupRecs(pids, maps, playerDb, asOfSeason, currentSeason){
-    return (pids || []).map(pid => {
-      const id = String(pid);
-      const p = (playerDb && playerDb[id]) || {};
-      const positions = p.fantasy_positions || [p.position].filter(Boolean);
-      return {
-        id,
-        name: playerName(p, id),
-        positions,
-        metric: valueForPidAt(maps, id, playerDb, asOfSeason, currentSeason),
-        age: ageAtSeason(p, asOfSeason, currentSeason)
-      };
-    }).filter(r => r.positions && r.positions.length);
-  }
-
-  function lineupSnapshot(pids, slots, maps, playerDb, asOfSeason, currentSeason){
-    const recs = toLineupRecs(pids, maps, playerDb, asOfSeason, currentSeason);
-    const Needs = global.TeamNeedsModel;
-    if (!Needs || !Needs.optimize || !slots || !slots.length){
-      const total = recs.reduce((s, r) => s + (Number(r.metric) || 0), 0);
-      return { total, starterIds: new Set(recs.map(r => r.id)) };
-    }
-    const opt = Needs.optimize(recs, slots);
-    const starterIds = new Set();
-    (opt.fills || []).forEach(f => {
-      if (f && f.player && f.player.id != null) starterIds.add(String(f.player.id));
-    });
-    return { total: Number(opt.total) || 0, starterIds };
-  }
-
-  /* Roster-context quality: lineup dynasty delta + cut-fat bonus − bench-clog penalty. */
-  function rosterQualityDelta(beforePids, adds, drops, slots, maps, playerDb, asOfSeason, currentSeason){
-    const before = (beforePids || []).map(String);
-    const dropSet = new Set((drops || []).map(String));
-    const addList = (adds || []).map(String);
-    const after = before.filter(pid => !dropSet.has(pid));
-    addList.forEach(pid => { if (!after.includes(pid)) after.push(pid); });
-
-    const beforeL = lineupSnapshot(before, slots, maps, playerDb, asOfSeason, currentSeason);
-    const afterL = lineupSnapshot(after, slots, maps, playerDb, asOfSeason, currentSeason);
-    let delta = afterL.total - beforeL.total;
-    const notes = [];
-
-    (drops || []).forEach(pid => {
-      const id = String(pid);
-      const v = valueForPidAt(maps, id, playerDb, asOfSeason, currentSeason);
-      if (!beforeL.starterIds.has(id)){
-        if (v < 15){
-          const bonus = Math.min(3.5, 1.2 + (15 - v) * 0.12);
-          delta += bonus;
-          notes.push('cut fat: ' + playerName(playerDb[id], id));
-        } else if (v < 22){
-          delta += 0.55;
-          notes.push('bench cut: ' + playerName(playerDb[id], id));
-        } else {
-          delta -= (v - 22) * 0.1;
-          notes.push('cut stash: ' + playerName(playerDb[id], id));
-        }
-      }
-    });
-
-    (adds || []).forEach(pid => {
-      const id = String(pid);
-      const v = valueForPidAt(maps, id, playerDb, asOfSeason, currentSeason);
-      if (afterL.starterIds.has(id)){
-        notes.push('lineup add: ' + playerName(playerDb[id], id));
-      } else if (v < 12){
-        delta -= (12 - v) * 0.22;
-        notes.push('clog: ' + playerName(playerDb[id], id));
-      } else {
-        delta += Math.min(1.4, (v - 12) * 0.05);
-        notes.push('depth: ' + playerName(playerDb[id], id));
-      }
-    });
-
-    return {
-      delta,
-      beforeTotal: beforeL.total,
-      afterTotal: afterL.total,
-      notes
-    };
   }
 
   async function buildPickResolver(seasons, rawTxns){
@@ -379,11 +230,10 @@
     return 'Rd ' + asset.round + ' pick (' + asset.season + ')';
   }
 
-  function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason, preRosters, slots){
+  function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason){
     const sideVals = sides.map(side => {
-      let rawDynasty = 0;
+      let graded = 0;
       let pendingPicks = 0;
-      const recvPids = [];
       const assets = (side.assets || []).map(a => {
         if (a.kind === 'pick' && !a.resolvedPid){
           pendingPicks++;
@@ -391,41 +241,28 @@
         }
         const pid = a.kind === 'player' ? a.pid : a.resolvedPid;
         const v = valueForPidAt(maps, pid, playerDb, asOfSeason, currentSeason);
-        recvPids.push(String(pid));
-        rawDynasty += v;
         return Object.assign({}, a, {
           dynasty: v,
           graded: true,
           label: assetLabel(Object.assign({}, a, { name: a.name || playerName(playerDb[pid], pid) }))
         });
       });
-      const sentPids = (side.sentPids || []).map(String);
-      const before = (preRosters && preRosters[String(side.rosterId)]) || [];
-      const fit = rosterQualityDelta(
-        before, recvPids, sentPids, slots, maps, playerDb, asOfSeason, currentSeason
-      );
-      /* Haul value in roster context = lineup after sends&receives minus lineup after sends only. */
-      const afterSends = before.filter(pid => !sentPids.includes(String(pid)));
-      const sendOnly = lineupSnapshot(afterSends, slots, maps, playerDb, asOfSeason, currentSeason);
-      const haulFit = fit.afterTotal - sendOnly.total;
+      assets.filter(a => a.graded).forEach(a => { graded += a.dynasty || 0; });
       return {
         rosterId: side.rosterId,
         team: side.team,
         franchise: side.franchise,
         manager: side.manager,
         assets,
-        dynastyIn: rawDynasty,
-        fitIn: haulFit,
-        rosterDelta: fit.delta,
-        fitNotes: fit.notes,
+        dynastyIn: graded,
         pendingPicks
       };
     });
 
     const gradedSides = sideVals.filter(s => s.assets.some(a => a.graded));
     const pendingPicks = sideVals.reduce((n, s) => n + s.pendingPicks, 0);
-    const a = sideVals[0] || { dynastyIn: 0, fitIn: 0, team: null };
-    const b = sideVals[1] || { dynastyIn: 0, fitIn: 0, team: null };
+    const a = sideVals[0] || { dynastyIn: 0, team: null };
+    const b = sideVals[1] || { dynastyIn: 0, team: null };
     if (gradedSides.length < 2){
       return {
         sides: sideVals,
@@ -433,41 +270,37 @@
         pending: true,
         pendingPicks,
         reason: pendingPicks ? 'Waiting on undrafted picks' : 'Not enough graded assets',
-        valueA: a.fitIn || 0,
-        valueB: b.fitIn || 0,
+        valueA: a.dynastyIn || 0,
+        valueB: b.dynastyIn || 0,
         winner: null,
         ratio: null
       };
     }
 
-    const high = Math.max(a.fitIn, b.fitIn, 0.01);
-    const low = Math.min(a.fitIn, b.fitIn);
-    /* If both hauls are tiny/negative, fall back to raw dynasty fairness. */
-    const useFit = a.fitIn > 0.25 || b.fitIn > 0.25;
-    const ah = useFit ? Math.max(a.fitIn, 0) : a.dynastyIn;
-    const bh = useFit ? Math.max(b.fitIn, 0) : b.dynastyIn;
-    const high2 = Math.max(ah, bh, 0.01);
-    const low2 = Math.min(ah, bh);
-    const ratio = low2 / high2;
+    const high = Math.max(a.dynastyIn, b.dynastyIn, 0.01);
+    const low = Math.min(a.dynastyIn, b.dynastyIn);
+    const ratio = low / high;
     const grade = fairnessGrade(ratio);
-    const winner = ah === bh ? null : (ah > bh ? a.team : b.team);
+    const winner = a.dynastyIn === b.dynastyIn ? null
+      : (a.dynastyIn > b.dynastyIn ? a.team : b.team);
     return {
       sides: sideVals,
       grade,
       ratio,
+      /* Still filterable as pending while open picks exist; grade is provisional. */
       pending: pendingPicks > 0,
       pendingPicks,
       reason: pendingPicks
         ? 'Grade uses resolved players only; ' + pendingPicks + ' pick'
           + (pendingPicks === 1 ? '' : 's') + ' still open'
-        : (useFit ? 'Roster-fit haul (lineup dynasty at the time)' : null),
-      valueA: useFit ? a.fitIn : a.dynastyIn,
-      valueB: useFit ? b.fitIn : b.dynastyIn,
+        : null,
+      valueA: a.dynastyIn,
+      valueB: b.dynastyIn,
       winner
     };
   }
 
-  function gradeWaiver(rosterMeta, adds, drops, maps, playerDb, asOfSeason, currentSeason, beforePids, slots){
+  function gradeWaiver(rosterMeta, adds, drops, maps, playerDb, asOfSeason, currentSeason){
     const addAssets = adds.map(pid => {
       const v = valueForPidAt(maps, pid, playerDb, asOfSeason, currentSeason);
       return {
@@ -492,9 +325,7 @@
     });
     const addVal = addAssets.reduce((s, a) => s + (a.dynasty || 0), 0);
     const dropVal = dropAssets.reduce((s, a) => s + (a.dynasty || 0), 0);
-    const fit = rosterQualityDelta(
-      beforePids || [], adds, drops, slots, maps, playerDb, asOfSeason, currentSeason
-    );
+    const net = addVal - dropVal;
     const hasAsset = addAssets.length + dropAssets.length > 0;
     return {
       team: rosterMeta.displayName,
@@ -505,12 +336,8 @@
       drops: dropAssets,
       addVal,
       dropVal,
-      net: fit.delta,
-      rawNet: addVal - dropVal,
-      fitNotes: fit.notes,
-      beforeTotal: fit.beforeTotal,
-      afterTotal: fit.afterTotal,
-      grade: hasAsset ? netToGrade(fit.delta) : null,
+      net,
+      grade: hasAsset ? netToGrade(net) : null,
       pending: false
     };
   }
@@ -541,34 +368,27 @@
     const playerDb = await fetchJson('https://api.sleeper.app/v1/players/nba');
 
     onProgress('Fetching trades and waivers…');
-    const rawState = [];
+    const raw = [];
     for (const s of seasons){
-      const txns = await fetchSeasonTransactions(s.leagueId, STATE_TYPES);
+      const txns = await fetchSeasonTransactions(s.leagueId);
       txns.forEach(tx => {
-        rawState.push({
+        raw.push({
           ...tx,
           season: s.season,
           leagueId: s.leagueId,
           scoring: s.scoring,
-          rosterMap: s.rosterMap,
-          slots: s.slots || []
+          rosterMap: s.rosterMap
         });
       });
     }
-    const seenState = new Set();
-    const stateTxns = rawState.filter(t => {
+    const seen = new Set();
+    const unique = raw.filter(t => {
       const id = String(t.transaction_id);
-      if (seenState.has(id)) return false;
-      seenState.add(id);
+      if (seen.has(id)) return false;
+      seen.add(id);
       return true;
     });
-    const unique = stateTxns
-      .filter(t => GRADE_TYPES[t.type])
-      .slice()
-      .sort((a, b) => (b.status_updated || 0) - (a.status_updated || 0));
-
-    onProgress('Replaying rosters for fit grades…');
-    const preRostersByTxn = buildPreRostersByTxn(seasons, stateTxns);
+    unique.sort((a, b) => (b.status_updated || 0) - (a.status_updated || 0));
 
     onProgress('Resolving drafted picks…');
     const resolvePick = await buildPickResolver(seasons, unique);
@@ -593,8 +413,6 @@
       const rosterMap = tx.rosterMap || {};
       const asOf = String(tx.season);
       const maps = mapsBySeason[asOf];
-      const slots = tx.slots || [];
-      const preRosters = preRostersByTxn[String(tx.transaction_id)] || {};
       const ts = tx.status_updated || tx.created || 0;
       const dateLabel = ts
         ? new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -607,7 +425,6 @@
         const metaA = rosterMap[rA] || { displayName: 'Roster ' + rA, franchise: 'Roster ' + rA, manager: '', rosterId: rA };
         const metaB = rosterMap[rB] || { displayName: 'Roster ' + rB, franchise: 'Roster ' + rB, manager: '', rosterId: rB };
         const adds = tx.adds || {};
-        const drops = tx.drops || {};
         const picks = tx.draft_picks || [];
 
         function sideAssets(rid){
@@ -638,29 +455,16 @@
           });
           return assets;
         }
-        function sentPids(rid){
-          return Object.entries(drops)
-            .filter(([, fromRid]) => String(fromRid) === String(rid))
-            .map(([pid]) => String(pid));
-        }
 
         const graded = gradeTrade(
           [
-            {
-              rosterId: rA, team: metaA.displayName, franchise: metaA.franchise,
-              manager: metaA.manager, assets: sideAssets(rA), sentPids: sentPids(rA)
-            },
-            {
-              rosterId: rB, team: metaB.displayName, franchise: metaB.franchise,
-              manager: metaB.manager, assets: sideAssets(rB), sentPids: sentPids(rB)
-            }
+            { rosterId: rA, team: metaA.displayName, franchise: metaA.franchise, manager: metaA.manager, assets: sideAssets(rA) },
+            { rosterId: rB, team: metaB.displayName, franchise: metaB.franchise, manager: metaB.manager, assets: sideAssets(rB) }
           ],
           maps,
           playerDb,
           asOf,
-          currentSeason,
-          preRosters,
-          slots
+          currentSeason
         );
 
         return {
@@ -691,17 +495,11 @@
       const meta = rosterMap[rid] || { displayName: 'Roster ' + rid, franchise: 'Roster ' + rid, manager: '', rosterId: rid };
       const adds = Object.keys(tx.adds || {});
       const drops = Object.keys(tx.drops || {});
-      const graded = gradeWaiver(
-        meta, adds, drops, maps, playerDb, asOf, currentSeason,
-        preRosters[rid] || [], slots
-      );
+      const graded = gradeWaiver(meta, adds, drops, maps, playerDb, asOf, currentSeason);
       const bid = tx.settings && tx.settings.waiver_bid != null ? Number(tx.settings.waiver_bid) : null;
       const subtype = tx.type === 'waiver' ? 'Waiver'
         : (adds.length && drops.length ? 'FA claim'
           : (adds.length ? 'Add' : 'Drop'));
-      const reason = (graded.fitNotes && graded.fitNotes.length)
-        ? graded.fitNotes.slice(0, 3).join(' · ')
-        : null;
 
       return {
         id: String(tx.transaction_id),
@@ -716,12 +514,11 @@
         grade: graded.grade,
         pending: false,
         pendingPicks: 0,
-        reason,
-        winner: graded.net > 0.5 ? meta.displayName : null,
+        reason: null,
+        winner: graded.net > 0.5 ? meta.displayName : (graded.net < -0.5 ? null : null),
         valueA: graded.addVal,
         valueB: graded.dropVal,
         net: graded.net,
-        rawNet: graded.rawNet,
         ratio: null,
         sides: [{
           rosterId: meta.rosterId,
@@ -732,8 +529,7 @@
           dynastyIn: graded.addVal,
           pendingPicks: 0,
           drops: graded.drops,
-          dynastyOut: graded.dropVal,
-          fitNotes: graded.fitNotes
+          dynastyOut: graded.dropVal
         }],
         waiverBid: Number.isFinite(bid) ? bid : null
       };
