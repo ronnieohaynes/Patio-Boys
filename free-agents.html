@@ -162,6 +162,7 @@
         <label for="sortBy">Sort</label>
         <select id="sortBy">
           <option value="fit">Best fit for team</option>
+          <option value="dynasty">Dynasty rating</option>
           <option value="proj">Projected FP/G</option>
           <option value="age">Youngest</option>
           <option value="ovr">2K OVR</option>
@@ -188,6 +189,7 @@
             <th>#</th>
             <th>Player</th>
             <th>Proj</th>
+            <th title="Same dynasty formula as the Trade Analyzer (proj/history blend, age, injury)">Dynasty</th>
             <th class="hide-sm">Age</th>
             <th class="hide-sm">2K</th>
             <th>Lineup lift</th>
@@ -202,7 +204,9 @@
 </div>
 
 <script src="2k-ratings-snapshot.js"></script>
+<script src="nba-proj-consensus.js"></script>
 <script src="team-needs.js"></script>
+<script src="league-awards.js"></script>
 <script>
 const LEAGUE_ID = '1350649177381552128';
 const MY_TEAM = 'Freakonomics';
@@ -261,17 +265,21 @@ const state = {
   scoredByTeam: {}
 };
 
-function makeRecord(pid, playerDb, projById){
+function makeRecord(pid, playerDb, projById, dynastyMaps){
   const p = playerDb[pid] || {};
   const name = playerName(p);
   const hit = RATINGS_BY_NAME.get(normalizeName(name));
   const positions = p.fantasy_positions || [p.position].filter(Boolean);
+  const dynasty = dynastyMaps && dynastyMaps.valueForPid
+    ? dynastyMaps.valueForPid(String(pid), playerDb)
+    : null;
   return {
     id: String(pid),
     name,
     positions,
     pos: posLabel(positions),
     metric: projById.get(String(pid)) ?? null,
+    dynasty: Number.isFinite(dynasty) && dynasty > 0 ? dynasty : null,
     age: p.age ?? null,
     nbaTeam: p.team || 'FA',
     injuryStatus: p.injury_status || null,
@@ -322,6 +330,7 @@ function filteredList(){
     return normalizeName(a.name).includes(q) || normalizeName(a.nbaTeam).includes(q);
   });
   rows = rows.slice().sort((a, b) => {
+    if (sort === 'dynasty') return (b.dynasty || -1) - (a.dynasty || -1) || b.gain - a.gain;
     if (sort === 'proj') return (b.metric || -1) - (a.metric || -1) || b.gain - a.gain;
     if (sort === 'age'){
       const aa = Number.isFinite(a.age) ? a.age : 99;
@@ -329,7 +338,7 @@ function filteredList(){
       return aa - bb || b.gain - a.gain;
     }
     if (sort === 'ovr') return (b.ovr || 0) - (a.ovr || 0) || b.gain - a.gain;
-    return b.gain - a.gain || (b.metric || 0) - (a.metric || 0);
+    return b.gain - a.gain || (b.dynasty || 0) - (a.dynasty || 0) || (b.metric || 0) - (a.metric || 0);
   });
   return rows;
 }
@@ -366,6 +375,7 @@ function render(){
         + '<h3 class="name">' + escapeHtml(a.name) + '</h3>'
         + '<p class="meta">' + escapeHtml(a.pos) + ' \u00b7 ' + escapeHtml(a.nbaTeam || 'FA')
         + (a.metric != null ? ' \u00b7 ' + a.metric.toFixed(1) + ' proj' : '')
+        + (a.dynasty != null ? ' \u00b7 ' + a.dynasty.toFixed(1) + ' dyn' : '')
         + ' \u00b7 lift <span class="gain">+' + a.gain.toFixed(1) + '</span></p>'
         + '<p class="why">' + why + '</p></article>';
     }).join('');
@@ -394,6 +404,7 @@ function render(){
       + (a.injuryStatus ? ' \u00b7 ' + escapeHtml(a.injuryStatus) : '')
       + '</span></td>'
       + '<td class="num">' + (a.metric != null ? a.metric.toFixed(1) : '\u2014') + '</td>'
+      + '<td class="num">' + (a.dynasty != null ? a.dynasty.toFixed(1) : '\u2014') + '</td>'
       + '<td class="num hide-sm">' + (Number.isFinite(a.age) ? a.age : '\u2014') + '</td>'
       + '<td class="num hide-sm">' + (a.ovr != null ? a.ovr : '\u2014') + '</td>'
       + '<td class="num">+' + a.gain.toFixed(1) + '</td>'
@@ -420,7 +431,7 @@ async function load(){
     const rosters = await rostersRes.json();
     const playerDb = await playersRes.json();
 
-    status.textContent = 'Scoring free agents against each roster\u2026';
+    status.textContent = 'Loading dynasty maps and scoring free agents\u2026';
     const scoring = league.scoring_settings || {};
     const season = league.season || '2026';
     const projById = new Map();
@@ -439,6 +450,15 @@ async function load(){
       if (!projById.size) throw new Error('no usable projection stats');
     } catch (pe){
       status.textContent = 'Projections thin (' + (pe.message || pe) + '); ranking by 2K / name fallback.';
+    }
+
+    let dynastyMaps = null;
+    try {
+      if (window.PatioBoysAwards && PatioBoysAwards.loadDynastyMaps){
+        dynastyMaps = await PatioBoysAwards.loadDynastyMaps(scoring, season);
+      }
+    } catch (de){
+      console.warn('Patio Boys free agents: dynasty maps failed.', de);
     }
 
     const userById = {};
@@ -462,7 +482,7 @@ async function load(){
         rosterId: r.roster_id,
         team,
         manager: u.display_name || '',
-        players: ids.map(pid => makeRecord(pid, playerDb, projById))
+        players: ids.map(pid => makeRecord(pid, playerDb, projById, dynastyMaps))
       };
     }).sort((a, b) => {
       if (a.team === MY_TEAM) return -1;
@@ -475,15 +495,16 @@ async function load(){
       const name = playerName(p);
       if (!name) return false;
       if (!(p.active === true || (!!p.team && p.active !== false))) return false;
-      const rec = makeRecord(pid, playerDb, projById);
-      /* Keep the board usable: projected, rated, or young/rookies with a team. */
+      const rec = makeRecord(pid, playerDb, projById, dynastyMaps);
+      /* Keep the board usable: projected, dynasty, rated, or young/rookies with a team. */
       if (rec.metric != null && rec.metric >= 8) return true;
+      if (rec.dynasty != null && rec.dynasty >= 10) return true;
       if (rec.ovr != null && rec.ovr >= 75) return true;
       if (rec.isRookie && rec.nbaTeam && rec.nbaTeam !== 'FA') return true;
       if (Number.isFinite(rec.age) && rec.age <= 23 && rec.nbaTeam) return true;
       return false;
-    }).map(([pid]) => makeRecord(pid, playerDb, projById))
-      .sort((a, b) => (b.metric || 0) - (a.metric || 0) || (b.ovr || 0) - (a.ovr || 0));
+    }).map(([pid]) => makeRecord(pid, playerDb, projById, dynastyMaps))
+      .sort((a, b) => (b.dynasty || 0) - (a.dynasty || 0) || (b.metric || 0) - (a.metric || 0) || (b.ovr || 0) - (a.ovr || 0));
 
     if (state.agents.length > 180){
       state.agents = state.agents.slice(0, 180);
@@ -524,6 +545,7 @@ async function load(){
     tag.textContent = state.agents.length + ' free agents';
     status.classList.remove('error');
     status.textContent = 'Three best adds for the selected team (same optimizer as Team Intel). '
+      + 'Dynasty uses the Trade Analyzer formula (proj/history blend, age, injury). '
       + state.agents.length + ' free agents scored after the draft.';
     render();
   } catch (e){
