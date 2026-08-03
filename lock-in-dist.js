@@ -199,7 +199,14 @@
     const ranked = (playerDists || [])
       .filter(Boolean)
       .slice()
-      .sort((a, b) => b.ceiling - a.ceiling);
+      .sort((a, b) => {
+        const as = Number(a.lockScore);
+        const bs = Number(b.lockScore);
+        if (Number.isFinite(as) || Number.isFinite(bs)){
+          return (Number.isFinite(bs) ? bs : -1) - (Number.isFinite(as) ? as : -1);
+        }
+        return b.ceiling - a.ceiling;
+      });
     const sim = simulateFill(ranked, {slots, marks, sims: options.sims || 400});
     const maxPts = ranked.slice(0, slots).reduce((s, d) => s + d.ceiling, 0);
     return {
@@ -213,9 +220,131 @@
     };
   }
 
+  /* ---- Smash-hunting Lock Value (Intel) ----
+     lockBase = 0.40·Avg + 0.30·Ceil + 0.30·(40·P≥40 + 50·P≥50)
+     Rookies / thin samples fall back to projected FP/G.
+     Then × age × injury. Stars = percentile vs the scored pool. */
+  const SMASH_WEIGHTS = { avg: 0.40, ceil: 0.30, hit: 0.30 };
+  const MIN_SAMPLES_FOR_SMASH = 5;
+  const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
+
+  function smashHitScore(dist){
+    const h = (dist && dist.hits) || {};
+    return 40 * (h[40] || 0) + 50 * (h[50] || 0);
+  }
+
+  function smashLockBase(dist){
+    if (!dist || !Number.isFinite(dist.mean) || !Number.isFinite(dist.ceiling)) return null;
+    return SMASH_WEIGHTS.avg * dist.mean
+      + SMASH_WEIGHTS.ceil * dist.ceiling
+      + SMASH_WEIGHTS.hit * smashHitScore(dist);
+  }
+
+  function lockAgeBand(age, isRookie){
+    const a = Number(age);
+    if (!Number.isFinite(a) || a <= 0) return isRookie ? 'young' : 'unknown';
+    if (a < 24) return 'young';
+    if (a <= 32) return 'prime';
+    return 'decline';
+  }
+
+  function injuryStatusMult(status){
+    const s = String(status || '').toLowerCase();
+    if (s === 'out' || s === 'ir' || s === 'injured reserve') return 0.94;
+    if (s === 'doubtful') return 0.96;
+    if (s === 'questionable') return 0.98;
+    return 1;
+  }
+
+  function starsFromPercentile(pct){
+    if (pct >= 0.90) return 5;
+    if (pct >= 0.75) return 4;
+    if (pct >= 0.50) return 3;
+    if (pct >= 0.25) return 2;
+    return 1;
+  }
+
+  function formatStars(n){
+    const stars = Math.max(1, Math.min(5, Math.round(Number(n) || 1)));
+    return '★'.repeat(stars) + '☆'.repeat(5 - stars);
+  }
+
+  function projFromMap(projById, pid){
+    if (!projById) return null;
+    const key = String(pid);
+    if (typeof projById.get === 'function'){
+      const v = Number(projById.get(key));
+      return Number.isFinite(v) && v > 0 ? v : null;
+    }
+    const v = Number(projById[key]);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+
+  /* Mutates each dist with lockBase / lockScore / lockStars / lockPct. */
+  function attachLockValues(distMap, opts){
+    const options = opts || {};
+    const playerDb = options.playerDb || {};
+    const projById = options.projById || null;
+    const scored = [];
+
+    Object.keys(distMap || {}).forEach(pid => {
+      const d = distMap[pid];
+      if (!d) return;
+      const p = playerDb[pid] || playerDb[String(pid)] || {};
+      const yearsExp = Number(p.years_exp);
+      const isRookie = yearsExp === 0 || options.rookieIds && options.rookieIds.has(String(pid));
+      const proj = projFromMap(projById, pid);
+      const thin = !(d.n >= MIN_SAMPLES_FOR_SMASH);
+
+      let base = null;
+      let baseSource = null;
+      if ((isRookie || thin) && proj != null){
+        base = proj;
+        baseSource = isRookie ? 'rookie-proj' : 'proj';
+      } else {
+        base = smashLockBase(d);
+        baseSource = 'smash';
+        if (base == null && proj != null){
+          base = proj;
+          baseSource = 'proj';
+        }
+      }
+      if (base == null || !Number.isFinite(base)){
+        d.lockScore = null;
+        d.lockStars = null;
+        return;
+      }
+
+      const band = lockAgeBand(p.age, isRookie);
+      const am = AGE_MULT[band] || 0.95;
+      const im = injuryStatusMult(p.injury_status || p.injuryStatus);
+      let score = base * am * im;
+      if (band === 'young') score += 1;
+
+      d.lockBase = base;
+      d.lockBaseSource = baseSource;
+      d.lockAgeBand = band;
+      d.lockScore = score;
+      scored.push({pid, score});
+    });
+
+    const sorted = scored.map(s => s.score).sort((a, b) => a - b);
+    scored.forEach(({pid, score}) => {
+      const d = distMap[pid];
+      let lo = 0;
+      for (let i = 0; i < sorted.length; i++) if (sorted[i] < score) lo = i + 1;
+      const pct = sorted.length <= 1 ? 1 : lo / (sorted.length - 1);
+      d.lockPct = pct;
+      d.lockStars = starsFromPercentile(pct);
+    });
+    return scored.length;
+  }
+
   global.LockInDist = {
     DEFAULT_MARKS,
     LOCK_SLOTS,
+    SMASH_WEIGHTS,
+    MIN_SAMPLES_FOR_SMASH,
     normalCdf,
     normalHitRate,
     empiricalHitRate,
@@ -226,6 +355,13 @@
     buildDistMap,
     expectedLocks,
     simulateFill,
-    teamLockInSummary
+    teamLockInSummary,
+    smashHitScore,
+    smashLockBase,
+    lockAgeBand,
+    injuryStatusMult,
+    starsFromPercentile,
+    formatStars,
+    attachLockValues
   };
 })(window);
