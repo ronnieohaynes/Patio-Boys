@@ -225,6 +225,40 @@
   ul.needs .need-tag.critical{background:var(--coral);color:#fff}
   ul.needs .num{color:var(--gold);font-weight:600}
 
+  /* lock-in distribution */
+  .lock-fill{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 12px;
+  }
+  .lock-fill .lf{
+    padding:8px 10px;background:var(--surface-2);border-radius:6px;
+    border:1px solid color-mix(in srgb, var(--hairline) 80%, transparent);
+  }
+  .lock-fill .lf .lf-mark{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--ink-dim);
+  }
+  .lock-fill .lf .lf-val{
+    font-family:'Anton',sans-serif;font-size:22px;color:var(--gold);line-height:1.1;margin-top:2px;
+  }
+  .lock-fill .lf .lf-sub{font-size:11px;color:var(--ink-dim);margin-top:2px;line-height:1.35}
+  table.lockin{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.lockin th{
+    font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.07em;
+    text-transform:uppercase;color:var(--ink-dim);font-weight:500;
+    text-align:left;padding:0 6px 6px 0;border-bottom:1px solid var(--hairline);
+  }
+  table.lockin th.num, table.lockin td.num{text-align:right}
+  table.lockin td{
+    padding:6px 6px 6px 0;border-bottom:1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+    color:#C9CDD8;vertical-align:top;
+  }
+  table.lockin tr:last-child td{border-bottom:none}
+  table.lockin .name{color:var(--ink);font-weight:500}
+  table.lockin .pos{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);width:42px;
+  }
+  table.lockin .hit-hot{color:var(--gold);font-weight:600}
+
   /* trade intel */
   .trade-row{
     padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
@@ -276,12 +310,16 @@
     <div class="intel-grid">
       <div>
         <div class="panel">
-          <div class="panel-head"><h2>Lineup</h2><span class="tag" id="lineupTag">Top weekly ceilings</span></div>
+          <div class="panel-head"><h2>Lineup</h2><span class="tag" id="lineupTag">Top lock-in ceilings</span></div>
           <div class="panel-body" id="lineupBody"><p class="pending">Pulling weekly player stats&hellip;</p></div>
         </div>
         <div class="panel" style="margin-top:16px">
           <div class="panel-head"><h2>Top 5 Bench</h2><span class="tag" id="benchTag"></span></div>
           <div class="panel-body" id="benchBody"><p class="pending">Rating bench depth&hellip;</p></div>
+        </div>
+        <div class="panel" style="margin-top:16px">
+          <div class="panel-head"><h2>Lock-in Distribution</h2><span class="tag" id="lockInTag"></span></div>
+          <div class="panel-body" id="lockInBody"><p class="pending">Building per-game lock-in curves&hellip;</p></div>
         </div>
       </div>
       <div>
@@ -304,8 +342,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260802';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-lockin';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -369,7 +407,9 @@ const state = {
   teamsByKey: {},
   selected: null,
   playerDb: null,
-  ceilings: null,       // pid -> per-game ceiling (mean + 1 stdev of weekly value)
+  ceilings: null,       // pid -> per-game ceiling (mean + 1σ of game samples)
+  lockInByPid: null,    // pid -> LockInDist playerDist
+  lockInMarks: null,
   statsSeason: null,
   statsWeeksFound: 0,
   maxPtsReady: false,
@@ -482,12 +522,11 @@ async function loadPreviousSeasons(){
   return seasons;
 }
 
-/* ---------- Max Points ceilings (same method as league-status.html) ---------- */
+/* ---------- Max Points / lock-in ceilings ---------- */
 
 async function loadCeilings(){
   const league = state.league;
   const scoring = league.scoring_settings || {};
-  const scoringKeys = Object.keys(scoring);
   let statsSeason = league.season;
   if (league.previous_league_id){
     const r = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id);
@@ -503,38 +542,51 @@ async function loadCeilings(){
   state.statsWeeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
   if (!state.statsWeeksFound) throw new Error('No weekly stats available for ' + statsSeason);
 
-  function fantasyValue(obj){
-    if (!obj) return null;
-    const gp = obj.gp || obj.games_played || null;
-    let total = 0, matched = 0;
-    scoringKeys.forEach(k => { if (obj[k] != null){ total += obj[k] * scoring[k]; matched++; } });
-    if (matched === 0) return null;
-    return gp && gp > 0 ? total / gp : total;
-  }
-  const weeklyByPlayer = {};
-  weeklyResults.forEach(wk => {
-    if (!wk) return;
-    Object.keys(wk).forEach(pid => {
-      const v = fantasyValue(wk[pid]);
-      if (v == null) return;
-      if (!weeklyByPlayer[pid]) weeklyByPlayer[pid] = [];
-      weeklyByPlayer[pid].push(v);
+  const marks = (window.LockInDist && LockInDist.DEFAULT_MARKS) || [30, 40, 50];
+  state.lockInMarks = marks;
+
+  let samplesByPlayer;
+  let distMap;
+  if (window.LockInDist){
+    samplesByPlayer = LockInDist.buildSamplesByPlayer(weeklyResults, scoring);
+    distMap = LockInDist.buildDistMap(samplesByPlayer, marks);
+  } else {
+    // Fallback if lock-in-dist.js failed to load.
+    samplesByPlayer = {};
+    const scoringKeys = Object.keys(scoring);
+    weeklyResults.forEach(wk => {
+      if (!wk) return;
+      Object.keys(wk).forEach(pid => {
+        const obj = wk[pid];
+        if (!obj || String(pid).indexOf('TEAM_') === 0) return;
+        let total = 0, matched = 0;
+        scoringKeys.forEach(k => { if (obj[k] != null){ total += obj[k] * scoring[k]; matched++; } });
+        if (!matched) return;
+        (samplesByPlayer[pid] || (samplesByPlayer[pid] = [])).push(total);
+      });
     });
-  });
+    distMap = {};
+    Object.keys(samplesByPlayer).forEach(pid => {
+      const arr = samplesByPlayer[pid];
+      const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
+      const stdev = Math.sqrt(arr.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / arr.length);
+      const hits = {};
+      marks.forEach(m => { hits[m] = arr.filter(v => v >= m).length / arr.length; });
+      distMap[pid] = {n: arr.length, mean, stdev, ceiling: mean + stdev, hits, normalHits: hits, marks, samples: arr};
+    });
+  }
+
+  state.lockInByPid = distMap;
   const ceilings = {};
-  Object.keys(weeklyByPlayer).forEach(pid => {
-    const arr = weeklyByPlayer[pid];
-    const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
-    const stdev = Math.sqrt(arr.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / arr.length);
-    ceilings[pid] = mean + stdev;
-  });
+  Object.keys(distMap).forEach(pid => { ceilings[pid] = distMap[pid].ceiling; });
   state.ceilings = ceilings;
 
-  // Max Points per team: sum of top 10 player ceilings, graded on a curve.
+  // Max Points = sum of top 10 lock-in ceilings (μ + 1σ), graded on a curve.
+  const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
   state.teams.forEach(t => {
-    const top10 = t.players.map(pid => ceilings[pid]).filter(v => v != null).sort((a, b) => b - a).slice(0, 10);
-    t.maxPts = top10.reduce((s, v) => s + v, 0);
-    t.maxPtsCounted = top10.length;
+    const top = t.players.map(pid => ceilings[pid]).filter(v => v != null).sort((a, b) => b - a).slice(0, slots);
+    t.maxPts = top.reduce((s, v) => s + v, 0);
+    t.maxPtsCounted = top.length;
   });
   const byMax = state.teams.slice().sort((a, b) => b.maxPts - a.maxPts);
   const n = byMax.length;
@@ -776,7 +828,7 @@ function renderLineup(t){
       + '<p class="lineup-foot">Computing weekly ceilings&hellip;</p>';
     return;
   }
-  tag.textContent = 'Top ' + state.statsSeason + ' weekly ceilings';
+  tag.textContent = 'Top ' + state.statsSeason + ' lock-in ceilings';
   const ranked = t.players
     .map(pid => ({pid, ceil: state.ceilings[pid]}))
     .sort((a, b) => (b.ceil ?? -1) - (a.ceil ?? -1));
@@ -786,7 +838,8 @@ function renderLineup(t){
   ).join('');
   const rest = t.players.length - top.length;
   body.innerHTML = '<table class="lineup"><thead><tr><th>Pos</th><th>Name</th><th style="text-align:right">2K</th><th style="text-align:right">Ceil</th><th style="text-align:right">Age</th></tr></thead><tbody>' + rows + '</tbody></table>'
-    + '<p class="lineup-foot">Ceil = per-game mean + 1 stdev of weekly ' + escapeHtml(String(state.statsSeason)) + ' fantasy output under league scoring.'
+    + '<p class="lineup-foot">Ceil = game mean + 1σ under league scoring (lock-in unit). Each Sleeper week sample is a single-game line from '
+    + escapeHtml(String(state.statsSeason)) + '.'
     + ' 2K = top-100 NBA 2K27 snapshot.'
     + (rest > 0 ? ' +' + rest + ' more on roster.' : '') + '</p>';
 }
@@ -805,12 +858,12 @@ function renderObservations(t){
   }
 
   if (state.maxPtsReady){
-    items.push('Max Points grade: <span class="hl">' + t.maxPtsGrade + '</span> &mdash; ranked <strong>#' + t.maxPtsRank + ' of ' + n + '</strong> league-wide with a ' + t.maxPts.toFixed(1) + ' weekly ceiling (top ' + t.maxPtsCounted + ' players).');
+    items.push('Max Points / lock-in grade: <span class="hl">' + t.maxPtsGrade + '</span> &mdash; ranked <strong>#' + t.maxPtsRank + ' of ' + n + '</strong> with a ' + t.maxPts.toFixed(1) + ' ceiling across the top ' + t.maxPtsCounted + ' lock-in spots (game mean + 1σ).');
     const best = t.players.map(pid => ({pid, ceil: state.ceilings[pid]})).filter(e => e.ceil != null).sort((a, b) => b.ceil - a.ceil)[0];
-    if (best) items.push('Highest weekly ceiling on the roster: <strong>' + escapeHtml(playerName(best.pid)) + '</strong> at ' + best.ceil.toFixed(1) + ' per game.');
+    if (best) items.push('Highest lock-in ceiling on the roster: <strong>' + escapeHtml(playerName(best.pid)) + '</strong> at ' + best.ceil.toFixed(1) + ' per game.');
     statusTag.textContent = 'Ceiling rank #' + t.maxPtsRank + ' of ' + n;
   } else {
-    items.push('Max Points grade is still computing from weekly Sleeper stats&hellip;');
+    items.push('Max Points grade is still computing from Sleeper game samples&hellip;');
     statusTag.textContent = '';
   }
 
@@ -832,6 +885,93 @@ function renderObservations(t){
   }
 
   list.innerHTML = items.map(html => '<li>' + html + '</li>').join('');
+}
+
+function pct1(rate){
+  if (!Number.isFinite(rate)) return '—';
+  return Math.round(rate * 100) + '%';
+}
+
+function renderLockIn(t){
+  const body = document.getElementById('lockInBody');
+  const tag = document.getElementById('lockInTag');
+  if (!body) return;
+  if (!state.lockInByPid){
+    tag.textContent = '';
+    body.innerHTML = '<p class="pending">' + (state.ceilingSettled
+      ? ('Lock-in samples unavailable' + (state.ceilingError ? ' (' + escapeHtml(state.ceilingError) + ')' : '') + '.')
+      : 'Building per-game lock-in curves&hellip;') + '</p>';
+    return;
+  }
+
+  const marks = state.lockInMarks || [30, 40, 50];
+  const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
+  const dists = t.players
+    .map(pid => {
+      const d = state.lockInByPid[pid];
+      if (!d) return null;
+      return Object.assign({pid: String(pid)}, d);
+    })
+    .filter(Boolean);
+
+  if (!dists.length){
+    tag.textContent = '';
+    body.innerHTML = '<p class="pending">No ' + escapeHtml(String(state.statsSeason)) + ' game samples on this roster yet.</p>';
+    return;
+  }
+
+  const summary = window.LockInDist
+    ? LockInDist.teamLockInSummary(dists, {marks, slots, sims: 500})
+    : null;
+  const avgFill = summary ? summary.sim.avgFill : {};
+  const expected = summary ? summary.sim.expected : {};
+
+  tag.textContent = state.statsSeason + ' · ' + slots + ' lock spots';
+
+  const fillHtml = '<div class="lock-fill">' + marks.map(m => {
+    const fill = avgFill[m];
+    const exp = expected[m];
+    const fillTxt = fill != null ? fill.toFixed(1) : '—';
+    const expTxt = exp != null ? exp.toFixed(1) : '—';
+    return '<div class="lf"><div class="lf-mark">Locks ≥' + m + '</div>'
+      + '<div class="lf-val">' + fillTxt + '<span style="font-size:14px;color:var(--ink-dim)">/' + slots + '</span></div>'
+      + '<div class="lf-sub">Simulated top-' + slots + ' nights<br>Roster hit sum ' + expTxt + '</div></div>';
+  }).join('') + '</div>';
+
+  const ranked = dists.slice().sort((a, b) => b.mean - a.mean);
+  const show = ranked.slice(0, 12);
+  const head = '<tr><th>Pos</th><th>Name</th><th class="num">Avg</th><th class="num">σ</th><th class="num">Ceil</th>'
+    + marks.map(m => '<th class="num">≥' + m + '</th>').join('')
+    + '<th class="num">N</th></tr>';
+  const rows = show.map(d => {
+    const hitCells = marks.map(m => {
+      const emp = d.hits[m] || 0;
+      const bell = d.normalHits ? d.normalHits[m] : null;
+      const hot = emp >= 0.35 ? ' hit-hot' : '';
+      const title = bell != null
+        ? ('Empirical ' + pct1(emp) + ' · bell curve ' + pct1(bell))
+        : ('Empirical ' + pct1(emp));
+      return '<td class="num' + hot + '" title="' + title + '">' + pct1(emp) + '</td>';
+    }).join('');
+    return '<tr><td class="pos">' + escapeHtml(playerPos(d.pid)) + '</td>'
+      + '<td class="name">' + escapeHtml(playerName(d.pid)) + '</td>'
+      + '<td class="num">' + d.mean.toFixed(1) + '</td>'
+      + '<td class="num">' + d.stdev.toFixed(1) + '</td>'
+      + '<td class="num">' + d.ceiling.toFixed(1) + '</td>'
+      + hitCells
+      + '<td class="num">' + d.n + '</td></tr>';
+  }).join('');
+
+  const note = '<p class="lineup-foot">Lock-in weeks are 10 single-game scores into starter spots — not weekly totals. '
+    + 'Avg / σ / hit% use ' + escapeHtml(String(state.statsSeason)) + ' Sleeper game samples under your scoring (incl. 40/50-pt bonuses when applicable). '
+    + 'Hover a hit% for the normal (bell curve) estimate from μ and σ. '
+    + 'Team fill simulates each rostered player producing one lockable night, then keeps the top ' + slots + ' scores.'
+    + (ranked.length > show.length ? ' Showing top ' + show.length + ' of ' + ranked.length + ' sampled players.' : '')
+    + '</p>';
+
+  body.innerHTML = fillHtml
+    + '<table class="lockin"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table>'
+    + note;
 }
 
 function needsPlayerRecord(pid){
@@ -1096,6 +1236,7 @@ function renderTeam(){
   document.getElementById('statRoster').textContent = t.rosterSize;
   renderLineup(t);
   renderBench(t);
+  renderLockIn(t);
   renderObservations(t);
   renderNeeds(t);
   renderTrades(t);
