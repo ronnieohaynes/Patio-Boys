@@ -361,7 +361,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-trade-stars';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-trade-stars-ui';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1003,7 +1003,7 @@ function renderLockIn(t){
     return b.mean - a.mean;
   });
   const show = ranked.slice(0, 14);
-  const head = '<tr><th>Pos</th><th>Name</th><th>OVR</th><th class="num">Avg</th><th class="num">σ</th><th class="num">Ceil</th>'
+  const head = '<tr><th>Pos</th><th>Name</th><th>OVR</th><th>Trade</th><th class="num">Avg</th><th class="num">σ</th><th class="num">Ceil</th>'
     + marks.map(m => '<th class="num">≥' + m + '</th>').join('')
     + '<th class="num">N</th></tr>';
   const rows = show.map(d => {
@@ -1031,8 +1031,7 @@ function renderLockIn(t){
         + ' base ' + (d.lockBase != null ? d.lockBase.toFixed(1) : '—')
         + ' · weights Avg ' + Math.round(w.avg*100) + '% / Ceil ' + Math.round(w.ceil*100)
         + '% / smash-hit ' + Math.round(w.hit*100) + '%'
-        + (d.lockPct != null ? (' · p' + Math.round(d.lockPct * 100)) : '')
-        + ' · scale ' + floor + '–' + ceilO)
+        + ' · absolute scale ' + floor + '–' + ceilO)
       : 'Lock OVR unavailable';
     const tier = d.lockTier || 'depth';
     const label = d.lockTierLabel || '';
@@ -1042,12 +1041,30 @@ function renderLockIn(t){
         + (label ? '<span class="tier-sub">' + escapeHtml(label) + '</span>' : '')
         + '</td>')
       : '<td class="num">—</td>';
+    const stars = d.tradeStars;
+    const filled = Number.isFinite(Number(stars)) ? Math.max(1, Math.min(5, Math.round(Number(stars)))) : 0;
+    const tradeTitle = filled
+      ? ('Trade ' + '★'.repeat(filled) + ' · score ' + Number(d.tradeScore).toFixed(1)
+        + ' = OVR ' + d.lockOvr
+        + ' × age ' + (d.tradeAgeMult != null ? Number(d.tradeAgeMult).toFixed(2) : '—')
+        + ' (' + (d.lockAgeBand || '?') + ')'
+        + ' × injury ' + (d.tradeInjuryMult != null ? Number(d.tradeInjuryMult).toFixed(2) : '1.00')
+        + (d.lockAgeBand === 'young' ? ' +1 young' : '')
+        + ' · bands 95+/85+/75+/65+')
+      : 'Trade stars unavailable';
+    const tradeCell = filled
+      ? ('<td title="' + escapeHtml(tradeTitle) + '"><span class="trade-stars" aria-label="'
+        + filled + ' out of 5 trade stars"><span>' + '★'.repeat(filled) + '</span>'
+        + '<span class="dim">' + '☆'.repeat(5 - filled) + '</span></span>'
+        + '<span class="tier-sub">' + escapeHtml(d.lockAgeBand || '') + '</span></td>')
+      : '<td class="num">—</td>';
     const avgTxt = d.mean != null && Number.isFinite(d.mean) ? d.mean.toFixed(1) : '—';
     const sdTxt = d.n ? d.stdev.toFixed(1) : '—';
     const ceilTxt = d.ceiling != null && Number.isFinite(d.ceiling) ? d.ceiling.toFixed(1) : '—';
     return '<tr><td class="pos">' + escapeHtml(playerPos(d.pid)) + '</td>'
       + '<td class="name">' + escapeHtml(playerName(d.pid)) + '</td>'
       + lockCell
+      + tradeCell
       + '<td class="num" title="' + escapeHtml(avgTitle) + '">' + avgTxt + '</td>'
       + '<td class="num">' + sdTxt + '</td>'
       + '<td class="num">' + ceilTxt + '</td>'
@@ -1055,16 +1072,15 @@ function renderLockIn(t){
       + '<td class="num" title="Weekly game samples used for σ and hit rates">' + d.n + '</td></tr>';
   }).join('');
 
-  const note = '<p class="lineup-foot"><strong>Lock OVR</strong> is a 2K-style '
-    + ((window.LockInDist && LockInDist.LOCK_OVR_FLOOR) || 50) + '–'
-    + ((window.LockInDist && LockInDist.LOCK_OVR_CEIL) || 99)
-    + ' rating from smash production only (no age/injury): '
-    + '40% Avg + 30% Ceil + 30% smash-hit (40·P≥40 + 50·P≥50), scaled by percentile. '
-    + 'Tiers: 95+ MVP · 90+ Superstar · 85+ All-Star · 80+ Strong starter · 70+ Solid · 60+ Rotation · 50+ Depth. '
+  const note = '<p class="lineup-foot"><strong>Lock OVR</strong> is smash production only (50–99, absolute curve). '
+    + '<strong>Trade ★</strong> = OVR × age × injury'
+    + ' (young 1.12 +1 · prime 1.04 · decline 0.80), then '
+    + '★★★★★ ≥95 · ★★★★ ≥85 · ★★★ ≥75 · ★★ ≥65 · ★ below. '
+    + 'Same OVR can be a haul or a discount depending on age. '
     + 'Rookies / thin samples (N&lt;' + ((window.LockInDist && LockInDist.MIN_SAMPLES_FOR_SMASH) || 5)
-    + ') use projected FP/G as the base. Trade stars (age/injury) come later. '
+    + ') use projected FP/G for OVR base. '
     + '<strong>Avg</strong> is full-season FP/G from ' + escapeHtml(String(state.statsSeason)) + '. '
-    + 'Hover OVR for details.'
+    + 'Hover OVR or Trade for the math.'
     + (ranked.length > show.length ? ' Showing top ' + show.length + ' of ' + ranked.length + ' by Lock OVR.' : '')
     + '</p>';
 
