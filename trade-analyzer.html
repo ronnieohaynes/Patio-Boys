@@ -91,12 +91,19 @@
     margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--gold);
     white-space:nowrap;padding-top:2px;text-align:right;line-height:1.25;
   }
-  .player-row .val .stars{display:block;font-size:12px;letter-spacing:.02em}
-  .player-row .val .stars .dim{color:var(--ink-dim);opacity:.4}
-  .player-row .val .stars .star-half,
-  .side-card li .dv .stars .star-half{
-    display:inline-block;width:.55em;overflow:hidden;vertical-align:baseline;
+  .player-row .val .stars{
+    display:inline-flex;align-items:center;gap:0;
+    font-size:12px;letter-spacing:0;line-height:1;height:1em;
   }
+  .player-row .val .stars .star,
+  .side-card li .dv .stars .star{
+    display:inline-block;width:1em;height:1em;line-height:1;
+    overflow:hidden;flex:0 0 auto;text-align:left;
+  }
+  .player-row .val .stars .star.half,
+  .side-card li .dv .stars .star.half{width:.5em}
+  .player-row .val .stars .star.empty,
+  .side-card li .dv .stars .star.empty{color:var(--ink-dim);opacity:.4}
   .player-row .val .score{display:block;font-size:12px;font-weight:600}
   .player-row .val .ovr-mini{
     display:block;font-size:9px;color:var(--ink-dim);letter-spacing:.04em;text-transform:uppercase;
@@ -189,8 +196,10 @@
   .side-card li .dv{
     font-family:'IBM Plex Mono',monospace;color:var(--gold);font-size:11px;text-align:right;line-height:1.25;
   }
-  .side-card li .dv .stars{display:block;font-size:12px}
-  .side-card li .dv .stars .dim{color:var(--ink-dim);opacity:.4}
+  .side-card li .dv .stars{
+    display:inline-flex;align-items:center;gap:0;
+    font-size:12px;letter-spacing:0;line-height:1;height:1em;
+  }
   .side-card li .dv .score{display:block}
   .side-card li .dv .ovr-mini{display:block;font-size:9px;color:var(--ink-dim)}
   .empty-note{color:var(--ink-dim);font-size:13px;margin:0}
@@ -274,7 +283,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-half-stars';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-star-align';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -640,11 +649,11 @@ function starsHtml(n){
   const full = Math.floor(stars);
   const half = stars - full >= 0.5;
   const empty = 5 - full - (half ? 1 : 0);
-  return '<span class="stars" aria-label="' + stars + ' of 5">'
-    + (full ? '<span>' + '★'.repeat(full) + '</span>' : '')
-    + (half ? '<span class="star-half" aria-hidden="true">★</span>' : '')
-    + (empty ? '<span class="dim">' + '☆'.repeat(empty) + '</span>' : '')
-    + '</span>';
+  let html = '<span class="stars" aria-label="' + stars + ' of 5">';
+  for (let i = 0; i < full; i++) html += '<span class="star full">★</span>';
+  if (half) html += '<span class="star half" aria-hidden="true">★</span>';
+  for (let i = 0; i < empty; i++) html += '<span class="star empty">☆</span>';
+  return html + '</span>';
 }
 
 function tradeValHtml(p){

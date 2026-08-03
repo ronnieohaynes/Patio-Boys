@@ -435,7 +435,7 @@
     return '★'.repeat(full) + (half ? '½' : '') + '☆'.repeat(Math.max(0, empty));
   }
 
-  /* HTML stars with optional half glyph (CSS clips .star-half to 50% width). */
+  /* HTML stars: one flex slot per star so half glyphs stay level with full/empty. */
   function formatStarsHtml(n, opts){
     const stars = clampTradeStars(n);
     const cls = (opts && opts.className) || 'stars';
@@ -444,9 +444,9 @@
     const half = stars - full >= 0.5;
     const empty = 5 - full - (half ? 1 : 0);
     let html = '<span class="' + cls + '" aria-label="' + stars + ' of 5">';
-    if (full > 0) html += '<span>' + '★'.repeat(full) + '</span>';
-    if (half) html += '<span class="star-half" aria-hidden="true">★</span>';
-    if (empty > 0) html += '<span class="dim">' + '☆'.repeat(empty) + '</span>';
+    for (let i = 0; i < full; i++) html += '<span class="star full">★</span>';
+    if (half) html += '<span class="star half" aria-hidden="true">★</span>';
+    for (let i = 0; i < empty; i++) html += '<span class="star empty">☆</span>';
     html += '</span>';
     return html;
   }
