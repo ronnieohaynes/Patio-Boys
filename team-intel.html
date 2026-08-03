@@ -135,9 +135,13 @@
     margin:7px 0 0;letter-spacing:.02em;
   }
 
-  /* body grid */
+  /* body grid — secondary panels under Dynasty Value */
   .intel-grid{
-    display:grid;grid-template-columns:minmax(280px,5fr) 7fr;gap:16px;margin-top:16px;
+    display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;
+  }
+  #dynastyPanel{margin-top:16px}
+  .intel-grid .panel-span{
+    grid-column:1 / -1;
   }
   @media(max-width:760px){
     .intel-grid{grid-template-columns:1fr}
@@ -274,12 +278,16 @@
     letter-spacing:.04em;text-transform:uppercase;color:var(--ink-dim);margin-top:2px;
   }
   table.lockin .trade-stars{
-    font-size:13px;letter-spacing:.02em;color:var(--gold);white-space:nowrap;line-height:1.1;
+    display:inline-flex;align-items:center;gap:0;
+    font-size:13px;letter-spacing:0;color:var(--gold);white-space:nowrap;line-height:1;
+    height:1em;
   }
-  table.lockin .trade-stars .dim{color:var(--ink-dim);opacity:.4}
-  table.lockin .trade-stars .star-half{
-    display:inline-block;width:.55em;overflow:hidden;vertical-align:baseline;
+  table.lockin .trade-stars .star{
+    display:inline-block;width:1em;height:1em;line-height:1;
+    overflow:hidden;flex:0 0 auto;text-align:left;
   }
+  table.lockin .trade-stars .star.half{width:.5em}
+  table.lockin .trade-stars .star.empty{color:var(--ink-dim);opacity:.4}
 
   /* trade intel */
   .trade-row{
@@ -329,34 +337,29 @@
       </div>
     </div>
 
+    <div class="panel" id="dynastyPanel">
+      <div class="panel-head"><h2>Dynasty Value</h2><span class="tag" id="lockInTag"></span></div>
+      <div class="panel-body" id="lockInBody"><p class="pending">Building dynasty value curves&hellip;</p></div>
+    </div>
+
+    <!-- Lineup / Bench kept in DOM for data hooks but hidden from the UI. -->
+    <div hidden>
+      <div id="lineupBody"></div><span id="lineupTag"></span>
+      <div id="benchBody"></div><span id="benchTag"></span>
+    </div>
+
     <div class="intel-grid">
-      <div>
-        <div class="panel">
-          <div class="panel-head"><h2>Lineup</h2><span class="tag" id="lineupTag">Top lock-in ceilings</span></div>
-          <div class="panel-body" id="lineupBody"><p class="pending">Pulling weekly player stats&hellip;</p></div>
-        </div>
-        <div class="panel" style="margin-top:16px">
-          <div class="panel-head"><h2>Top 5 Bench</h2><span class="tag" id="benchTag"></span></div>
-          <div class="panel-body" id="benchBody"><p class="pending">Rating bench depth&hellip;</p></div>
-        </div>
-        <div class="panel" style="margin-top:16px">
-          <div class="panel-head"><h2>Lock-in Distribution</h2><span class="tag" id="lockInTag"></span></div>
-          <div class="panel-body" id="lockInBody"><p class="pending">Building per-game lock-in curves&hellip;</p></div>
-        </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Team Status</h2><span class="tag" id="statusTag"></span></div>
+        <div class="panel-body"><ul class="obs" id="obsList"></ul></div>
       </div>
-      <div>
-        <div class="panel">
-          <div class="panel-head"><h2>Team Status</h2><span class="tag" id="statusTag"></span></div>
-          <div class="panel-body"><ul class="obs" id="obsList"></ul></div>
-        </div>
-        <div class="panel" style="margin-top:16px">
-          <div class="panel-head"><h2>Team Needs</h2><span class="tag" id="needsTag"></span></div>
-          <div class="panel-body" id="needsBody"><p class="pending">Sizing up the roster&hellip;</p></div>
-        </div>
-        <div class="panel" style="margin-top:16px">
-          <div class="panel-head"><h2>Trade Intel</h2><span class="tag" id="tradeTag">Last two seasons</span></div>
-          <div class="panel-body" id="tradeBody"><p class="pending">Loading trade history&hellip;</p></div>
-        </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Team Needs</h2><span class="tag" id="needsTag"></span></div>
+        <div class="panel-body" id="needsBody"><p class="pending">Sizing up the roster&hellip;</p></div>
+      </div>
+      <div class="panel panel-span">
+        <div class="panel-head"><h2>Trade Intel</h2><span class="tag" id="tradeTag">Last two seasons</span></div>
+        <div class="panel-body" id="tradeBody"><p class="pending">Loading trade history&hellip;</p></div>
       </div>
     </div>
   </div>
@@ -364,7 +367,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-half-stars';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-dynasty-top';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -956,8 +959,8 @@ function renderLockIn(t){
   if (!state.lockInByPid){
     tag.textContent = '';
     body.innerHTML = '<p class="pending">' + (state.ceilingSettled
-      ? ('Lock-in samples unavailable' + (state.ceilingError ? ' (' + escapeHtml(state.ceilingError) + ')' : '') + '.')
-      : 'Building per-game lock-in curves&hellip;') + '</p>';
+      ? ('Dynasty samples unavailable' + (state.ceilingError ? ' (' + escapeHtml(state.ceilingError) + ')' : '') + '.')
+      : 'Building dynasty value curves&hellip;') + '</p>';
     return;
   }
 
@@ -985,7 +988,7 @@ function renderLockIn(t){
   const avgFill = summary ? summary.sim.avgFill : {};
   const expected = summary ? summary.sim.expected : {};
 
-  tag.textContent = state.statsSeason + ' · Lock OVR 50–99';
+  tag.textContent = state.statsSeason + ' · Dynasty OVR 50–99';
 
   const fillHtml = '<div class="lock-fill">' + marks.map(m => {
     const fill = avgFill[m];
@@ -1064,9 +1067,10 @@ function renderLockIn(t){
       ? LockInDist.formatStarsHtml(filled, {className: 'trade-stars'})
       : (filled != null
         ? ('<span class="trade-stars" aria-label="' + filled + ' of 5">'
-          + '<span>' + '★'.repeat(Math.floor(filled)) + '</span>'
-          + (filled % 1 ? '<span class="star-half" aria-hidden="true">★</span>' : '')
-          + '<span class="dim">' + '☆'.repeat(5 - Math.ceil(filled)) + '</span></span>')
+          + Array.from({length: Math.floor(filled)}, () => '<span class="star full">★</span>').join('')
+          + (filled % 1 ? '<span class="star half" aria-hidden="true">★</span>' : '')
+          + Array.from({length: 5 - Math.ceil(filled)}, () => '<span class="star empty">☆</span>').join('')
+          + '</span>')
         : '');
     const tradeCell = filled != null
       ? ('<td title="' + escapeHtml(tradeTitle) + '">' + tradeStarsHtml
