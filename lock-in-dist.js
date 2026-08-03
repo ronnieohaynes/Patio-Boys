@@ -220,12 +220,15 @@
     };
   }
 
-  /* ---- Smash-hunting Lock Value (Intel) ----
-     lockBase = 0.40·Avg + 0.30·Ceil + 0.30·(40·P≥40 + 50·P≥50)
+  /* ---- Smash-hunting Lock OVR (Intel) ----
+     Raw smash base = 0.40·Avg + 0.30·Ceil + 0.30·(40·P≥40 + 50·P≥50)
      Rookies / thin samples fall back to projected FP/G.
-     Then × age × injury. Stars = percentile vs the scored pool. */
+     Lock OVR maps smash base → 50–99 by percentile (2K-style; active floor 50).
+     Age / injury stay off OVR — those belong on Trade stars later. */
   const SMASH_WEIGHTS = { avg: 0.40, ceil: 0.30, hit: 0.30 };
   const MIN_SAMPLES_FOR_SMASH = 5;
+  const LOCK_OVR_FLOOR = 50;
+  const LOCK_OVR_CEIL = 99;
   const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
 
   function smashHitScore(dist){
@@ -256,6 +259,24 @@
     return 1;
   }
 
+  /* Percentile 0→1 → Lock OVR in [50, 99]. */
+  function ovrFromPercentile(pct){
+    const p = Math.max(0, Math.min(1, Number(pct) || 0));
+    return Math.round(LOCK_OVR_FLOOR + p * (LOCK_OVR_CEIL - LOCK_OVR_FLOOR));
+  }
+
+  function lockOvrTier(ovr){
+    const n = Number(ovr);
+    if (!Number.isFinite(n)) return {key:'unknown', label:'—'};
+    if (n >= 95) return {key:'mvp', label:'MVP / top-5'};
+    if (n >= 90) return {key:'superstar', label:'Superstar'};
+    if (n >= 85) return {key:'allstar', label:'All-Star'};
+    if (n >= 80) return {key:'strong', label:'Strong starter'};
+    if (n >= 70) return {key:'solid', label:'Solid starter'};
+    if (n >= 60) return {key:'rotation', label:'Rotation'};
+    return {key:'depth', label:'Depth'};
+  }
+
   function starsFromPercentile(pct){
     if (pct >= 0.90) return 5;
     if (pct >= 0.75) return 4;
@@ -280,7 +301,8 @@
     return Number.isFinite(v) && v > 0 ? v : null;
   }
 
-  /* Mutates each dist with lockBase / lockScore / lockStars / lockPct. */
+  /* Mutates each dist with lockBase / lockOvr / lockTier / lockPct.
+     OVR is pure smash production (no age/injury). */
   function attachLockValues(distMap, opts){
     const options = opts || {};
     const playerDb = options.playerDb || {};
@@ -310,32 +332,35 @@
         }
       }
       if (base == null || !Number.isFinite(base)){
+        d.lockBase = null;
+        d.lockOvr = null;
+        d.lockTier = null;
         d.lockScore = null;
         d.lockStars = null;
         return;
       }
 
-      const band = lockAgeBand(p.age, isRookie);
-      const am = AGE_MULT[band] || 0.95;
-      const im = injuryStatusMult(p.injury_status || p.injuryStatus);
-      let score = base * am * im;
-      if (band === 'young') score += 1;
-
       d.lockBase = base;
       d.lockBaseSource = baseSource;
-      d.lockAgeBand = band;
-      d.lockScore = score;
-      scored.push({pid, score});
+      d.lockAgeBand = lockAgeBand(p.age, isRookie);
+      scored.push({pid, base});
     });
 
-    const sorted = scored.map(s => s.score).sort((a, b) => a - b);
-    scored.forEach(({pid, score}) => {
+    const sorted = scored.map(s => s.base).sort((a, b) => a - b);
+    scored.forEach(({pid, base}) => {
       const d = distMap[pid];
       let lo = 0;
-      for (let i = 0; i < sorted.length; i++) if (sorted[i] < score) lo = i + 1;
+      for (let i = 0; i < sorted.length; i++) if (sorted[i] < base) lo = i + 1;
       const pct = sorted.length <= 1 ? 1 : lo / (sorted.length - 1);
+      const ovr = ovrFromPercentile(pct);
+      const tier = lockOvrTier(ovr);
       d.lockPct = pct;
-      d.lockStars = starsFromPercentile(pct);
+      d.lockOvr = ovr;
+      d.lockTier = tier.key;
+      d.lockTierLabel = tier.label;
+      /* Keep score alias = OVR for sort callers; stars reserved for trades later. */
+      d.lockScore = ovr;
+      d.lockStars = null;
     });
     return scored.length;
   }
@@ -345,6 +370,9 @@
     LOCK_SLOTS,
     SMASH_WEIGHTS,
     MIN_SAMPLES_FOR_SMASH,
+    LOCK_OVR_FLOOR,
+    LOCK_OVR_CEIL,
+    AGE_MULT,
     normalCdf,
     normalHitRate,
     empiricalHitRate,
@@ -360,6 +388,8 @@
     smashLockBase,
     lockAgeBand,
     injuryStatusMult,
+    ovrFromPercentile,
+    lockOvrTier,
     starsFromPercentile,
     formatStars,
     attachLockValues
