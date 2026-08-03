@@ -1,6 +1,7 @@
 /* Patio Boys transaction ledger.
    Fetches completed trades + waivers/FA claims across the league chain,
-   resolves drafted picks to players, and grades with dynasty-at-time values. */
+   resolves drafted picks to players, and grades with Lock OVR / Trade ★
+   as of that season (tradeScore-at-time). Roster-fit uses lockBase (smash FP). */
 (function(global){
   'use strict';
 
@@ -107,19 +108,44 @@
     return Math.max(0, y - delta);
   }
 
-  function valueForPidAt(maps, pid, playerDb, asOfSeason, currentSeason){
-    if (!maps || !maps.valueForPid) return 0;
-    const p = (playerDb && playerDb[pid]) || {};
+  /* Age-adjusted player row for at-time grading. Historical seasons drop
+     current injury tags (we don't have contemporaneous injury feeds). */
+  function playerAtSeason(pid, playerDb, asOfSeason, currentSeason){
+    const p = (playerDb && (playerDb[pid] || playerDb[String(pid)])) || {};
     const age = ageAtSeason(p, asOfSeason, currentSeason);
     const yearsExp = yearsExpAtSeason(p, asOfSeason, currentSeason);
     const adjusted = Object.assign({}, p);
     if (age != null) adjusted.age = age;
     if (yearsExp != null) adjusted.years_exp = yearsExp;
+    if (String(asOfSeason) !== String(currentSeason)){
+      adjusted.injury_status = '';
+      adjusted.injuryStatus = '';
+    }
+    return adjusted;
+  }
+
+  /* Asset grade: Trade ★ score (Lock OVR × age × injury) as of that season. */
+  function valueForPidAt(maps, pid, playerDb, asOfSeason, currentSeason){
+    if (!maps || !maps.valueForPid) return 0;
+    const id = String(pid);
+    const adjusted = playerAtSeason(id, playerDb, asOfSeason, currentSeason);
     const db = Object.create(playerDb || null);
+    db[id] = adjusted;
     db[pid] = adjusted;
-    db[String(pid)] = adjusted;
-    const v = maps.valueForPid(String(pid), db);
+    const v = maps.valueForPid(id, db);
     return Number.isFinite(v) ? v : 0;
+  }
+
+  /* Lineup / cut-clog metric: lockBase smash FP (same ballpark as old dynasty base).
+     tradeScore (~50–110) would break netToGrade + clog thresholds. */
+  function fitMetricForPidAt(maps, pid, playerDb, asOfSeason, currentSeason){
+    if (!maps) return 0;
+    const id = String(pid);
+    if (typeof maps.fitMetricForPid === 'function'){
+      const v = maps.fitMetricForPid(id, playerDb);
+      return Number.isFinite(v) ? v : 0;
+    }
+    return valueForPidAt(maps, id, playerDb, asOfSeason, currentSeason);
   }
 
   async function walkLeagueChain(startId){
@@ -252,7 +278,7 @@
         id,
         name: playerName(p, id),
         positions,
-        metric: valueForPidAt(maps, id, playerDb, asOfSeason, currentSeason),
+        metric: fitMetricForPidAt(maps, id, playerDb, asOfSeason, currentSeason),
         age: ageAtSeason(p, asOfSeason, currentSeason)
       };
     }).filter(r => r.positions && r.positions.length);
@@ -273,7 +299,7 @@
     return { total: Number(opt.total) || 0, starterIds };
   }
 
-  /* Roster-context quality: lineup dynasty delta + cut-fat bonus − bench-clog penalty.
+  /* Roster-context quality: lineup lockBase delta + cut-fat bonus − bench-clog penalty.
      Dropping one of your worst players (roster-rules crunch) is a good move. */
   function rosterQualityDelta(beforePids, adds, drops, slots, maps, playerDb, asOfSeason, currentSeason){
     const before = (beforePids || []).map(String);
@@ -289,7 +315,7 @@
 
     const ranked = before.map(pid => ({
       pid: String(pid),
-      v: valueForPidAt(maps, pid, playerDb, asOfSeason, currentSeason)
+      v: fitMetricForPidAt(maps, pid, playerDb, asOfSeason, currentSeason)
     })).sort((a, b) => a.v - b.v || a.pid.localeCompare(b.pid)); /* worst first */
     const rankByPid = new Map();
     ranked.forEach((row, i) => { rankByPid.set(row.pid, { rank: i, v: row.v }); });
@@ -301,7 +327,7 @@
       const id = String(pid);
       const info = rankByPid.get(id) || {
         rank: n,
-        v: valueForPidAt(maps, id, playerDb, asOfSeason, currentSeason)
+        v: fitMetricForPidAt(maps, id, playerDb, asOfSeason, currentSeason)
       };
       const v = info.v;
       const isStarter = beforeL.starterIds.has(id);
@@ -336,7 +362,7 @@
 
     (adds || []).forEach(pid => {
       const id = String(pid);
-      const v = valueForPidAt(maps, id, playerDb, asOfSeason, currentSeason);
+      const v = fitMetricForPidAt(maps, id, playerDb, asOfSeason, currentSeason);
       if (afterL.starterIds.has(id)){
         notes.push('lineup add: ' + playerName(playerDb[id], id));
       } else if (v < 12){
@@ -409,7 +435,7 @@
     return 'Rd ' + asset.round + ' pick (' + asset.season + ')';
   }
 
-  /* Trades: dynasty-at-time fairness (no roster-fit).
+  /* Trades: tradeScore-at-time fairness (no roster-fit).
      When asset counts differ, blend total haul with per-asset average so
      2-for-1 / 3-for-1 deals aren't graded on volume alone. */
   function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason){
@@ -499,7 +525,7 @@
           + (pendingPicks === 1 ? '' : 's') + ' still open'
         : (uneven
           ? ('Uneven haul (' + a.assetCount + ' vs ' + b.assetCount
-            + ') — fairness blends total + avg dynasty')
+            + ') — fairness blends total + avg trade score')
           : null),
       valueA: a.dynastyIn,
       valueB: b.dynastyIn,
@@ -557,18 +583,84 @@
     };
   }
 
-  /* Bust stale GitHub Pages / Safari caches that still have pre-export awards.js. */
-  function ensureAwardsDynasty(){
-    if (global.PatioBoysAwards && typeof global.PatioBoysAwards.loadDynastyMaps === 'function'){
-      return Promise.resolve();
-    }
-    return new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'league-awards.js?v=tx-dynasty-' + Date.now();
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error('Failed to reload league-awards.js'));
-      (document.head || document.documentElement).appendChild(s);
+  function scoreStatLine(stats, scoring){
+    if (!stats || !scoring) return null;
+    let total = 0;
+    let matched = 0;
+    Object.keys(scoring).forEach(k => {
+      if (stats[k] != null && Number.isFinite(Number(stats[k]))){
+        total += Number(stats[k]) * Number(scoring[k]);
+        matched++;
+      }
     });
+    return matched ? total : null;
+  }
+
+  /* Current-season consensus only — skip for historical at-time grades. */
+  function consensusProjById(scoring, season){
+    const pack = global.NBA_PROJ_CONSENSUS || {};
+    const useConsensus = !pack.season || String(pack.season) === String(season);
+    if (!useConsensus) return null;
+    const byId = {};
+    let n = 0;
+    Object.keys(pack.players || {}).forEach(key => {
+      const row = pack.players[key];
+      const fp = scoreStatLine(row.stats, scoring);
+      if (fp == null || !(fp > 0)) return;
+      if (row.sleeperId){
+        byId[String(row.sleeperId)] = fp;
+        n++;
+      }
+    });
+    return n ? byId : null;
+  }
+
+  /* Per-season Lock OVR index → tradeScore (assets) + lockBase (roster fit). */
+  async function loadLockValueMaps(scoring, season, playerDb){
+    const Lock = global.LockInDist;
+    if (!Lock || typeof Lock.fetchLockValueIndex !== 'function'){
+      throw new Error('LockInDist.fetchLockValueIndex unavailable');
+    }
+    const pack = await Lock.fetchLockValueIndex({
+      scoring: scoring || {},
+      statsSeason: season,
+      playerDb: playerDb || {},
+      projById: consensusProjById(scoring, season)
+    });
+    const distMap = pack.distMap || {};
+
+    function valueForPid(pid, db){
+      const id = String(pid);
+      const d = distMap[id] || distMap[pid];
+      if (!d || d.lockOvr == null) return 0;
+      const p = (db && (db[id] || db[pid])) || {};
+      const yearsExp = Number(p.years_exp);
+      const isRookie = yearsExp === 0;
+      const score = Lock.tradeScoreFromOvr(d.lockOvr, {
+        age: p.age,
+        isRookie,
+        injuryStatus: p.injury_status || p.injuryStatus || ''
+      });
+      return Number.isFinite(score) ? score : 0;
+    }
+
+    function fitMetricForPid(pid){
+      const id = String(pid);
+      const d = distMap[id] || distMap[pid];
+      if (!d) return 0;
+      const base = d.lockBase != null ? Number(d.lockBase)
+        : (d.mean != null ? Number(d.mean) : NaN);
+      return Number.isFinite(base) ? base : 0;
+    }
+
+    return {
+      distMap,
+      statsSeason: pack.statsSeason,
+      weeksFound: pack.weeksFound,
+      scored: pack.scored,
+      valueForPid,
+      fitMetricForPid
+    };
   }
 
   async function compute(leagueId, opts){
@@ -615,11 +707,9 @@
     onProgress('Resolving drafted picks…');
     const resolvePick = await buildPickResolver(seasons, unique);
 
-    onProgress('Building dynasty maps by season…');
-    await ensureAwardsDynasty();
-    const Awards = global.PatioBoysAwards;
-    if (!Awards || !Awards.loadDynastyMaps){
-      throw new Error('PatioBoysAwards.loadDynastyMaps unavailable');
+    onProgress('Building lock-value maps by season…');
+    if (!global.LockInDist || typeof global.LockInDist.fetchLockValueIndex !== 'function'){
+      throw new Error('LockInDist.fetchLockValueIndex unavailable');
     }
     const mapsBySeason = {};
     const scoringBySeason = {};
@@ -627,7 +717,7 @@
     const seasonSet = new Set(unique.map(t => String(t.season)));
     await Promise.all([...seasonSet].map(async season => {
       const scoring = scoringBySeason[season] || seasons[0].scoring;
-      mapsBySeason[season] = await Awards.loadDynastyMaps(scoring, season);
+      mapsBySeason[season] = await loadLockValueMaps(scoring, season, playerDb);
     }));
 
     onProgress('Grading transactions…');
