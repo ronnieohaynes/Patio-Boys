@@ -100,9 +100,9 @@
 <div class="wrap topbar">Patio Boys &middot; Transactions</div>
 
 <div class="wrap hero">
-  <p class="eyebrow">Ledger &middot; Dynasty at the time</p>
+  <p class="eyebrow">Ledger &middot; Trade ★ at the time</p>
   <h1 class="display">Trades &amp;<br>Waivers</h1>
-  <p>Every completed trade and waiver/FA move across seasons, graded with dynasty value as of that season. Waivers also weigh roster fit (cutting your worst players can grade well; clogging the bench can grade poorly). Trades stay pure dynasty fairness. Future picks stay ungraded until they become players.</p>
+  <p>Every completed trade and waiver/FA move across seasons, graded with Lock OVR / Trade ★ as of that season. Waivers also weigh roster fit (cutting your worst players can grade well; clogging the bench can grade poorly). Trades stay pure trade-score fairness. Future picks stay ungraded until they become players.</p>
 </div>
 
 <div class="wrap">
@@ -137,8 +137,8 @@
       </div>
     </div>
     <p class="caption" id="txCaption" hidden>
-      Waivers use dynasty-at-time plus roster fit (lineup lift, credit for cutting worst players, clog penalties).
-      Trades use dynasty-at-time fairness with no fit; when one side gets more players/picks, the grade also blends in average dynasty per asset. Unresolved picks do not count until they resolve to a drafted player.
+      Waivers use Trade ★ at the time plus roster fit (lineup lift from lock smash, credit for cutting worst players, clog penalties).
+      Trades use Trade ★ fairness with no fit; when one side gets more players/picks, the grade also blends in average trade score per asset. Unresolved picks do not count until they resolve to a drafted player.
     </p>
     <div class="tx-list" id="txList"></div>
     <div class="empty" id="txEmpty" hidden>No transactions match those filters.</div>
@@ -147,8 +147,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260802-tx2';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','transactions.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-txlock';
+  ['nba-proj-consensus.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -214,7 +214,7 @@ function renderTradeCard(r){
     : '<p class="tx-grade dim">Pending</p>';
   const sub = [];
   if (r.winner) sub.push(escapeHtml(r.winner) + ' won the haul');
-  sub.push(fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB) + ' dyn');
+  sub.push(fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB) + ' trade');
   if (r.uneven){
     sub.push('avg ' + fmtDyn(r.avgA) + ' / ' + fmtDyn(r.avgB));
   }
@@ -250,7 +250,7 @@ function renderWaiverCard(r){
     + gradeHtml + '</div>'
     + '<h3 class="tx-title">' + escapeHtml(side.team || r.teams[0] || 'Team') + '</h3>'
     + '<p class="tx-sub">Roster fit <strong>' + (r.net >= 0 ? '+' : '') + fmtDyn(r.net)
-    + '</strong> · raw dyn ' + ((r.rawNet >= 0 ? '+' : '') + fmtDyn(r.rawNet))
+    + '</strong> · raw trade ' + ((r.rawNet >= 0 ? '+' : '') + fmtDyn(r.rawNet))
     + ' (add ' + fmtDyn(r.valueA) + ' / drop ' + fmtDyn(r.valueB) + ')'
     + (r.reason ? ' · ' + escapeHtml(r.reason) : '') + '</p>'
     + '<div class="sides" style="grid-template-columns:1fr">'
@@ -279,9 +279,9 @@ async function boot(){
     status.textContent = 'Transaction engine failed to load.';
     return;
   }
-  if (!window.PatioBoysAwards || typeof PatioBoysAwards.loadDynastyMaps !== 'function'){
+  if (!window.LockInDist || typeof LockInDist.fetchLockValueIndex !== 'function'){
     status.className = 'status error';
-    status.textContent = 'Dynasty engine failed to load (stale league-awards.js cache). Hit Refresh in the HQ header.';
+    status.textContent = 'Lock-value engine failed to load (stale lock-in-dist.js cache). Hit Refresh in the HQ header.';
     return;
   }
   try {
