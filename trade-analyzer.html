@@ -88,8 +88,14 @@
     font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);margin-top:2px;
   }
   .player-row .val{
-    margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--gold);
-    white-space:nowrap;padding-top:2px;
+    margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--gold);
+    white-space:nowrap;padding-top:2px;text-align:right;line-height:1.25;
+  }
+  .player-row .val .stars{display:block;font-size:12px;letter-spacing:.02em}
+  .player-row .val .stars .dim{color:var(--ink-dim);opacity:.4}
+  .player-row .val .score{display:block;font-size:12px;font-weight:600}
+  .player-row .val .ovr-mini{
+    display:block;font-size:9px;color:var(--ink-dim);letter-spacing:.04em;text-transform:uppercase;
   }
   .ceil{
     display:inline-block;margin-left:6px;padding:1px 5px;border-radius:3px;
@@ -176,7 +182,13 @@
     font-size:13px;padding:4px 0;
     border-top:1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
   }
-  .side-card li .dv{font-family:'IBM Plex Mono',monospace;color:var(--gold);font-size:11px}
+  .side-card li .dv{
+    font-family:'IBM Plex Mono',monospace;color:var(--gold);font-size:11px;text-align:right;line-height:1.25;
+  }
+  .side-card li .dv .stars{display:block;font-size:12px}
+  .side-card li .dv .stars .dim{color:var(--ink-dim);opacity:.4}
+  .side-card li .dv .score{display:block}
+  .side-card li .dv .ovr-mini{display:block;font-size:9px;color:var(--ink-dim)}
   .empty-note{color:var(--ink-dim);font-size:13px;margin:0}
 
   .max-block{
@@ -219,8 +231,8 @@
     <div class="brand"><span class="gm">Trade <em>Analyzer</em></span><span>Patio Boys &middot; S26&ndash;27</span></div>
     <span id="progressTag">Loading&hellip;</span>
   </div>
-  <p class="status" id="status">Pulling rosters, projections, and Max Points ceilings&hellip;</p>
-  <p class="lede">Pick two teams and the players each side is sending. Vets blend <strong>consensus next-year proj</strong> (50%) with <strong>last-3-season avg FP</strong> (50%). Rookies use <strong>Sleeper proj</strong> (50%) plus <strong>ESPN comps/outlook floors</strong> (50%) from the summer-league rankings &amp; lottery comps. Then age/injury. Max Points checks league balance. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
+  <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
+  <p class="lede">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR (smash production) × age × injury — same scale as Team Intel. Max Points still checks league balance. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
 
   <div id="app" hidden>
     <div class="team-pick">
@@ -258,8 +270,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260802';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-trade-lock';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -614,7 +626,24 @@ const state = {
   maxMetricLabel: 'Proj'
 };
 
-function makePlayer(pid, playerDb, projMaps, ceilings, histById, sleeperMaps){
+function starsHtml(n){
+  const stars = Math.max(1, Math.min(5, Math.round(Number(n) || 0)));
+  if (!Number.isFinite(Number(n)) || Number(n) <= 0) return '<span class="stars dim">—</span>';
+  return '<span class="stars" aria-label="' + stars + ' of 5">'
+    + '<span>' + '★'.repeat(stars) + '</span>'
+    + '<span class="dim">' + '☆'.repeat(5 - stars) + '</span></span>';
+}
+
+function tradeValHtml(p){
+  const score = Number(p.dynasty);
+  const scoreTxt = Number.isFinite(score) ? score.toFixed(1) : '—';
+  const ovrTxt = p.lockOvr != null ? ('OVR ' + p.lockOvr) : '';
+  return starsHtml(p.tradeStars)
+    + '<span class="score">' + scoreTxt + '</span>'
+    + (ovrTxt ? '<span class="ovr-mini">' + ovrTxt + '</span>' : '');
+}
+
+function makePlayer(pid, playerDb, projMaps, lockDist, histById, sleeperMaps){
   const p = playerDb[pid] || {};
   const name = playerName(p);
   const hit = RATINGS_BY_NAME.get(normalizeName(name));
@@ -628,6 +657,7 @@ function makePlayer(pid, playerDb, projMaps, ceilings, histById, sleeperMaps){
     : null;
   const histMetric = histById && histById.get(String(pid)) != null
     ? histById.get(String(pid)) : null;
+  const lock = lockDist && (lockDist[pid] || lockDist[String(pid)]) || null;
   const rec = {
     id: String(pid),
     name,
@@ -639,13 +669,17 @@ function makePlayer(pid, playerDb, projMaps, ceilings, histById, sleeperMaps){
     metric,
     sleeperMetric,
     histMetric,
-    ceiling: ceilings.get(String(pid)) ?? null,
+    lockOvr: lock && lock.lockOvr != null ? lock.lockOvr : null,
+    tradeScore: lock && lock.tradeScore != null ? lock.tradeScore : null,
+    tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null,
+    lockAgeBand: (lock && lock.lockAgeBand) || null,
+    ceiling: lock && Number.isFinite(Number(lock.ceiling)) ? Number(lock.ceiling) : null,
     ovr: hit && hit.ovr != null ? hit.ovr : null,
     source: ROOKIE_NAMES.has(normalizeName(name)) || Number(p.years_exp) === 0 ? 'rookie' : null
   };
   rec.compFloor = compFloor(rec);
   rec.blend = blendedFpBase(rec);
-  rec.dynasty = dynastyValue(rec);
+  rec.dynasty = rec.tradeScore != null ? rec.tradeScore : dynastyValue(rec);
   rec.ceilClass = ceilingClass(rec);
   rec.maxPiece = Number.isFinite(rec.ceiling) ? rec.ceiling
     : (Number.isFinite(rec.blend) ? rec.blend
@@ -745,7 +779,7 @@ function analyze(){
   const aColor = teamColor(teamA);
   const bColor = teamColor(teamB);
   const verdictCls = unfair ? 'unfair' : (runaway ? 'runaway' : '');
-  let headline = 'Balanced enough on dynasty value';
+  let headline = 'Balanced enough on trade value';
   if (unfair && winner) headline = 'Lopsided — favors ' + winner;
   else if (winner && ratio < 0.80) headline = 'Edge to ' + winner;
   else if (winner) headline = 'Slight edge to ' + winner;
@@ -755,7 +789,7 @@ function analyze(){
     flags.push({
       cls: 'warn',
       title: 'Super unfair',
-      text: loser + ' is giving up far more dynasty value ('
+      text: loser + ' is giving up far more trade value ('
         + (winner === aName ? valueToA : valueToB).toFixed(1) + ' received vs '
         + (loser === aName ? valueToA : valueToB).toFixed(1) + '). Ratio '
         + (ratio * 100).toFixed(0) + '%.'
@@ -764,7 +798,7 @@ function analyze(){
     flags.push({
       cls: 'ok',
       title: 'Value check',
-      text: 'Dynasty haul is within a reasonable band (ratio '
+      text: 'Trade haul is within a reasonable band (ratio '
         + (ratio * 100).toFixed(0) + '%). Grade ' + grade + '.'
     });
   }
@@ -798,12 +832,12 @@ function analyze(){
         '<li><span>' + escapeHtml(p.name)
           + (p.ceilClass && p.ceilClass !== 'role'
             ? '<span class="ceil">' + escapeHtml(ceilingLabel(p.ceilClass)) + '</span>' : '')
-          + '</span><span class="dv">' + p.dynasty.toFixed(1) + '</span></li>'
+          + '</span><span class="dv">' + tradeValHtml(p) + '</span></li>'
       ).join('') + '</ul>'
       : '<p class="empty-note">Nothing incoming</p>';
     return '<div class="side-card" style="--team-color:' + color + '">'
       + '<h4>' + escapeHtml(title) + ' gets</h4>'
-      + '<p class="totals">Dynasty <span class="hi">' + value.toFixed(1) + '</span>'
+      + '<p class="totals">Trade <span class="hi">' + value.toFixed(1) + '</span>'
       + ' &middot; Max Pts <span class="hi">' + (maxDelta >= 0 ? '+' : '') + maxDelta.toFixed(1) + '</span></p>'
       + items + '</div>';
   }
@@ -814,25 +848,25 @@ function analyze(){
   /* League ruling: block lopsided value or Max Points runaways; soft imbalances → review. */
   let ruling = 'allow';
   let rulingTitle = 'Allow this trade';
-  let rulingWhy = 'Dynasty value is close enough and Max Points stay within the league band.';
+  let rulingWhy = 'Trade value is close enough and Max Points stay within the league band.';
   const softEdge = !unfair && !runaway && (ratio < 0.80 || grade === 'C+' || grade === 'C');
   if (unfair && runaway){
     ruling = 'block';
     rulingTitle = 'Do not allow';
-    rulingWhy = 'Blocked on both counts: dynasty value is super unfair'
+    rulingWhy = 'Blocked on both counts: trade value is super unfair'
       + (loser ? ' to ' + loser : '')
       + ', and the deal creates a Max Points runaway for ' + leader.team + '.';
   } else if (unfair){
     ruling = 'block';
     rulingTitle = 'Do not allow';
-    rulingWhy = 'Blocked — too one-sided on dynasty value'
+    rulingWhy = 'Blocked — too one-sided on trade value'
       + (loser ? ' against ' + loser : '')
       + ' (fairness ' + grade + ', ratio ' + (ratio * 100).toFixed(0) + '%).';
   } else if (runaway){
     ruling = 'block';
     rulingTitle = 'Do not allow';
     rulingWhy = 'Blocked — ' + leader.team + ' would pull too far ahead in Max Points (+'
-      + gap.toFixed(1) + ' over ' + second.team + '). League balance breaks even if the dynasty haul looks fine.';
+      + gap.toFixed(1) + ' over ' + second.team + '). League balance breaks even if the trade haul looks fine.';
   } else if (softEdge){
     ruling = 'review';
     rulingTitle = 'Allow with caution';
@@ -849,7 +883,7 @@ function analyze(){
     + '<div class="letter">' + grade + '</div>'
     + '<div><h3>' + escapeHtml(headline) + '</h3>'
     + '<p>' + escapeHtml(aName) + ' receives <strong>' + valueToA.toFixed(1)
-    + '</strong> dynasty &middot; ' + escapeHtml(bName) + ' receives <strong>'
+    + '</strong> trade value &middot; ' + escapeHtml(bName) + ' receives <strong>'
     + valueToB.toFixed(1) + '</strong></p></div></div>'
     + '<div class="flags">' + flags.map(f =>
       '<div class="flag ' + f.cls + '"><strong>' + escapeHtml(f.title)
@@ -904,15 +938,11 @@ function renderLists(){
           ? '<span class="ceil">' + escapeHtml(ceilingLabel(p.ceilClass)) + '</span>' : '')
         + '<div class="meta">' + escapeHtml(p.pos)
         + (Number.isFinite(p.age) ? ' · ' + p.age + 'y' : '')
-        + (isRookiePlayer(p)
-          ? ((p.sleeperMetric != null ? ' · ' + p.sleeperMetric.toFixed(1) + ' Slpr' : '')
-            + (p.compFloor != null ? ' · ' + p.compFloor.toFixed(0) + ' comps' : '')
-            + (p.sleeperMetric == null && p.compFloor == null ? ' · no FP base' : ''))
-          : ((p.metric != null ? ' · ' + p.metric.toFixed(1) + ' cons.' : '')
-            + (p.histMetric != null ? ' · ' + p.histMetric.toFixed(1) + ' L3' : '')
-            + (p.metric == null && p.histMetric == null ? ' · no FP base' : '')))
+        + (p.lockOvr != null ? ' · Lock OVR ' + p.lockOvr : '')
+        + (p.lockAgeBand ? ' · ' + p.lockAgeBand : '')
+        + (p.lockOvr == null && p.tradeStars == null ? ' · no Lock Value' : '')
         + '</div></span>'
-        + '<span class="val">' + p.dynasty.toFixed(1) + '</span></label>';
+        + '<span class="val">' + tradeValHtml(p) + '</span></label>';
     }).join('');
   }
 
@@ -1016,16 +1046,42 @@ async function load(){
     const playerDb = await playersRes.json();
     const scoring = league.scoring_settings || {};
 
-    status.textContent = 'Loading consensus, Sleeper projections, and last-3-season averages\u2026';
+    status.textContent = 'Building Lock OVR + Trade stars from smash samples\u2026';
     const projMaps = buildConsensusProjMaps(scoring);
     const projError = projMaps.meta.count ? null
       : 'nba-proj-consensus.js missing or empty — run build-proj-consensus.py';
 
-    const [histPack, ceilings, sleeperMaps] = await Promise.all([
+    let statsSeason = league.season;
+    if (league.previous_league_id){
+      try {
+        const prevRes = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id);
+        if (prevRes.ok) statsSeason = (await prevRes.json()).season;
+      } catch (e) { /* keep current season */ }
+    }
+
+    const allRosterIds = [];
+    rosters.forEach(r => {
+      [].concat(r.players || [], r.reserve || [], r.taxi || []).forEach(pid => allRosterIds.push(String(pid)));
+    });
+
+    if (!window.LockInDist || !LockInDist.fetchLockValueIndex){
+      throw new Error('lock-in-dist.js failed to load');
+    }
+
+    const [histPack, sleeperMaps, lockPack] = await Promise.all([
       loadLast3SeasonAvg(scoring, league.season),
-      loadCeilings(league, scoring),
-      loadSleeperProjMaps(scoring, league.season || '2026')
+      loadSleeperProjMaps(scoring, league.season || '2026'),
+      LockInDist.fetchLockValueIndex({
+        scoring,
+        statsSeason,
+        playerDb,
+        projById: projMaps.byId,
+        playerIds: allRosterIds
+      })
     ]);
+    const lockDist = lockPack.distMap || {};
+    state.maxMetricLabel = 'lock ceiling (mean+1\u03c3, ' + lockPack.statsSeason + ')';
+    state.lockStatsSeason = lockPack.statsSeason;
 
     const userById = {};
     users.forEach(u => { userById[u.user_id] = u; });
@@ -1043,10 +1099,9 @@ async function load(){
       const uniq = Array.from(new Set(ids));
       uniq.forEach(pid => {
         if (!state.playersById.has(pid)){
-          state.playersById.set(pid, makePlayer(pid, playerDb, projMaps, ceilings, histPack.avgById, sleeperMaps));
+          state.playersById.set(pid, makePlayer(pid, playerDb, projMaps, lockDist, histPack.avgById, sleeperMaps));
         }
-      });
-      return {
+      });      return {
         rosterId: r.roster_id,
         key,
         displayName: raw,
@@ -1083,13 +1138,11 @@ async function load(){
     if (projError){
       status.classList.add('error');
       status.textContent = 'Consensus projections unavailable (' + projError
-        + '). Vet dynasty value has no FP base until the snapshot is built. Rookies still use Sleeper + ESPN comps.';
+        + '). Rookie Lock OVR may fall back to Sleeper/comps; smash samples still drive most Trade stars.';
     } else {
-      const sites = (projMaps.meta.sites || []).join(', ') || 'multi-site';
-      status.textContent = 'Vets = 50% consensus (' + sites + ') + 50% L3 · Rookies = 50% Sleeper + 50% ESPN comps'
-        + ' (' + projMaps.meta.count + ' cons / ' + sleeperMaps.count + ' Slpr / ' + histPack.counted + ' L3'
-        + (projMaps.meta.captured ? ', captured ' + projMaps.meta.captured.slice(0, 10) : '')
-        + '). Max Points = top '
+      status.textContent = 'Trade value = Lock OVR (smash) × age × injury, same as Team Intel'
+        + ' · ' + (lockPack.scored || 0) + ' players scored from ' + lockPack.statsSeason
+        + ' (' + lockPack.weeksFound + ' weeks). Max Points = top '
         + MAX_TOP_N + ' by ' + state.maxMetricLabel + '.';
     }
     onTeamChange();

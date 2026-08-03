@@ -442,6 +442,58 @@
     return count;
   }
 
+  /* Fetch season totals + weekly samples, score under league settings, attach
+     Lock OVR + Trade stars. Shared by Intel / Trade Analyzer / later surfaces. */
+  async function fetchLockValueIndex(opts){
+    const options = opts || {};
+    const scoring = options.scoring || {};
+    const statsSeason = options.statsSeason;
+    const playerDb = options.playerDb || {};
+    const projById = options.projById || null;
+    const playerIds = options.playerIds || [];
+    const fetchImpl = options.fetch || (typeof fetch === 'function' ? fetch : null);
+    if (!statsSeason) throw new Error('statsSeason required');
+    if (!fetchImpl) throw new Error('fetch unavailable');
+
+    const weeks = Array.from({length: 25}, (_, i) => i + 1);
+    const [seasonStats, ...weeklyResults] = await Promise.all([
+      fetchImpl('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null),
+      ...weeks.map(w =>
+        fetchImpl('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null)
+      )
+    ]);
+    const weeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
+    const samplesByPlayer = buildSamplesByPlayer(weeklyResults, scoring);
+    const seasonAvgByPid = seasonStats ? buildSeasonAvgMap(seasonStats, scoring) : {};
+    const distMap = buildDistMap(samplesByPlayer, DEFAULT_MARKS, seasonAvgByPid);
+
+    playerIds.forEach(pid => {
+      const id = String(pid);
+      if (distMap[id] || distMap[pid]) return;
+      const proj = projFromMap(projById, id);
+      if (proj == null) return;
+      distMap[id] = {
+        n: 0, mean: proj, sampleMean: proj, stdev: 0, ceiling: proj,
+        hits: {}, normalHits: {}, marks: DEFAULT_MARKS.slice(),
+        samples: [], seasonAvg: null, seasonGp: null, avgSource: 'proj',
+        projOnly: true
+      };
+    });
+
+    const scored = attachLockValues(distMap, {playerDb, projById});
+    return {
+      distMap,
+      statsSeason,
+      weeksFound,
+      scored,
+      seasonAvgCount: Object.keys(seasonAvgByPid).length
+    };
+  }
+
   global.LockInDist = {
     DEFAULT_MARKS,
     LOCK_SLOTS,
@@ -474,6 +526,7 @@
     formatStars,
     tradeStarsFromScore,
     tradeScoreFromOvr,
-    attachLockValues
+    attachLockValues,
+    fetchLockValueIndex
   };
 })(window);
