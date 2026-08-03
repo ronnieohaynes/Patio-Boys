@@ -199,7 +199,14 @@
     const ranked = (playerDists || [])
       .filter(Boolean)
       .slice()
-      .sort((a, b) => b.ceiling - a.ceiling);
+      .sort((a, b) => {
+        const as = Number(a.lockScore);
+        const bs = Number(b.lockScore);
+        if (Number.isFinite(as) || Number.isFinite(bs)){
+          return (Number.isFinite(bs) ? bs : -1) - (Number.isFinite(as) ? as : -1);
+        }
+        return b.ceiling - a.ceiling;
+      });
     const sim = simulateFill(ranked, {slots, marks, sims: options.sims || 400});
     const maxPts = ranked.slice(0, slots).reduce((s, d) => s + d.ceiling, 0);
     return {
@@ -213,9 +220,159 @@
     };
   }
 
+  /* ---- Smash-hunting Lock OVR (Intel) ----
+     Raw smash base = 0.40·Avg + 0.30·Ceil + 0.30·(40·P≥40 + 50·P≥50)
+     Rookies / thin samples fall back to projected FP/G.
+     Lock OVR maps smash base → 50–99 by percentile (2K-style; active floor 50).
+     Age / injury stay off OVR — those belong on Trade stars later. */
+  const SMASH_WEIGHTS = { avg: 0.40, ceil: 0.30, hit: 0.30 };
+  const MIN_SAMPLES_FOR_SMASH = 5;
+  const LOCK_OVR_FLOOR = 50;
+  const LOCK_OVR_CEIL = 99;
+  const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
+
+  function smashHitScore(dist){
+    const h = (dist && dist.hits) || {};
+    return 40 * (h[40] || 0) + 50 * (h[50] || 0);
+  }
+
+  function smashLockBase(dist){
+    if (!dist || !Number.isFinite(dist.mean) || !Number.isFinite(dist.ceiling)) return null;
+    return SMASH_WEIGHTS.avg * dist.mean
+      + SMASH_WEIGHTS.ceil * dist.ceiling
+      + SMASH_WEIGHTS.hit * smashHitScore(dist);
+  }
+
+  function lockAgeBand(age, isRookie){
+    const a = Number(age);
+    if (!Number.isFinite(a) || a <= 0) return isRookie ? 'young' : 'unknown';
+    if (a < 24) return 'young';
+    if (a <= 32) return 'prime';
+    return 'decline';
+  }
+
+  function injuryStatusMult(status){
+    const s = String(status || '').toLowerCase();
+    if (s === 'out' || s === 'ir' || s === 'injured reserve') return 0.94;
+    if (s === 'doubtful') return 0.96;
+    if (s === 'questionable') return 0.98;
+    return 1;
+  }
+
+  /* Percentile 0→1 → Lock OVR in [50, 99]. */
+  function ovrFromPercentile(pct){
+    const p = Math.max(0, Math.min(1, Number(pct) || 0));
+    return Math.round(LOCK_OVR_FLOOR + p * (LOCK_OVR_CEIL - LOCK_OVR_FLOOR));
+  }
+
+  function lockOvrTier(ovr){
+    const n = Number(ovr);
+    if (!Number.isFinite(n)) return {key:'unknown', label:'—'};
+    if (n >= 95) return {key:'mvp', label:'MVP / top-5'};
+    if (n >= 90) return {key:'superstar', label:'Superstar'};
+    if (n >= 85) return {key:'allstar', label:'All-Star'};
+    if (n >= 80) return {key:'strong', label:'Strong starter'};
+    if (n >= 70) return {key:'solid', label:'Solid starter'};
+    if (n >= 60) return {key:'rotation', label:'Rotation'};
+    return {key:'depth', label:'Depth'};
+  }
+
+  function starsFromPercentile(pct){
+    if (pct >= 0.90) return 5;
+    if (pct >= 0.75) return 4;
+    if (pct >= 0.50) return 3;
+    if (pct >= 0.25) return 2;
+    return 1;
+  }
+
+  function formatStars(n){
+    const stars = Math.max(1, Math.min(5, Math.round(Number(n) || 1)));
+    return '★'.repeat(stars) + '☆'.repeat(5 - stars);
+  }
+
+  function projFromMap(projById, pid){
+    if (!projById) return null;
+    const key = String(pid);
+    if (typeof projById.get === 'function'){
+      const v = Number(projById.get(key));
+      return Number.isFinite(v) && v > 0 ? v : null;
+    }
+    const v = Number(projById[key]);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+
+  /* Mutates each dist with lockBase / lockOvr / lockTier / lockPct.
+     OVR is pure smash production (no age/injury). */
+  function attachLockValues(distMap, opts){
+    const options = opts || {};
+    const playerDb = options.playerDb || {};
+    const projById = options.projById || null;
+    const scored = [];
+
+    Object.keys(distMap || {}).forEach(pid => {
+      const d = distMap[pid];
+      if (!d) return;
+      const p = playerDb[pid] || playerDb[String(pid)] || {};
+      const yearsExp = Number(p.years_exp);
+      const isRookie = yearsExp === 0 || options.rookieIds && options.rookieIds.has(String(pid));
+      const proj = projFromMap(projById, pid);
+      const thin = !(d.n >= MIN_SAMPLES_FOR_SMASH);
+
+      let base = null;
+      let baseSource = null;
+      if ((isRookie || thin) && proj != null){
+        base = proj;
+        baseSource = isRookie ? 'rookie-proj' : 'proj';
+      } else {
+        base = smashLockBase(d);
+        baseSource = 'smash';
+        if (base == null && proj != null){
+          base = proj;
+          baseSource = 'proj';
+        }
+      }
+      if (base == null || !Number.isFinite(base)){
+        d.lockBase = null;
+        d.lockOvr = null;
+        d.lockTier = null;
+        d.lockScore = null;
+        d.lockStars = null;
+        return;
+      }
+
+      d.lockBase = base;
+      d.lockBaseSource = baseSource;
+      d.lockAgeBand = lockAgeBand(p.age, isRookie);
+      scored.push({pid, base});
+    });
+
+    const sorted = scored.map(s => s.base).sort((a, b) => a - b);
+    scored.forEach(({pid, base}) => {
+      const d = distMap[pid];
+      let lo = 0;
+      for (let i = 0; i < sorted.length; i++) if (sorted[i] < base) lo = i + 1;
+      const pct = sorted.length <= 1 ? 1 : lo / (sorted.length - 1);
+      const ovr = ovrFromPercentile(pct);
+      const tier = lockOvrTier(ovr);
+      d.lockPct = pct;
+      d.lockOvr = ovr;
+      d.lockTier = tier.key;
+      d.lockTierLabel = tier.label;
+      /* Keep score alias = OVR for sort callers; stars reserved for trades later. */
+      d.lockScore = ovr;
+      d.lockStars = null;
+    });
+    return scored.length;
+  }
+
   global.LockInDist = {
     DEFAULT_MARKS,
     LOCK_SLOTS,
+    SMASH_WEIGHTS,
+    MIN_SAMPLES_FOR_SMASH,
+    LOCK_OVR_FLOOR,
+    LOCK_OVR_CEIL,
+    AGE_MULT,
     normalCdf,
     normalHitRate,
     empiricalHitRate,
@@ -226,6 +383,15 @@
     buildDistMap,
     expectedLocks,
     simulateFill,
-    teamLockInSummary
+    teamLockInSummary,
+    smashHitScore,
+    smashLockBase,
+    lockAgeBand,
+    injuryStatusMult,
+    ovrFromPercentile,
+    lockOvrTier,
+    starsFromPercentile,
+    formatStars,
+    attachLockValues
   };
 })(window);

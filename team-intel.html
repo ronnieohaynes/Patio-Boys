@@ -258,6 +258,21 @@
     font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);width:42px;
   }
   table.lockin .hit-hot{color:var(--gold);font-weight:600}
+  table.lockin .ovr{
+    font-family:'Anton',sans-serif;font-size:18px;line-height:1;color:var(--gold);
+    letter-spacing:.02em;
+  }
+  table.lockin .ovr.tier-mvp,
+  table.lockin .ovr.tier-superstar{color:#E8C547}
+  table.lockin .ovr.tier-allstar{color:var(--gold)}
+  table.lockin .ovr.tier-strong{color:#D4B56A}
+  table.lockin .ovr.tier-solid{color:#C9CDD8}
+  table.lockin .ovr.tier-rotation,
+  table.lockin .ovr.tier-depth{color:var(--ink-dim)}
+  table.lockin .tier-sub{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:9px;
+    letter-spacing:.04em;text-transform:uppercase;color:var(--ink-dim);margin-top:2px;
+  }
 
   /* trade intel */
   .trade-row{
@@ -342,7 +357,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-lockin-avg';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-lock-ovr';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -900,6 +915,33 @@ function pct1(rate){
   return Math.round(rate * 100) + '%';
 }
 
+/* Attach smash Lock OVR (50–99) once dist map exists. Recalculates when
+   player DB / projections arrive so rookies can fall back to proj. */
+function refreshLockValues(){
+  if (!state.lockInByPid || !window.LockInDist) return false;
+  if (state.projById && state.teams){
+    state.teams.forEach(team => {
+      (team.players || []).forEach(pid => {
+        const id = String(pid);
+        if (state.lockInByPid[id] || state.lockInByPid[pid]) return;
+        const proj = state.projById.get(id);
+        if (proj == null || !Number.isFinite(proj)) return;
+        state.lockInByPid[id] = {
+          n: 0, mean: proj, sampleMean: proj, stdev: 0, ceiling: proj,
+          hits: {}, normalHits: {}, marks: state.lockInMarks || [30, 40, 50],
+          samples: [], seasonAvg: null, seasonGp: null, avgSource: 'proj',
+          projOnly: true
+        };
+      });
+    });
+  }
+  LockInDist.attachLockValues(state.lockInByPid, {
+    playerDb: state.playerDb || {},
+    projById: state.projById
+  });
+  return true;
+}
+
 function renderLockIn(t){
   const body = document.getElementById('lockInBody');
   const tag = document.getElementById('lockInTag');
@@ -912,11 +954,13 @@ function renderLockIn(t){
     return;
   }
 
+  refreshLockValues();
+
   const marks = state.lockInMarks || [30, 40, 50];
   const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
   const dists = t.players
     .map(pid => {
-      const d = state.lockInByPid[pid];
+      const d = state.lockInByPid[pid] || state.lockInByPid[String(pid)];
       if (!d) return null;
       return Object.assign({pid: String(pid)}, d);
     })
@@ -934,7 +978,7 @@ function renderLockIn(t){
   const avgFill = summary ? summary.sim.avgFill : {};
   const expected = summary ? summary.sim.expected : {};
 
-  tag.textContent = state.statsSeason + ' · ' + slots + ' lock spots';
+  tag.textContent = state.statsSeason + ' · Lock OVR 50–99';
 
   const fillHtml = '<div class="lock-fill">' + marks.map(m => {
     const fill = avgFill[m];
@@ -946,35 +990,78 @@ function renderLockIn(t){
       + '<div class="lf-sub">Simulated top-' + slots + ' nights<br>Roster hit sum ' + expTxt + '</div></div>';
   }).join('') + '</div>';
 
-  const ranked = dists.slice().sort((a, b) => b.mean - a.mean);
-  const show = ranked.slice(0, 12);
-  const head = '<tr><th>Pos</th><th>Name</th><th class="num">Avg</th><th class="num">σ</th><th class="num">Ceil</th>'
+  const ranked = dists.slice().sort((a, b) => {
+    const as = Number(a.lockOvr != null ? a.lockOvr : a.lockScore);
+    const bs = Number(b.lockOvr != null ? b.lockOvr : b.lockScore);
+    if (Number.isFinite(as) || Number.isFinite(bs)){
+      return (Number.isFinite(bs) ? bs : -1) - (Number.isFinite(as) ? as : -1);
+    }
+    return b.mean - a.mean;
+  });
+  const show = ranked.slice(0, 14);
+  const head = '<tr><th>Pos</th><th>Name</th><th>OVR</th><th class="num">Avg</th><th class="num">σ</th><th class="num">Ceil</th>'
     + marks.map(m => '<th class="num">≥' + m + '</th>').join('')
     + '<th class="num">N</th></tr>';
   const rows = show.map(d => {
     const hitCells = marks.map(m => {
-      const emp = d.hits[m] || 0;
+      const emp = (d.hits && d.hits[m]) || 0;
       const bell = d.normalHits ? d.normalHits[m] : null;
       const hot = emp >= 0.35 ? ' hit-hot' : '';
       const title = bell != null
         ? ('Empirical ' + pct1(emp) + ' · bell curve ' + pct1(bell))
         : ('Empirical ' + pct1(emp));
-      return '<td class="num' + hot + '" title="' + title + '">' + pct1(emp) + '</td>';
+      return '<td class="num' + hot + '" title="' + title + '">' + (d.n ? pct1(emp) : '—') + '</td>';
     }).join('');
+    const avgTitle = d.avgSource === 'season'
+      ? ('Full-season FP/G over ' + d.seasonGp + ' games (Sleeper-aligned)'
+        + (d.sampleMean != null ? '; sample mean of N weeks was ' + Number(d.sampleMean).toFixed(1) : ''))
+      : d.projOnly
+        ? 'Projection stub (no game samples yet)'
+        : ('Mean of ' + d.n + ' weekly game samples (season totals unavailable)');
+    const w = (window.LockInDist && LockInDist.SMASH_WEIGHTS) || {avg:0.4, ceil:0.3, hit:0.3};
+    const floor = (window.LockInDist && LockInDist.LOCK_OVR_FLOOR) || 50;
+    const ceilO = (window.LockInDist && LockInDist.LOCK_OVR_CEIL) || 99;
+    const lockTitle = d.lockOvr != null
+      ? ('Lock OVR ' + d.lockOvr + ' · ' + (d.lockTierLabel || '')
+        + ' · ' + (d.lockBaseSource || 'smash')
+        + ' base ' + (d.lockBase != null ? d.lockBase.toFixed(1) : '—')
+        + ' · weights Avg ' + Math.round(w.avg*100) + '% / Ceil ' + Math.round(w.ceil*100)
+        + '% / smash-hit ' + Math.round(w.hit*100) + '%'
+        + (d.lockPct != null ? (' · p' + Math.round(d.lockPct * 100)) : '')
+        + ' · scale ' + floor + '–' + ceilO)
+      : 'Lock OVR unavailable';
+    const tier = d.lockTier || 'depth';
+    const label = d.lockTierLabel || '';
+    const lockCell = d.lockOvr != null
+      ? ('<td title="' + escapeHtml(lockTitle) + '">'
+        + '<span class="ovr tier-' + escapeHtml(tier) + '">' + Math.round(d.lockOvr) + '</span>'
+        + (label ? '<span class="tier-sub">' + escapeHtml(label) + '</span>' : '')
+        + '</td>')
+      : '<td class="num">—</td>';
+    const avgTxt = d.mean != null && Number.isFinite(d.mean) ? d.mean.toFixed(1) : '—';
+    const sdTxt = d.n ? d.stdev.toFixed(1) : '—';
+    const ceilTxt = d.ceiling != null && Number.isFinite(d.ceiling) ? d.ceiling.toFixed(1) : '—';
     return '<tr><td class="pos">' + escapeHtml(playerPos(d.pid)) + '</td>'
       + '<td class="name">' + escapeHtml(playerName(d.pid)) + '</td>'
-      + '<td class="num">' + d.mean.toFixed(1) + '</td>'
-      + '<td class="num">' + d.stdev.toFixed(1) + '</td>'
-      + '<td class="num">' + d.ceiling.toFixed(1) + '</td>'
+      + lockCell
+      + '<td class="num" title="' + escapeHtml(avgTitle) + '">' + avgTxt + '</td>'
+      + '<td class="num">' + sdTxt + '</td>'
+      + '<td class="num">' + ceilTxt + '</td>'
       + hitCells
-      + '<td class="num">' + d.n + '</td></tr>';
+      + '<td class="num" title="Weekly game samples used for σ and hit rates">' + d.n + '</td></tr>';
   }).join('');
 
-  const note = '<p class="lineup-foot">Lock-in weeks are 10 single-game scores into starter spots — not weekly totals. '
-    + 'Avg / σ / hit% use ' + escapeHtml(String(state.statsSeason)) + ' Sleeper game samples under your scoring (incl. 40/50-pt bonuses when applicable). '
-    + 'Hover a hit% for the normal (bell curve) estimate from μ and σ. '
-    + 'Team fill simulates each rostered player producing one lockable night, then keeps the top ' + slots + ' scores.'
-    + (ranked.length > show.length ? ' Showing top ' + show.length + ' of ' + ranked.length + ' sampled players.' : '')
+  const note = '<p class="lineup-foot"><strong>Lock OVR</strong> is a 2K-style '
+    + ((window.LockInDist && LockInDist.LOCK_OVR_FLOOR) || 50) + '–'
+    + ((window.LockInDist && LockInDist.LOCK_OVR_CEIL) || 99)
+    + ' rating from smash production only (no age/injury): '
+    + '40% Avg + 30% Ceil + 30% smash-hit (40·P≥40 + 50·P≥50), scaled by percentile. '
+    + 'Tiers: 95+ MVP · 90+ Superstar · 85+ All-Star · 80+ Strong starter · 70+ Solid · 60+ Rotation · 50+ Depth. '
+    + 'Rookies / thin samples (N&lt;' + ((window.LockInDist && LockInDist.MIN_SAMPLES_FOR_SMASH) || 5)
+    + ') use projected FP/G as the base. Trade stars (age/injury) come later. '
+    + '<strong>Avg</strong> is full-season FP/G from ' + escapeHtml(String(state.statsSeason)) + '. '
+    + 'Hover OVR for details.'
+    + (ranked.length > show.length ? ' Showing top ' + show.length + ' of ' + ranked.length + ' by Lock OVR.' : '')
     + '</p>';
 
   body.innerHTML = fillHtml
