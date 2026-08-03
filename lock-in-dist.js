@@ -322,17 +322,50 @@
     return 1;
   }
 
-  function formatStars(n){
-    const stars = Math.max(1, Math.min(5, Math.round(Number(n) || 1)));
-    return '★'.repeat(stars) + '☆'.repeat(5 - stars);
+  /* Clamp to 1–5 on a half-star grid (1, 1.5, … 5). */
+  function clampTradeStars(n){
+    const s = Number(n);
+    if (!Number.isFinite(s) || s <= 0) return null;
+    const stepped = Math.round(s * 2) / 2;
+    return Math.max(1, Math.min(5, stepped));
   }
 
-  /* Absolute tradeScore → stars (2K trade-finder style). */
+  /* Plain-text stars, e.g. ★★★★½☆ */
+  function formatStars(n){
+    const stars = clampTradeStars(n);
+    if (stars == null) return '—';
+    const full = Math.floor(stars);
+    const half = stars - full >= 0.5;
+    const empty = 5 - full - (half ? 1 : 0);
+    return '★'.repeat(full) + (half ? '½' : '') + '☆'.repeat(Math.max(0, empty));
+  }
+
+  /* HTML stars with optional half glyph (CSS clips .star-half to 50% width). */
+  function formatStarsHtml(n, opts){
+    const stars = clampTradeStars(n);
+    const cls = (opts && opts.className) || 'stars';
+    if (stars == null) return '<span class="' + cls + ' dim">—</span>';
+    const full = Math.floor(stars);
+    const half = stars - full >= 0.5;
+    const empty = 5 - full - (half ? 1 : 0);
+    let html = '<span class="' + cls + '" aria-label="' + stars + ' of 5">';
+    if (full > 0) html += '<span>' + '★'.repeat(full) + '</span>';
+    if (half) html += '<span class="star-half" aria-hidden="true">★</span>';
+    if (empty > 0) html += '<span class="dim">' + '☆'.repeat(empty) + '</span>';
+    html += '</span>';
+    return html;
+  }
+
+  /* Absolute tradeScore → stars (2K trade-finder style, half-star steps). */
   const TRADE_STAR_BANDS = [
     {min: 95, stars: 5},
+    {min: 90, stars: 4.5},
     {min: 85, stars: 4},
+    {min: 80, stars: 3.5},
     {min: 75, stars: 3},
+    {min: 70, stars: 2.5},
     {min: 65, stars: 2},
+    {min: 60, stars: 1.5},
     {min: 0, stars: 1}
   ];
 
@@ -523,7 +556,9 @@
     ovrFromPercentile,
     lockOvrTier,
     starsFromPercentile,
+    clampTradeStars,
     formatStars,
+    formatStarsHtml,
     tradeStarsFromScore,
     tradeScoreFromOvr,
     attachLockValues,

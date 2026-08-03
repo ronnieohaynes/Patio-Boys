@@ -277,6 +277,9 @@
     font-size:13px;letter-spacing:.02em;color:var(--gold);white-space:nowrap;line-height:1.1;
   }
   table.lockin .trade-stars .dim{color:var(--ink-dim);opacity:.4}
+  table.lockin .trade-stars .star-half{
+    display:inline-block;width:.55em;overflow:hidden;vertical-align:baseline;
+  }
 
   /* trade intel */
   .trade-row{
@@ -361,7 +364,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-trade-stars-ui';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-half-stars';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1042,20 +1045,31 @@ function renderLockIn(t){
         + '</td>')
       : '<td class="num">—</td>';
     const stars = d.tradeStars;
-    const filled = Number.isFinite(Number(stars)) ? Math.max(1, Math.min(5, Math.round(Number(stars)))) : 0;
-    const tradeTitle = filled
-      ? ('Trade ' + '★'.repeat(filled) + ' · score ' + Number(d.tradeScore).toFixed(1)
+    const filled = (window.LockInDist && LockInDist.clampTradeStars)
+      ? LockInDist.clampTradeStars(stars)
+      : (Number.isFinite(Number(stars)) ? Math.max(1, Math.min(5, Math.round(Number(stars)))) : null);
+    const starsGlyph = (window.LockInDist && LockInDist.formatStars)
+      ? LockInDist.formatStars(filled)
+      : (filled != null ? ('★'.repeat(Math.floor(filled)) + (filled % 1 ? '½' : '')) : '');
+    const tradeTitle = filled != null
+      ? ('Trade ' + starsGlyph + ' · score ' + Number(d.tradeScore).toFixed(1)
         + ' = OVR ' + d.lockOvr
         + ' × age ' + (d.tradeAgeMult != null ? Number(d.tradeAgeMult).toFixed(2) : '—')
         + ' (' + (d.lockAgeBand || '?') + ')'
         + ' × injury ' + (d.tradeInjuryMult != null ? Number(d.tradeInjuryMult).toFixed(2) : '1.00')
         + (d.lockAgeBand === 'young' ? ' +1 young' : '')
-        + ' · bands 95+/85+/75+/65+')
+        + ' · bands 95/90/85/80/75/70/65/60')
       : 'Trade stars unavailable';
-    const tradeCell = filled
-      ? ('<td title="' + escapeHtml(tradeTitle) + '"><span class="trade-stars" aria-label="'
-        + filled + ' out of 5 trade stars"><span>' + '★'.repeat(filled) + '</span>'
-        + '<span class="dim">' + '☆'.repeat(5 - filled) + '</span></span>'
+    const tradeStarsHtml = (window.LockInDist && LockInDist.formatStarsHtml)
+      ? LockInDist.formatStarsHtml(filled, {className: 'trade-stars'})
+      : (filled != null
+        ? ('<span class="trade-stars" aria-label="' + filled + ' of 5">'
+          + '<span>' + '★'.repeat(Math.floor(filled)) + '</span>'
+          + (filled % 1 ? '<span class="star-half" aria-hidden="true">★</span>' : '')
+          + '<span class="dim">' + '☆'.repeat(5 - Math.ceil(filled)) + '</span></span>')
+        : '');
+    const tradeCell = filled != null
+      ? ('<td title="' + escapeHtml(tradeTitle) + '">' + tradeStarsHtml
         + '<span class="tier-sub">' + escapeHtml(d.lockAgeBand || '') + '</span></td>')
       : '<td class="num">—</td>';
     const avgTxt = d.mean != null && Number.isFinite(d.mean) ? d.mean.toFixed(1) : '—';
@@ -1075,7 +1089,7 @@ function renderLockIn(t){
   const note = '<p class="lineup-foot"><strong>Lock OVR</strong> is smash production only (50–99, absolute curve). '
     + '<strong>Trade ★</strong> = OVR × age × injury'
     + ' (young 1.12 +1 · prime 1.04 · decline 0.80), then '
-    + '★★★★★ ≥95 · ★★★★ ≥85 · ★★★ ≥75 · ★★ ≥65 · ★ below. '
+    + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
     + 'Same OVR can be a haul or a discount depending on age. '
     + 'Rookies / thin samples (N&lt;' + ((window.LockInDist && LockInDist.MIN_SAMPLES_FOR_SMASH) || 5)
     + ') use projected FP/G for OVR base. '

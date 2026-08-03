@@ -93,6 +93,10 @@
   }
   .player-row .val .stars{display:block;font-size:12px;letter-spacing:.02em}
   .player-row .val .stars .dim{color:var(--ink-dim);opacity:.4}
+  .player-row .val .stars .star-half,
+  .side-card li .dv .stars .star-half{
+    display:inline-block;width:.55em;overflow:hidden;vertical-align:baseline;
+  }
   .player-row .val .score{display:block;font-size:12px;font-weight:600}
   .player-row .val .ovr-mini{
     display:block;font-size:9px;color:var(--ink-dim);letter-spacing:.04em;text-transform:uppercase;
@@ -270,7 +274,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-trade-lock';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-half-stars';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -627,11 +631,20 @@ const state = {
 };
 
 function starsHtml(n){
-  const stars = Math.max(1, Math.min(5, Math.round(Number(n) || 0)));
-  if (!Number.isFinite(Number(n)) || Number(n) <= 0) return '<span class="stars dim">—</span>';
+  if (window.LockInDist && typeof LockInDist.formatStarsHtml === 'function'){
+    return LockInDist.formatStarsHtml(n, {className: 'stars'});
+  }
+  const raw = Number(n);
+  if (!Number.isFinite(raw) || raw <= 0) return '<span class="stars dim">—</span>';
+  const stars = Math.max(1, Math.min(5, Math.round(raw * 2) / 2));
+  const full = Math.floor(stars);
+  const half = stars - full >= 0.5;
+  const empty = 5 - full - (half ? 1 : 0);
   return '<span class="stars" aria-label="' + stars + ' of 5">'
-    + '<span>' + '★'.repeat(stars) + '</span>'
-    + '<span class="dim">' + '☆'.repeat(5 - stars) + '</span></span>';
+    + (full ? '<span>' + '★'.repeat(full) + '</span>' : '')
+    + (half ? '<span class="star-half" aria-hidden="true">★</span>' : '')
+    + (empty ? '<span class="dim">' + '☆'.repeat(empty) + '</span>' : '')
+    + '</span>';
 }
 
 function tradeValHtml(p){
