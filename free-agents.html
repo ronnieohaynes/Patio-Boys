@@ -113,6 +113,23 @@
   td.num{
     font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;color:var(--gold);
   }
+  td.lock .ovr{
+    font-family:'Anton',sans-serif;font-size:16px;line-height:1;color:var(--gold);
+  }
+  td.lock .tier-sub{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:9px;
+    letter-spacing:.04em;text-transform:uppercase;color:var(--ink-dim);margin-top:2px;
+  }
+  td.trade .trade-stars{
+    display:inline-flex;align-items:center;gap:0;
+    font-size:13px;letter-spacing:0;color:var(--gold);white-space:nowrap;line-height:1;height:1em;
+  }
+  td.trade .trade-stars .star{
+    display:inline-block;width:1em;height:1em;line-height:1;
+    overflow:hidden;flex:0 0 auto;text-align:left;
+  }
+  td.trade .trade-stars .star.half{width:.5em}
+  td.trade .trade-stars .star.empty{color:var(--ink-dim);opacity:.4}
   td.fit{font-size:12px;color:#C9CDD8}
   td.fit .slot{color:var(--green)}
   tr.mine td{background:color-mix(in srgb, var(--gold) 7%, transparent)}
@@ -163,6 +180,8 @@
         <select id="sortBy">
           <option value="fit">Best fit for team</option>
           <option value="proj">Projected FP/G</option>
+          <option value="lock">Lock OVR</option>
+          <option value="trade">Trade ★</option>
           <option value="age">Youngest</option>
           <option value="ovr">2K OVR</option>
         </select>
@@ -188,6 +207,8 @@
             <th>#</th>
             <th>Player</th>
             <th>Proj</th>
+            <th>Lock</th>
+            <th>Trade ★</th>
             <th class="hide-sm">Age</th>
             <th class="hide-sm">2K</th>
             <th>Lineup lift</th>
@@ -203,8 +224,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260802';
-  ['2k-ratings-snapshot.js','team-needs.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-fa-lock';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -267,11 +288,12 @@ const state = {
   scoredByTeam: {}
 };
 
-function makeRecord(pid, playerDb, projById){
+function makeRecord(pid, playerDb, projById, lockDist){
   const p = playerDb[pid] || {};
   const name = playerName(p);
   const hit = RATINGS_BY_NAME.get(normalizeName(name));
   const positions = p.fantasy_positions || [p.position].filter(Boolean);
+  const lock = lockDist && (lockDist[pid] || lockDist[String(pid)]) || null;
   return {
     id: String(pid),
     name,
@@ -283,8 +305,32 @@ function makeRecord(pid, playerDb, projById){
     injuryStatus: p.injury_status || null,
     ovr: hit && hit.ovr != null ? hit.ovr : null,
     yearsExp: p.years_exp ?? null,
-    isRookie: ROOKIE_NAMES.has(normalizeName(name)) || Number(p.years_exp) === 0
+    isRookie: ROOKIE_NAMES.has(normalizeName(name)) || Number(p.years_exp) === 0,
+    lockOvr: lock && lock.lockOvr != null ? lock.lockOvr : null,
+    lockTier: lock && lock.lockTierLabel ? lock.lockTierLabel : null,
+    tradeScore: lock && lock.tradeScore != null ? lock.tradeScore : null,
+    tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null
   };
+}
+
+function tradeStarsHtml(n){
+  if (window.LockInDist && typeof LockInDist.formatStarsHtml === 'function'){
+    return LockInDist.formatStarsHtml(n, {className: 'trade-stars'});
+  }
+  if (n == null || !Number.isFinite(Number(n))) return '<span class="trade-stars">—</span>';
+  return '<span class="trade-stars">' + '★'.repeat(Math.max(1, Math.min(5, Math.round(Number(n))))) + '</span>';
+}
+
+function lockCellHtml(a){
+  if (a.lockOvr == null) return '<td class="num lock">—</td>';
+  const title = a.tradeScore != null
+    ? ('Lock OVR ' + a.lockOvr + (a.lockTier ? ' · ' + a.lockTier : '')
+      + ' · trade score ' + Number(a.tradeScore).toFixed(1))
+    : ('Lock OVR ' + a.lockOvr);
+  return '<td class="lock" title="' + escapeHtml(title) + '">'
+    + '<span class="ovr">' + Math.round(a.lockOvr) + '</span>'
+    + (a.lockTier ? '<span class="tier-sub">' + escapeHtml(a.lockTier) + '</span>' : '')
+    + '</td>';
 }
 
 function scoreAgentsForTeam(team){
@@ -329,6 +375,8 @@ function filteredList(){
   });
   rows = rows.slice().sort((a, b) => {
     if (sort === 'proj') return (b.metric || -1) - (a.metric || -1) || b.gain - a.gain;
+    if (sort === 'lock') return (b.lockOvr || 0) - (a.lockOvr || 0) || b.gain - a.gain;
+    if (sort === 'trade') return (b.tradeScore || 0) - (a.tradeScore || 0) || b.gain - a.gain;
     if (sort === 'age'){
       const aa = Number.isFinite(a.age) ? a.age : 99;
       const bb = Number.isFinite(b.age) ? b.age : 99;
@@ -371,6 +419,9 @@ function render(){
         + '<p class="rank">Target #' + (i + 1) + '</p>'
         + '<h3 class="name">' + escapeHtml(a.name) + '</h3>'
         + '<p class="meta">' + escapeHtml(a.pos) + ' \u00b7 ' + escapeHtml(a.nbaTeam || 'FA')
+        + (a.lockOvr != null ? ' \u00b7 Lock ' + Math.round(a.lockOvr) : '')
+        + (a.tradeStars != null ? ' \u00b7 ' + (window.LockInDist && LockInDist.formatStars
+          ? LockInDist.formatStars(a.tradeStars) : (a.tradeStars + '\u2605')) : '')
         + (a.metric != null ? ' \u00b7 ' + a.metric.toFixed(1) + ' proj' : '')
         + ' \u00b7 lift <span class="gain">+' + a.gain.toFixed(1) + '</span></p>'
         + '<p class="why">' + why + '</p></article>';
@@ -400,6 +451,8 @@ function render(){
       + (a.injuryStatus ? ' \u00b7 ' + escapeHtml(a.injuryStatus) : '')
       + '</span></td>'
       + '<td class="num">' + (a.metric != null ? a.metric.toFixed(1) : '\u2014') + '</td>'
+      + lockCellHtml(a)
+      + '<td class="trade">' + tradeStarsHtml(a.tradeStars) + '</td>'
       + '<td class="num hide-sm">' + (Number.isFinite(a.age) ? a.age : '\u2014') + '</td>'
       + '<td class="num hide-sm">' + (a.ovr != null ? a.ovr : '\u2014') + '</td>'
       + '<td class="num">+' + a.gain.toFixed(1) + '</td>'
@@ -444,7 +497,27 @@ async function load(){
       });
       if (!projById.size) throw new Error('no usable projection stats');
     } catch (pe){
-      status.textContent = 'Projections thin (' + (pe.message || pe) + '); ranking by 2K / name fallback.';
+      status.textContent = 'Projections thin (' + (pe.message || pe) + '); ranking by Lock / 2K fallback.';
+    }
+
+    /* Prefer consensus proj for Lock seeds when the snapshot matches this season. */
+    const cons = window.NBA_PROJ_CONSENSUS || {};
+    if (!cons.season || String(cons.season) === String(season)){
+      Object.keys(cons.players || {}).forEach(key => {
+        const row = cons.players[key];
+        if (!row || !row.sleeperId) return;
+        const id = String(row.sleeperId);
+        if (projById.has(id)) return;
+        const stats = row.stats || {};
+        let total = 0, matched = 0;
+        Object.keys(scoring).forEach(k => {
+          if (stats[k] != null && Number.isFinite(Number(stats[k]))){
+            total += Number(stats[k]) * Number(scoring[k]);
+            matched++;
+          }
+        });
+        if (matched) projById.set(id, total);
+      });
     }
 
     const userById = {};
@@ -454,6 +527,56 @@ async function load(){
       : (league.roster_positions || []).filter(s => !['BN','IR','TAXI'].includes(s));
 
     const rostered = new Set();
+    const rosterIds = [];
+    rosters.forEach(r => {
+      [].concat(r.players || [], r.reserve || [], r.taxi || []).forEach(pid => {
+        rostered.add(String(pid));
+        rosterIds.push(String(pid));
+      });
+    });
+
+    /* Build a preliminary FA shortlist before Lock scoring so we only fetch
+       values for players who can appear on the board. */
+    const prelimAgents = Object.entries(playerDb).filter(([pid, p]) => {
+      if (!p || rostered.has(String(pid))) return false;
+      const name = playerName(p);
+      if (!name) return false;
+      if (!(p.active === true || (!!p.team && p.active !== false))) return false;
+      const rec = makeRecord(pid, playerDb, projById, null);
+      if (rec.metric != null && rec.metric >= 8) return true;
+      if (rec.ovr != null && rec.ovr >= 75) return true;
+      if (rec.isRookie && rec.nbaTeam && rec.nbaTeam !== 'FA') return true;
+      if (Number.isFinite(rec.age) && rec.age <= 23 && rec.nbaTeam) return true;
+      return false;
+    }).map(([pid]) => String(pid));
+
+    let statsSeason = season;
+    if (league.previous_league_id){
+      try {
+        const prevRes = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id);
+        if (prevRes.ok) statsSeason = (await prevRes.json()).season || statsSeason;
+      } catch (e){ /* keep current */ }
+    }
+
+    let lockDist = {};
+    if (window.LockInDist && typeof LockInDist.fetchLockValueIndex === 'function'){
+      status.textContent = 'Building Lock OVR / Trade \u2605 for free agents\u2026';
+      try {
+        const lockPack = await LockInDist.fetchLockValueIndex({
+          scoring,
+          statsSeason,
+          playerDb,
+          projById,
+          playerIds: prelimAgents.concat(rosterIds),
+          twoKSnapshot: TWO_K
+        });
+        lockDist = lockPack.distMap || {};
+        state.lockStatsSeason = lockPack.statsSeason;
+      } catch (le){
+        status.textContent = 'Lock values unavailable (' + (le.message || le) + '); showing proj / 2K only.';
+      }
+    }
+
     state.teams = rosters.map(r => {
       const u = userById[r.owner_id] || {};
       const raw = (u.metadata && u.metadata.team_name) || u.display_name || ('Roster ' + r.roster_id);
@@ -463,12 +586,11 @@ async function load(){
         .concat(r.reserve || [])
         .concat(r.taxi || [])
         .map(String);
-      ids.forEach(id => rostered.add(id));
       return {
         rosterId: r.roster_id,
         team,
         manager: u.display_name || '',
-        players: ids.map(pid => makeRecord(pid, playerDb, projById))
+        players: ids.map(pid => makeRecord(pid, playerDb, projById, lockDist))
       };
     }).sort((a, b) => {
       if (a.team === MY_TEAM) return -1;
@@ -476,20 +598,10 @@ async function load(){
       return a.team.localeCompare(b.team);
     });
 
-    state.agents = Object.entries(playerDb).filter(([pid, p]) => {
-      if (!p || rostered.has(String(pid))) return false;
-      const name = playerName(p);
-      if (!name) return false;
-      if (!(p.active === true || (!!p.team && p.active !== false))) return false;
-      const rec = makeRecord(pid, playerDb, projById);
-      /* Keep the board usable: projected, rated, or young/rookies with a team. */
-      if (rec.metric != null && rec.metric >= 8) return true;
-      if (rec.ovr != null && rec.ovr >= 75) return true;
-      if (rec.isRookie && rec.nbaTeam && rec.nbaTeam !== 'FA') return true;
-      if (Number.isFinite(rec.age) && rec.age <= 23 && rec.nbaTeam) return true;
-      return false;
-    }).map(([pid]) => makeRecord(pid, playerDb, projById))
-      .sort((a, b) => (b.metric || 0) - (a.metric || 0) || (b.ovr || 0) - (a.ovr || 0));
+    state.agents = prelimAgents.map(pid => makeRecord(pid, playerDb, projById, lockDist))
+      .sort((a, b) => (b.lockOvr || 0) - (a.lockOvr || 0)
+        || (b.metric || 0) - (a.metric || 0)
+        || (b.ovr || 0) - (a.ovr || 0));
 
     if (state.agents.length > 180){
       state.agents = state.agents.slice(0, 180);
@@ -527,10 +639,13 @@ async function load(){
     });
 
     document.getElementById('app').hidden = false;
+    const withLock = state.agents.filter(a => a.lockOvr != null).length;
     tag.textContent = state.agents.length + ' free agents';
     status.classList.remove('error');
     status.textContent = 'Three best adds for the selected team (same optimizer as Team Intel). '
-      + state.agents.length + ' free agents scored after the draft.';
+      + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR / Trade \u2605'
+      + (state.lockStatsSeason ? ' (' + state.lockStatsSeason + ' smash)' : '')
+      + '.';
     render();
   } catch (e){
     status.classList.add('error');
