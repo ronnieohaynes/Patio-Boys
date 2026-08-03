@@ -37,7 +37,8 @@
   }
 
   /* Score one Sleeper stats row under league settings.
-     Applies 40/50-pt bonuses and 3PM when Sleeper omits those derived fields. */
+     Applies 40/50-pt bonuses and 3PM when Sleeper omits those derived fields.
+     If the row includes gp (season totals), returns FP per game. */
   function scoreGame(obj, scoring){
     if (!obj || !scoring) return null;
     const keys = Object.keys(scoring);
@@ -69,8 +70,23 @@
     }
 
     if (matched === 0) return null;
-    const gp = obj.gp || obj.games_played || null;
-    return gp && gp > 0 ? total / gp : total;
+    const gp = Number(obj.gp || obj.games_played || 0);
+    return gp > 0 ? total / gp : total;
+  }
+
+  /* Full-season FP/G from Sleeper season totals (matches Sleeper app averages). */
+  function buildSeasonAvgMap(seasonStats, scoring){
+    const out = {};
+    Object.keys(seasonStats || {}).forEach(pid => {
+      if (String(pid).indexOf('TEAM_') === 0) return;
+      const row = seasonStats[pid];
+      const gp = Number(row && (row.gp || row.games_played) || 0);
+      if (!(gp > 0)) return;
+      const avg = scoreGame(row, scoring);
+      if (avg == null || !Number.isFinite(avg)) return;
+      out[pid] = {avg, gp};
+    });
+    return out;
   }
 
   function buildSamplesByPlayer(weeklyResults, scoring){
@@ -87,14 +103,18 @@
     return byPid;
   }
 
-  function playerDist(samples, marks){
+  function playerDist(samples, marks, seasonInfo){
     const arr = (samples || []).filter(v => Number.isFinite(v));
     const markList = marks || DEFAULT_MARKS;
     if (!arr.length) return null;
     const n = arr.length;
-    const mean = arr.reduce((s, v) => s + v, 0) / n;
-    const variance = arr.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / n;
+    const sampleMean = arr.reduce((s, v) => s + v, 0) / n;
+    const variance = arr.reduce((s, v) => s + Math.pow(v - sampleMean, 2), 0) / n;
     const stdev = Math.sqrt(variance);
+    /* Prefer full-season FP/G for Avg (Sleeper-aligned); keep σ from game samples. */
+    const seasonAvg = seasonInfo && Number.isFinite(seasonInfo.avg) ? seasonInfo.avg : null;
+    const seasonGp = seasonInfo && Number.isFinite(seasonInfo.gp) ? seasonInfo.gp : null;
+    const mean = seasonAvg != null ? seasonAvg : sampleMean;
     const ceiling = mean + stdev;
     const hits = {};
     const normalHits = {};
@@ -102,13 +122,18 @@
       hits[m] = empiricalHitRate(arr, m);
       normalHits[m] = normalHitRate(mean, stdev, m);
     });
-    return {n, mean, stdev, ceiling, samples: arr, hits, normalHits, marks: markList};
+    return {
+      n, mean, sampleMean, stdev, ceiling, samples: arr,
+      hits, normalHits, marks: markList,
+      seasonAvg, seasonGp, avgSource: seasonAvg != null ? 'season' : 'sample'
+    };
   }
 
-  function buildDistMap(samplesByPlayer, marks){
+  function buildDistMap(samplesByPlayer, marks, seasonAvgByPid){
     const out = {};
+    const seasonMap = seasonAvgByPid || {};
     Object.keys(samplesByPlayer || {}).forEach(pid => {
-      const d = playerDist(samplesByPlayer[pid], marks);
+      const d = playerDist(samplesByPlayer[pid], marks, seasonMap[pid] || null);
       if (d) out[pid] = d;
     });
     return out;
@@ -195,6 +220,7 @@
     normalHitRate,
     empiricalHitRate,
     scoreGame,
+    buildSeasonAvgMap,
     buildSamplesByPlayer,
     playerDist,
     buildDistMap,
