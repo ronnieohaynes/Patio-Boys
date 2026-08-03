@@ -222,7 +222,8 @@
 
   /* ---- Smash-hunting Lock OVR (Intel) ----
      Raw smash base = 0.40·Avg + 0.30·Ceil + 0.30·(40·P≥40 + 50·P≥50)
-     Rookies / thin samples fall back to projected FP/G.
+     Rookies: reverse-engineer from next-year proj + ESPN/Woo comps (50/50).
+     Thin samples fall back to projected FP/G.
      Lock OVR maps smash base → 50–99 on an ABSOLUTE curve (not pool
      percentile — percentile vs all NBA stuffed every roster guy into the 90s).
      Age / injury stay off OVR — those belong on Trade stars later. */
@@ -231,6 +232,100 @@
   const LOCK_OVR_FLOOR = 50;
   const LOCK_OVR_CEIL = 99;
   const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
+  const ROOKIE_PROJ_W = 0.5;
+  const ROOKIE_COMP_W = 0.5;
+
+  /* ESPN post–summer league outlook floors = comparison-derived FP/G proxies
+     (same table as Trade Analyzer / awards). Used to reverse-engineer Lock OVR
+     for draft-class rookies who have no NBA smash samples yet. */
+  const ESPN_ROOKIE_OUTLOOK = {
+    ajdybantsa:{outlook:1, comps:'Jaylen Brown / Kawhi high · RJ Barrett low', floor:45},
+    darrynpeterson:{outlook:2, comps:'Booker / Lillard+tools high · Murray+D low', floor:44},
+    cameronboozer:{outlook:3, comps:'Kevin Love+ball skills · Sabonis+3', floor:24},
+    calebwilson:{outlook:4, comps:'Bouncier Siakam high · John Collins low', floor:18},
+    braydenburries:{outlook:5, comps:'Summer riser', floor:16},
+    mikelbrownjr:{outlook:6, comps:'Lottery guard', floor:15},
+    mikelbrown:{outlook:6, comps:'Lottery guard', floor:15},
+    yaxellendeborg:{outlook:7, comps:'Summer riser', floor:14},
+    morezjohnsonjr:{outlook:8, comps:'Big upside', floor:13},
+    morezjohnson:{outlook:8, comps:'Big upside', floor:13},
+    kingstonflemings:{outlook:9, comps:'Lottery guard', floor:13},
+    keatonwagler:{outlook:10, comps:'Haliburton pace high · Nembhard low', floor:12},
+    dariusacuffjr:{outlook:11, comps:'Brunson high · Bibby low', floor:12},
+    dariusacuff:{outlook:11, comps:'Brunson high · Bibby low', floor:12}
+  };
+
+  function normalizePlayerName(name){
+    return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+  }
+
+  function sleeperPlayerName(p){
+    if (!p) return '';
+    if (p.full_name) return p.full_name;
+    return ((p.first_name || '') + ' ' + (p.last_name || '')).trim();
+  }
+
+  function rookieNamesFromSnapshot(snapshot){
+    const names = new Set(Object.keys(ESPN_ROOKIE_OUTLOOK));
+    const pack = snapshot || global.TWO_K_SNAPSHOT || null;
+    ((pack && pack.rookies) || []).forEach(r => {
+      const key = normalizePlayerName(r && r.name);
+      if (key) names.add(key);
+    });
+    return names;
+  }
+
+  function rookieCompFloor(p, nameKey){
+    const key = nameKey || normalizePlayerName(sleeperPlayerName(p));
+    const row = ESPN_ROOKIE_OUTLOOK[key];
+    const f = row && Number(row.floor);
+    return Number.isFinite(f) && f > 0 ? f : null;
+  }
+
+  /* 50% next-year proj + 50% comps floor → smash-equivalent lockBase. */
+  function blendRookieBase(proj, comp){
+    const p = Number(proj);
+    const c = Number(comp);
+    const hasP = Number.isFinite(p) && p > 0;
+    const hasC = Number.isFinite(c) && c > 0;
+    if (hasP && hasC) return ROOKIE_PROJ_W * p + ROOKIE_COMP_W * c;
+    if (hasP) return p;
+    if (hasC) return c;
+    return null;
+  }
+
+  function isRookiePlayer(p, pid, opts){
+    const options = opts || {};
+    const yearsExp = Number(p && p.years_exp);
+    if (yearsExp === 0) return true;
+    if (options.rookieIds && options.rookieIds.has(String(pid))) return true;
+    const key = normalizePlayerName(sleeperPlayerName(p));
+    if (!key) return false;
+    if (ESPN_ROOKIE_OUTLOOK[key]) return true;
+    if (options.rookieNames && options.rookieNames.has(key)) return true;
+    return false;
+  }
+
+  /* Map draft-class names → Sleeper ids (prefer active / ranked rows). */
+  function matchRookieIdsByName(playerDb, rookieNames){
+    const best = new Map(); /* nameKey → {pid, rank} */
+    const names = rookieNames || rookieNamesFromSnapshot();
+    Object.keys(playerDb || {}).forEach(pid => {
+      if (String(pid).indexOf('TEAM_') === 0) return;
+      const p = playerDb[pid];
+      if (!p) return;
+      const key = normalizePlayerName(sleeperPlayerName(p));
+      if (!key || !names.has(key)) return;
+      const rank = Number(p.search_rank);
+      const score = Number.isFinite(rank) ? rank : 999999;
+      const prev = best.get(key);
+      if (!prev || score < prev.rank) best.set(key, {pid: String(pid), rank: score});
+    });
+    const ids = new Set();
+    best.forEach(row => ids.add(row.pid));
+    return ids;
+  }
 
   /* Absolute smash-base → OVR anchors (2K reading):
      Top (85+) stays tight; mid/low softened so solid/strong starters
@@ -403,27 +498,40 @@
   }
 
   /* Mutates each dist with lockBase / lockOvr / lockTier / tradeScore / tradeStars.
-     OVR is pure smash; Trade stars layer age + injury on top. */
+     OVR is pure smash (or rookie proj+comp); Trade stars layer age + injury. */
   function attachLockValues(distMap, opts){
     const options = opts || {};
     const playerDb = options.playerDb || {};
     const projById = options.projById || null;
+    const rookieNames = options.rookieNames || rookieNamesFromSnapshot(options.twoKSnapshot);
     let count = 0;
 
     Object.keys(distMap || {}).forEach(pid => {
       const d = distMap[pid];
       if (!d) return;
       const p = playerDb[pid] || playerDb[String(pid)] || {};
-      const yearsExp = Number(p.years_exp);
-      const isRookie = yearsExp === 0 || options.rookieIds && options.rookieIds.has(String(pid));
+      const isRookie = isRookiePlayer(p, pid, {
+        rookieIds: options.rookieIds,
+        rookieNames
+      });
       const proj = projFromMap(projById, pid);
+      const comp = isRookie ? rookieCompFloor(p) : null;
       const thin = !(d.n >= MIN_SAMPLES_FOR_SMASH);
 
       let base = null;
       let baseSource = null;
-      if ((isRookie || thin) && proj != null){
+      if (isRookie){
+        base = blendRookieBase(proj, comp);
+        if (base != null){
+          baseSource = (proj != null && comp != null) ? 'rookie-proj-comp'
+            : (comp != null ? 'rookie-comp' : 'rookie-proj');
+        } else {
+          base = smashLockBase(d);
+          baseSource = base != null ? 'smash' : null;
+        }
+      } else if (thin && proj != null){
         base = proj;
-        baseSource = isRookie ? 'rookie-proj' : 'proj';
+        baseSource = 'proj';
       } else {
         base = smashLockBase(d);
         baseSource = 'smash';
@@ -442,6 +550,7 @@
         d.lockPct = null;
         d.tradeScore = null;
         d.tradeStars = null;
+        d.rookieComp = comp;
         return;
       }
 
@@ -470,9 +579,25 @@
       d.tradeStars = tradeStars;
       d.tradeAgeMult = AGE_MULT[band] || 0.95;
       d.tradeInjuryMult = injuryStatusMult(injuryStatus);
+      d.rookieComp = comp;
+      d.rookieProj = proj;
       count++;
     });
     return count;
+  }
+
+  function seedDistEntry(distMap, pid, seed, source){
+    const id = String(pid);
+    if (distMap[id] || distMap[pid]) return false;
+    if (seed == null || !Number.isFinite(Number(seed))) return false;
+    const v = Number(seed);
+    distMap[id] = {
+      n: 0, mean: v, sampleMean: v, stdev: 0, ceiling: v,
+      hits: {}, normalHits: {}, marks: DEFAULT_MARKS.slice(),
+      samples: [], seasonAvg: null, seasonGp: null, avgSource: source || 'proj',
+      projOnly: true
+    };
+    return true;
   }
 
   /* Fetch season totals + weekly samples, score under league settings, attach
@@ -487,6 +612,11 @@
     const fetchImpl = options.fetch || (typeof fetch === 'function' ? fetch : null);
     if (!statsSeason) throw new Error('statsSeason required');
     if (!fetchImpl) throw new Error('fetch unavailable');
+
+    const rookieNames = options.rookieNames || rookieNamesFromSnapshot(options.twoKSnapshot);
+    const matchedRookieIds = matchRookieIdsByName(playerDb, rookieNames);
+    const rookieIds = new Set(matchedRookieIds);
+    (options.rookieIds || []).forEach(id => rookieIds.add(String(id)));
 
     const weeks = Array.from({length: 25}, (_, i) => i + 1);
     const [seasonStats, ...weeklyResults] = await Promise.all([
@@ -504,26 +634,32 @@
     const seasonAvgByPid = seasonStats ? buildSeasonAvgMap(seasonStats, scoring) : {};
     const distMap = buildDistMap(samplesByPlayer, DEFAULT_MARKS, seasonAvgByPid);
 
-    playerIds.forEach(pid => {
-      const id = String(pid);
-      if (distMap[id] || distMap[pid]) return;
+    const seedIds = new Set([...playerIds, ...rookieIds].map(String));
+    seedIds.forEach(id => {
+      if (distMap[id]) return;
+      const p = playerDb[id] || playerDb[String(id)] || {};
       const proj = projFromMap(projById, id);
-      if (proj == null) return;
-      distMap[id] = {
-        n: 0, mean: proj, sampleMean: proj, stdev: 0, ceiling: proj,
-        hits: {}, normalHits: {}, marks: DEFAULT_MARKS.slice(),
-        samples: [], seasonAvg: null, seasonGp: null, avgSource: 'proj',
-        projOnly: true
-      };
+      const rookie = isRookiePlayer(p, id, {rookieIds, rookieNames});
+      const comp = rookie ? rookieCompFloor(p) : null;
+      const seed = rookie ? blendRookieBase(proj, comp) : proj;
+      const source = rookie
+        ? ((proj != null && comp != null) ? 'rookie-proj-comp'
+          : (comp != null ? 'rookie-comp' : 'proj'))
+        : 'proj';
+      seedDistEntry(distMap, id, seed, source);
     });
 
-    const scored = attachLockValues(distMap, {playerDb, projById});
+    const scored = attachLockValues(distMap, {
+      playerDb, projById, rookieIds, rookieNames,
+      twoKSnapshot: options.twoKSnapshot
+    });
     return {
       distMap,
       statsSeason,
       weeksFound,
       scored,
-      seasonAvgCount: Object.keys(seasonAvgByPid).length
+      seasonAvgCount: Object.keys(seasonAvgByPid).length,
+      rookieSeeded: [...rookieIds].filter(id => distMap[id] && distMap[id].projOnly).length
     };
   }
 
@@ -537,6 +673,9 @@
     LOCK_OVR_ANCHORS,
     TRADE_STAR_BANDS,
     AGE_MULT,
+    ROOKIE_PROJ_W,
+    ROOKIE_COMP_W,
+    ESPN_ROOKIE_OUTLOOK,
     normalCdf,
     normalHitRate,
     empiricalHitRate,
@@ -550,6 +689,13 @@
     teamLockInSummary,
     smashHitScore,
     smashLockBase,
+    normalizePlayerName,
+    sleeperPlayerName,
+    rookieNamesFromSnapshot,
+    rookieCompFloor,
+    blendRookieBase,
+    isRookiePlayer,
+    matchRookieIdsByName,
     lockAgeBand,
     injuryStatusMult,
     ovrFromSmashBase,

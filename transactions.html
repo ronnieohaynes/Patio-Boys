@@ -78,10 +78,20 @@
   .side .team{font-weight:600;margin:0 0 8px}
   .asset{
     font-family:'IBM Plex Mono',monospace;font-size:12px;margin:0 0 4px;color:#C9CDD8;
+    display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;
   }
   .asset .dv{color:var(--gold)}
+  .asset .tx-stars{
+    color:var(--gold);letter-spacing:.02em;font-size:12px;white-space:nowrap;
+  }
+  .asset .tx-stars .dim{color:var(--ink-dim);opacity:.4}
+  .asset .tx-stars .star-half{
+    display:inline-block;width:.55em;overflow:hidden;vertical-align:baseline;
+  }
   .asset.pending{color:var(--ink-dim)}
   .asset.drop{color:var(--coral)}
+  .asset.drop .dv, .asset.drop .tx-stars{color:var(--coral)}
+  .asset.drop .tx-stars .dim{color:var(--ink-dim);opacity:.4}
   .empty{
     padding:28px;text-align:center;color:var(--ink-dim);
     font-family:'IBM Plex Mono',monospace;font-size:12px;
@@ -138,7 +148,8 @@
     </div>
     <p class="caption" id="txCaption" hidden>
       Waivers use Trade ★ at the time plus roster fit (lineup lift from lock smash, credit for cutting worst players, clog penalties).
-      Trades use Trade ★ fairness with no fit; when one side gets more players/picks, the grade also blends in average trade score per asset. Unresolved picks do not count until they resolve to a drafted player.
+      Trades use Trade ★ fairness with no fit; when one side gets more players/picks, the grade also blends in average trade score per asset.
+      Rookies without NBA samples are reverse-engineered from next-year projections + comps. Unresolved picks do not count until they resolve to a drafted player.
     </p>
     <div class="tx-list" id="txList"></div>
     <div class="empty" id="txEmpty" hidden>No transactions match those filters.</div>
@@ -147,8 +158,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-txlock2';
-  ['nba-proj-consensus.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-txstars';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -166,6 +177,20 @@ function escapeHtml(s){
 function fmtDyn(v){
   if (v == null || !Number.isFinite(Number(v))) return '—';
   return Number(v).toFixed(1);
+}
+
+function starsForAsset(a){
+  let stars = a && a.tradeStars;
+  if (stars == null && a && a.dynasty != null && window.LockInDist && LockInDist.tradeStarsFromScore){
+    stars = LockInDist.tradeStarsFromScore(a.dynasty);
+  }
+  if (stars == null || !window.LockInDist || !LockInDist.formatStarsHtml) return '';
+  return LockInDist.formatStarsHtml(stars, {className: 'tx-stars'});
+}
+
+function fmtAssetVal(a){
+  const stars = starsForAsset(a);
+  return (stars ? stars + ' ' : '') + '<span class="dv">' + fmtDyn(a && a.dynasty) + '</span>';
 }
 
 function filteredRows(){
@@ -193,15 +218,15 @@ function renderAssets(assets, drops){
   const lines = [];
   (assets || []).forEach(a => {
     if (a.graded){
-      lines.push('<p class="asset">' + escapeHtml(a.label)
-        + ' <span class="dv">' + fmtDyn(a.dynasty) + '</span></p>');
+      lines.push('<p class="asset"><span>' + escapeHtml(a.label) + '</span>'
+        + fmtAssetVal(a) + '</p>');
     } else {
       lines.push('<p class="asset pending">' + escapeHtml(a.label) + ' · ungraded</p>');
     }
   });
   (drops || []).forEach(a => {
-    lines.push('<p class="asset drop">− ' + escapeHtml(a.label)
-      + ' <span class="dv">' + fmtDyn(a.dynasty) + '</span></p>');
+    lines.push('<p class="asset drop"><span>− ' + escapeHtml(a.label) + '</span>'
+      + fmtAssetVal(a) + '</p>');
   });
   return lines.join('') || '<p class="asset pending">—</p>';
 }
