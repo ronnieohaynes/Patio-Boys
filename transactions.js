@@ -615,18 +615,36 @@
     return n ? byId : null;
   }
 
-  /* Per-season Lock OVR index → tradeScore (assets) + lockBase (roster fit). */
+  /* Per-season Lock OVR index → tradeScore (assets) + lockBase (roster fit).
+     When the fantasy season has no NBA samples yet (offseason / preseason),
+     fall back to the prior completed season — same idea as Team Intel /
+     Trade Analyzer. Asset grades still age-adjust to the transaction year. */
   async function loadLockValueMaps(scoring, season, playerDb){
     const Lock = global.LockInDist;
     if (!Lock || typeof Lock.fetchLockValueIndex !== 'function'){
       throw new Error('LockInDist.fetchLockValueIndex unavailable');
     }
-    const pack = await Lock.fetchLockValueIndex({
-      scoring: scoring || {},
-      statsSeason: season,
-      playerDb: playerDb || {},
-      projById: consensusProjById(scoring, season)
-    });
+    const fantasySeason = String(season);
+    const projById = consensusProjById(scoring, fantasySeason);
+
+    async function fetchIndex(statsSeason){
+      return Lock.fetchLockValueIndex({
+        scoring: scoring || {},
+        statsSeason: String(statsSeason),
+        playerDb: playerDb || {},
+        projById
+      });
+    }
+
+    let pack = await fetchIndex(fantasySeason);
+    let statsSeason = String(pack.statsSeason || fantasySeason);
+    if (!(pack.scored > 0) && !(pack.weeksFound > 0)){
+      const prior = String(Number(fantasySeason) - 1);
+      if (Number.isFinite(Number(prior)) && prior !== fantasySeason){
+        pack = await fetchIndex(prior);
+        statsSeason = String(pack.statsSeason || prior);
+      }
+    }
     const distMap = pack.distMap || {};
 
     function valueForPid(pid, db){
@@ -655,7 +673,8 @@
 
     return {
       distMap,
-      statsSeason: pack.statsSeason,
+      fantasySeason,
+      statsSeason,
       weeksFound: pack.weeksFound,
       scored: pack.scored,
       valueForPid,
@@ -889,6 +908,7 @@
   global.PatioBoysTransactions = {
     LEAGUE_ID,
     compute,
+    loadLockValueMaps,
     fairnessGrade,
     netToGrade,
     franchiseKey
