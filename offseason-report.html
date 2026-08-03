@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patio Boys — Off-season Report Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0F131B; --surface:#171D28; --surface-2:#1F2735;
+    --ink:#ECEEF3; --ink-dim:#8B93A6; --hairline:#2E3645;
+    --gold:#E8C34A; --coral:#D8553A; --green:#1D9E75;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;line-height:1.45}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 20px 48px}
+  .topbar{
+    display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:16px 0;border-bottom:1px solid var(--hairline);
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.08em;
+  }
+  .topbar .brand{display:flex;align-items:baseline;gap:10px}
+  .topbar .brand .gm{font-family:'Anton',sans-serif;font-size:18px;color:var(--ink);letter-spacing:.04em}
+  .topbar .brand .gm em{color:var(--gold);font-style:normal}
+  body.embed .topbar{padding:10px 0}
+
+  .status{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--gold);margin:16px 0 0;
+  }
+  .status.error{color:var(--coral)}
+
+  .report-head{
+    display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;
+    margin:18px 0 12px;padding-bottom:10px;border-bottom:1px solid var(--hairline);
+  }
+  .report-head h1{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:28px;margin:0;letter-spacing:.03em;
+  }
+  .report-head p{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;margin:0;
+  }
+
+  .grade-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+  .grade-card{
+    border:1px solid var(--hairline);border-radius:8px;padding:14px 15px;
+    background:var(--surface);border-left:4px solid var(--team-color, var(--gold));
+  }
+  .grade-card.mine{box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--gold) 45%, transparent)}
+  .grade-card .g-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px}
+  .grade-card .g-team{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:18px;margin:0;line-height:1}
+  .grade-card .g-letter{font-family:'Anton',sans-serif;font-size:32px;color:var(--gold);line-height:1}
+  .grade-card .g-meta{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.03em;margin:0 0 8px;line-height:1.6;
+  }
+  .grade-card .g-meta .up{color:var(--green)}
+  .grade-card .g-why{font-size:13px;color:#C9CDD8;margin:0 0 10px;line-height:1.45}
+  .grade-card .g-split{
+    display:flex;gap:10px;flex-wrap:wrap;margin:0 0 10px;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.04em;
+  }
+  .grade-card .g-split .hi{color:var(--gold);font-size:13px;margin-left:4px}
+  .grade-card .g-split .dim{color:var(--ink-dim)}
+
+  .roster-split{
+    display:grid;grid-template-columns:1fr 1fr;gap:10px;
+    margin-top:4px;padding-top:10px;border-top:1px solid var(--hairline);
+  }
+  @media(max-width:520px){ .roster-split{grid-template-columns:1fr} }
+  .roster-col h4{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.08em;margin:0 0 8px;
+  }
+  .roster-col.added h4{color:var(--green)}
+  .roster-col.lost h4{color:var(--coral)}
+  .roster-col ul{
+    list-style:none;margin:0;padding:0;
+    font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.45;
+  }
+  .roster-col li{
+    display:flex;justify-content:space-between;align-items:baseline;gap:6px;
+    padding:3px 0;border-top:1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+    color:#C9CDD8;
+  }
+  .roster-col li:first-child{border-top:none}
+  .roster-col .src{
+    display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;
+    font-size:8px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    background:color-mix(in srgb, var(--gold) 18%, transparent);color:var(--gold);vertical-align:2px;
+  }
+  .roster-col.lost .src{
+    background:color-mix(in srgb, var(--coral) 18%, transparent);color:var(--coral);
+  }
+  .roster-col .empty-note{color:var(--ink-dim);font-size:10px;margin:0}
+  .lock-inline{
+    display:inline-flex;align-items:center;gap:4px;margin-left:4px;flex-shrink:0;
+  }
+  .lock-inline .ovr{
+    font-family:'Anton',sans-serif;font-size:12px;color:var(--gold);line-height:1;
+  }
+  .roster-col.lost .lock-inline .ovr{color:var(--coral)}
+  .trade-stars{
+    display:inline-flex;align-items:center;gap:1px;
+    font-size:10px;letter-spacing:0;color:var(--gold);white-space:nowrap;
+    line-height:1;height:1em;vertical-align:middle;
+  }
+  .roster-col.lost .trade-stars{color:var(--coral)}
+  .trade-stars .star{
+    display:inline-flex;align-items:center;justify-content:flex-start;
+    width:.82em;height:1em;line-height:1;overflow:hidden;flex:0 0 auto;
+  }
+  .trade-stars .star.half{width:.41em}
+
+  .report{margin-top:8px}
+  .report[hidden]{display:none}
+</style>
+</head>
+<body>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
+
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><span class="gm">Patio Boys <em>HQ</em></span><span>Off-season Report</span></div>
+    <span id="progressTag">Loading</span>
+  </div>
+  <p class="status" id="status">Loading off-season moves…</p>
+  <div class="report" id="report" hidden></div>
+</div>
+
+<script>
+(function(){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-offseason-franchise';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
+    document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
+  });
+})();
+</script>
+<script>
+const LEAGUE_ID = '1350649177381552128';
+const MY_TEAM = 'Freakonomics';
+const TEAM_COLORS = {
+  'Funeral Home':'#C9963A','BoobieDominguez':'#1D9E75','2011-12 Champs':'#D8553A',
+  'Freakonomics':'#7F77DD','Papa Book':'#D4537E','Bam Add the Mayo':'#3A8FC9',
+  'Hamas':'#9B59B6','Belt':'#5DBB63'
+};
+
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function letterToPoints(g){
+  return ({'A+':97,'A':93,'B+':87,'B':83,'C+':77,'C':73,'D':65,'F':50})[g] || null;
+}
+function pointsToLetter(pts){
+  if (pts == null || !Number.isFinite(pts)) return '—';
+  if (pts >= 95) return 'A+';
+  if (pts >= 90) return 'A';
+  if (pts >= 85) return 'B+';
+  if (pts >= 80) return 'B';
+  if (pts >= 75) return 'C+';
+  if (pts >= 70) return 'C';
+  if (pts >= 60) return 'D';
+  return 'F';
+}
+function avgPoints(grades){
+  const pts = (grades || []).map(letterToPoints).filter(v => v != null);
+  if (!pts.length) return null;
+  return pts.reduce((s, v) => s + v, 0) / pts.length;
+}
+function playerName(p, pid){
+  if (!p) return 'Player ' + pid;
+  if (p.full_name) return p.full_name;
+  const n = ((p.first_name || '') + ' ' + (p.last_name || '')).trim();
+  return n || ('Player ' + pid);
+}
+function lockInlineHtml(lockOvr, tradeStars, lost){
+  if (lockOvr == null) return '';
+  const stars = (window.LockInDist && LockInDist.formatStarsHtml)
+    ? LockInDist.formatStarsHtml(tradeStars, {className: 'trade-stars'})
+    : '';
+  return '<span class="lock-inline" title="Lock OVR ' + Math.round(lockOvr) + '">'
+    + '<span class="ovr">' + Math.round(lockOvr) + '</span>' + stars + '</span>';
+}
+
+function pickLetterFromBoard(rank, efficiency){
+  if (rank <= 1 || efficiency >= 0.98) return 'A+';
+  if (rank <= 2 || efficiency >= 0.93) return 'A';
+  if (rank <= 3 || efficiency >= 0.88) return 'B+';
+  if (rank <= 5 || efficiency >= 0.80) return 'B';
+  if (rank <= 8 || efficiency >= 0.70) return 'C+';
+  if (efficiency >= 0.58) return 'C';
+  if (efficiency >= 0.45) return 'D';
+  return 'F';
+}
+
+/* Team-centric trade grade: how their haul compared to what they gave up. */
+function teamTradeGrade(received, given){
+  const r = Number(received) || 0;
+  const g = Number(given) || 0;
+  if (r <= 0 && g <= 0) return null;
+  if (g <= 0) return 'A+';
+  if (r <= 0) return 'F';
+  /* Favor the side that won value: map received/given onto letters. */
+  const haul = r / g;
+  if (haul >= 1.18) return 'A+';
+  if (haul >= 1.08) return 'A';
+  if (haul >= 1.00) return 'B+';
+  if (haul >= 0.92) return 'B';
+  if (haul >= 0.82) return 'C+';
+  if (haul >= 0.70) return 'C';
+  if (haul >= 0.55) return 'D';
+  return 'F';
+}
+
+function upsertPlayer(map, pid, name, src, lockOvr, tradeStars, tradeScore){
+  const id = String(pid);
+  const prev = map.get(id);
+  if (prev){
+    if (src && prev.sources.indexOf(src) < 0) prev.sources.push(src);
+    if (lockOvr != null && (prev.lockOvr == null || lockOvr > prev.lockOvr)){
+      prev.lockOvr = lockOvr;
+      prev.tradeStars = tradeStars;
+      prev.tradeScore = tradeScore;
+    }
+    return;
+  }
+  map.set(id, {
+    pid: id,
+    name: name || ('Player ' + id),
+    sources: src ? [src] : [],
+    lockOvr: lockOvr != null ? lockOvr : null,
+    tradeStars: tradeStars != null ? tradeStars : null,
+    tradeScore: tradeScore != null ? tradeScore : null
+  });
+}
+
+function sortPlayers(map){
+  return Array.from(map.values()).sort((a, b) =>
+    (b.tradeScore || 0) - (a.tradeScore || 0)
+    || (b.lockOvr || 0) - (a.lockOvr || 0)
+    || a.name.localeCompare(b.name)
+  );
+}
+
+function renderPlayerList(players, lost){
+  if (!players.length){
+    return '<p class="empty-note">None</p>';
+  }
+  return '<ul>' + players.map(p => {
+    const src = (p.sources || []).join('/');
+    return '<li><span>' + escapeHtml(p.name)
+      + (src ? '<span class="src">' + escapeHtml(src) + '</span>' : '')
+      + '</span>'
+      + lockInlineHtml(p.lockOvr, p.tradeStars, lost)
+      + '</li>';
+  }).join('') + '</ul>';
+}
+
+async function gradeDraft(league, playerDb, onProgress){
+  const draftId = league.draft_id;
+  if (!draftId) return { byFranchise: {}, draftStatus: null, pickCount: 0 };
+
+  onProgress('Loading draft picks…');
+  const [draft, picks, users, rosters] = await Promise.all([
+    fetch('https://api.sleeper.app/v1/draft/' + draftId).then(r => r.ok ? r.json() : null),
+    fetch('https://api.sleeper.app/v1/draft/' + draftId + '/picks').then(r => r.ok ? r.json() : []),
+    fetch('https://api.sleeper.app/v1/league/' + league.league_id + '/users').then(r => r.ok ? r.json() : []),
+    fetch('https://api.sleeper.app/v1/league/' + league.league_id + '/rosters').then(r => r.ok ? r.json() : [])
+  ]);
+  const ordered = (Array.isArray(picks) ? picks : []).slice()
+    .sort((a, b) => (a.pick_no || 0) - (b.pick_no || 0));
+  if (!ordered.length){
+    return { byFranchise: {}, draftStatus: draft && draft.status, pickCount: 0 };
+  }
+
+  const userById = {};
+  (users || []).forEach(u => { userById[u.user_id] = u; });
+  const franchiseByRoster = {};
+  (rosters || []).forEach(r => {
+    const u = userById[r.owner_id] || {};
+    const raw = (u.metadata && u.metadata.team_name) || u.display_name || ('Roster ' + r.roster_id);
+    const franchise = (window.PatioBoysTransactions && PatioBoysTransactions.franchiseKey)
+      ? PatioBoysTransactions.franchiseKey(raw, u.display_name)
+      : raw;
+    franchiseByRoster[String(r.roster_id)] = franchise;
+  });
+
+  const scoring = league.scoring_settings || {};
+  let statsSeason = league.season;
+  if (league.previous_league_id){
+    try {
+      const prev = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id).then(r => r.ok ? r.json() : null);
+      if (prev && prev.season) statsSeason = prev.season;
+    } catch (e){ /* keep */ }
+  }
+
+  const draftedIds = ordered.map(p => String(p.player_id)).filter(Boolean);
+  onProgress('Scoring draft class Lock / Trade ★…');
+  const pack = await LockInDist.fetchLockValueIndex({
+    scoring,
+    statsSeason,
+    playerDb,
+    playerIds: draftedIds,
+    twoKSnapshot: window.TWO_K_SNAPSHOT || null
+  });
+  const dist = (pack && pack.distMap) || {};
+
+  const board = ordered.map(pk => {
+    const pid = String(pk.player_id);
+    const lock = dist[pid] || dist[String(pid)] || {};
+    const franchise = franchiseByRoster[String(pk.roster_id)] || ('Roster ' + pk.roster_id);
+    return {
+      pick: pk.pick_no,
+      round: pk.round,
+      pid,
+      name: playerName(playerDb[pid], pid),
+      franchise,
+      rosterId: String(pk.roster_id),
+      tradeScore: lock.tradeScore != null ? Number(lock.tradeScore) : 0,
+      lockOvr: lock.lockOvr != null ? lock.lockOvr : null,
+      tradeStars: lock.tradeStars != null ? lock.tradeStars : null
+    };
+  });
+
+  const taken = new Set();
+  const byFranchise = {};
+  board.forEach(pick => {
+    const available = board.filter(p => !taken.has(p.pid))
+      .sort((a, b) => b.tradeScore - a.tradeScore);
+    const selected = available.find(p => p.pid === pick.pid) || pick;
+    const best = available[0];
+    const rank = Math.max(1, available.findIndex(p => p.pid === pick.pid) + 1 || available.length);
+    const efficiency = best && best.tradeScore > 0
+      ? selected.tradeScore / best.tradeScore
+      : 0;
+    const grade = pickLetterFromBoard(rank, efficiency);
+    const slot = byFranchise[pick.franchise] || (byFranchise[pick.franchise] = {
+      grades: [],
+      picks: [],
+      added: new Map()
+    });
+    slot.grades.push(grade);
+    slot.picks.push({
+      pick: pick.pick,
+      name: pick.name,
+      grade,
+      rank,
+      lockOvr: pick.lockOvr,
+      tradeStars: pick.tradeStars,
+      tradeScore: pick.tradeScore
+    });
+    upsertPlayer(slot.added, pick.pid, pick.name, 'Draft', pick.lockOvr, pick.tradeStars, pick.tradeScore);
+    taken.add(pick.pid);
+  });
+
+  Object.keys(byFranchise).forEach(fr => {
+    const slot = byFranchise[fr];
+    slot.pts = avgPoints(slot.grades);
+    slot.letter = pointsToLetter(slot.pts);
+  });
+
+  return {
+    byFranchise,
+    draftStatus: draft && draft.status,
+    pickCount: board.length,
+    statsSeason: pack && pack.statsSeason
+  };
+}
+
+async function load(){
+  const status = document.getElementById('status');
+  const tag = document.getElementById('progressTag');
+  const report = document.getElementById('report');
+  try {
+    if (!window.PatioBoysTransactions || typeof PatioBoysTransactions.compute !== 'function'){
+      throw new Error('Transactions module unavailable');
+    }
+    if (!window.LockInDist || typeof LockInDist.fetchLockValueIndex !== 'function'){
+      throw new Error('LockInDist unavailable');
+    }
+
+    status.textContent = 'Loading league and off-season transactions…';
+    const pack = await PatioBoysTransactions.compute(LEAGUE_ID, {
+      onProgress: msg => { status.textContent = msg; }
+    });
+    const season = String(pack.currentSeason);
+    const offseasonRows = (pack.rows || []).filter(r => String(r.season) === season);
+
+    const leagueRes = await fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID);
+    if (!leagueRes.ok) throw new Error('League fetch failed');
+    const league = await leagueRes.json();
+    const playerDb = await fetch('https://api.sleeper.app/v1/players/nba').then(r => r.json());
+
+    const draftPack = await gradeDraft(league, playerDb, msg => { status.textContent = msg; });
+
+    /* Seed team cards from known franchises + anyone who moved. */
+    const teams = {};
+    function ensureTeam(franchise, manager){
+      if (!franchise) return null;
+      if (!teams[franchise]){
+        teams[franchise] = {
+          team: franchise,
+          manager: manager || '',
+          draftPts: null,
+          draftLetter: '—',
+          draftPicks: 0,
+          wireGrades: [],
+          tradeGrades: [],
+          added: new Map(),
+          lost: new Map(),
+          wireCount: 0,
+          tradeCount: 0
+        };
+      }
+      return teams[franchise];
+    }
+    (pack.teams || []).forEach(t => ensureTeam(t.franchise || t.team, t.manager));
+    Object.keys(TEAM_COLORS).forEach(fr => ensureTeam(fr));
+    Object.keys(draftPack.byFranchise || {}).forEach(fr => {
+      const t = ensureTeam(fr);
+      const d = draftPack.byFranchise[fr];
+      t.draftPts = d.pts;
+      t.draftLetter = d.letter;
+      t.draftPicks = d.picks.length;
+      sortPlayers(d.added).forEach(p => {
+        upsertPlayer(t.added, p.pid, p.name, 'Draft', p.lockOvr, p.tradeStars, p.tradeScore);
+      });
+    });
+
+    offseasonRows.forEach(row => {
+      if (row.type === 'trade'){
+        (row.sides || []).forEach(side => {
+          const t = ensureTeam(side.franchise || side.team, side.manager);
+          if (!t) return;
+          t.tradeCount += 1;
+          let received = 0;
+          (side.assets || []).forEach(a => {
+            if (a.graded && a.dynasty != null) received += a.dynasty;
+            const pid = a.kind === 'player' ? a.pid : a.resolvedPid;
+            if (!pid) return;
+            upsertPlayer(t.added, pid, a.name || a.label, 'Trade',
+              null, a.tradeStars, a.dynasty);
+          });
+          /* Counterpart assets = what this side gave up. */
+          const others = (row.sides || []).filter(s => s.rosterId !== side.rosterId);
+          let given = 0;
+          others.forEach(opp => {
+            (opp.assets || []).forEach(a => {
+              if (a.graded && a.dynasty != null) given += a.dynasty;
+              const pid = a.kind === 'player' ? a.pid : a.resolvedPid;
+              if (!pid) return;
+              upsertPlayer(t.lost, pid, a.name || a.label, 'Trade',
+                null, a.tradeStars, a.dynasty);
+            });
+          });
+          const g = teamTradeGrade(received, given);
+          if (g) t.tradeGrades.push(g);
+        });
+        return;
+      }
+
+      /* Waiver / free_agent */
+      const side = (row.sides && row.sides[0]) || null;
+      if (!side) return;
+      const t = ensureTeam(side.franchise || side.team || row.teams && row.teams[0], side.manager);
+      if (!t) return;
+      t.wireCount += 1;
+      if (row.grade) t.wireGrades.push(row.grade);
+      (side.assets || side.adds || []).forEach(a => {
+        const pid = a.pid || a.resolvedPid;
+        if (!pid) return;
+        upsertPlayer(t.added, pid, a.name || a.label, row.type === 'waiver' ? 'Waiver' : 'FA',
+          null, a.tradeStars, a.dynasty);
+      });
+      (side.drops || []).forEach(a => {
+        const pid = a.pid;
+        if (!pid) return;
+        upsertPlayer(t.lost, pid, a.name || a.label, 'Drop',
+          null, a.tradeStars, a.dynasty);
+      });
+    });
+
+    /* Enrich added/lost Lock OVR when missing (trade/waiver rows may only have tradeScore). */
+    const enrichIds = new Set();
+    Object.values(teams).forEach(t => {
+      sortPlayers(t.added).concat(sortPlayers(t.lost)).forEach(p => {
+        if (p.lockOvr == null) enrichIds.add(p.pid);
+      });
+    });
+    if (enrichIds.size && window.LockInDist){
+      status.textContent = 'Attaching Lock OVR on roster moves…';
+      let statsSeason = league.season;
+      if (league.previous_league_id){
+        try {
+          const prev = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id).then(r => r.ok ? r.json() : null);
+          if (prev && prev.season) statsSeason = prev.season;
+        } catch (e){ /* keep */ }
+      }
+      try {
+        const enrich = await LockInDist.fetchLockValueIndex({
+          scoring: league.scoring_settings || {},
+          statsSeason,
+          playerDb,
+          playerIds: Array.from(enrichIds),
+          twoKSnapshot: window.TWO_K_SNAPSHOT || null
+        });
+        const dist = (enrich && enrich.distMap) || {};
+        Object.values(teams).forEach(t => {
+          [t.added, t.lost].forEach(map => {
+            map.forEach(p => {
+              const lock = dist[p.pid] || dist[String(p.pid)];
+              if (!lock) return;
+              if (p.lockOvr == null && lock.lockOvr != null) p.lockOvr = lock.lockOvr;
+              if (p.tradeStars == null && lock.tradeStars != null) p.tradeStars = lock.tradeStars;
+              if (p.tradeScore == null && lock.tradeScore != null) p.tradeScore = lock.tradeScore;
+            });
+          });
+        });
+      } catch (e){ /* display without Lock */ }
+    }
+
+    const rows = Object.values(teams).map(t => {
+      const wirePts = avgPoints(t.wireGrades);
+      const tradePts = avgPoints(t.tradeGrades);
+      const parts = [];
+      /* Draft weighs heaviest in off-season; then trades; then wire churn. */
+      if (t.draftPts != null) parts.push({ pts: t.draftPts, w: 0.45 });
+      if (tradePts != null) parts.push({ pts: tradePts, w: 0.35 });
+      if (wirePts != null) parts.push({ pts: wirePts, w: 0.20 });
+      let overallPts = null;
+      if (parts.length){
+        const wSum = parts.reduce((s, p) => s + p.w, 0);
+        overallPts = parts.reduce((s, p) => s + p.pts * p.w, 0) / wSum;
+      }
+      const added = sortPlayers(t.added);
+      const lost = sortPlayers(t.lost);
+      const net = added.reduce((s, p) => s + (p.tradeScore || 0), 0)
+        - lost.reduce((s, p) => s + (p.tradeScore || 0), 0);
+
+      let why = '';
+      if (t.draftPicks){
+        why += 'Draft ' + t.draftLetter + ' across ' + t.draftPicks + ' pick'
+          + (t.draftPicks === 1 ? '' : 's');
+      }
+      if (t.tradeCount){
+        why += (why ? ' · ' : '') + t.tradeCount + ' trade'
+          + (t.tradeCount === 1 ? '' : 's') + ' (' + pointsToLetter(tradePts) + ')';
+      }
+      if (t.wireCount){
+        why += (why ? ' · ' : '') + t.wireCount + ' wire move'
+          + (t.wireCount === 1 ? '' : 's') + ' (' + pointsToLetter(wirePts) + ')';
+      }
+      if (!why) why = 'No graded off-season moves yet';
+      why += '.';
+
+      return {
+        team: t.team,
+        manager: t.manager,
+        draftLetter: t.draftLetter,
+        wireLetter: pointsToLetter(wirePts),
+        tradeLetter: pointsToLetter(tradePts),
+        overallPts,
+        grade: pointsToLetter(overallPts),
+        added,
+        lost,
+        net,
+        why,
+        activity: t.draftPicks + t.tradeCount + t.wireCount
+      };
+    }).filter(r => r.activity > 0 || TEAM_COLORS[r.team])
+      .sort((a, b) =>
+        (b.overallPts != null ? b.overallPts : -1) - (a.overallPts != null ? a.overallPts : -1)
+        || b.net - a.net
+        || a.team.localeCompare(b.team)
+      );
+
+    rows.forEach((r, i) => { r.rank = i + 1; });
+
+    const mine = rows.find(r => r.team === MY_TEAM);
+    tag.textContent = 'S' + String(season).slice(2) + '–' + String(Number(season) + 1).slice(2)
+      + ' · ' + offseasonRows.length + ' moves'
+      + (draftPack.pickCount ? ' · ' + draftPack.pickCount + ' draft picks' : '');
+    status.classList.remove('error');
+    status.textContent = 'Off-season grades blend Draft (Lock/Trade BPA), Trades (haul value), and Wire / FA (roster-fit)'
+      + (mine && mine.grade !== '—' ? ' · ' + MY_TEAM + ' ' + mine.grade + ' (#' + mine.rank + ')' : '')
+      + '.';
+
+    report.hidden = false;
+    report.innerHTML = '<div class="report-head"><h1>Off-season Report Card</h1><p>'
+      + 'Draft · Wire · Trades · season ' + escapeHtml(season)
+      + (mine && mine.grade !== '—' ? ' · you ' + mine.grade : '')
+      + '</p></div><div class="grade-grid">'
+      + rows.map(r => {
+        return '<article class="grade-card' + (r.team === MY_TEAM ? ' mine' : '')
+          + '" style="--team-color:' + (TEAM_COLORS[r.team] || 'var(--gold)') + '">'
+          + '<div class="g-top"><h3 class="g-team">' + escapeHtml(r.team)
+          + (r.team === MY_TEAM ? ' (you)' : '') + '</h3>'
+          + '<div class="g-letter">' + escapeHtml(r.grade) + '</div></div>'
+          + '<p class="g-meta">#' + r.rank + ' of ' + rows.length
+          + ' · net Trade score <span class="up">' + (r.net >= 0 ? '+' : '') + r.net.toFixed(0) + '</span></p>'
+          + '<div class="g-split">'
+          + '<span>Draft <span class="' + (r.draftLetter === '—' ? 'dim' : 'hi') + '">' + escapeHtml(r.draftLetter) + '</span></span>'
+          + '<span>Wire <span class="' + (r.wireLetter === '—' ? 'dim' : 'hi') + '">' + escapeHtml(r.wireLetter) + '</span></span>'
+          + '<span>Trades <span class="' + (r.tradeLetter === '—' ? 'dim' : 'hi') + '">' + escapeHtml(r.tradeLetter) + '</span></span>'
+          + '</div>'
+          + '<p class="g-why">' + escapeHtml(r.why) + '</p>'
+          + '<div class="roster-split">'
+          + '<div class="roster-col added"><h4>Players added</h4>'
+          + renderPlayerList(r.added, false) + '</div>'
+          + '<div class="roster-col lost"><h4>Players lost</h4>'
+          + renderPlayerList(r.lost, true) + '</div>'
+          + '</div>'
+          + '</article>';
+      }).join('')
+      + '</div>';
+  } catch (e){
+    status.classList.add('error');
+    status.textContent = 'Could not build off-season report: ' + (e.message || e);
+    tag.textContent = 'Error';
+  }
+}
+
+load();
+</script>
+</body>
+</html>

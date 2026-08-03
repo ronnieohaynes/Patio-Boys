@@ -494,6 +494,7 @@
         <button class="nav-sub" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa" data-group="moves" data-tab="fa" hidden>FA</button>
         <button class="nav-sub" id="tabBtnTx" type="button" role="tab" aria-selected="false" aria-controls="tabTx" data-group="moves" data-tab="tx" hidden>Transactions</button>
         <button class="nav-sub" id="tabBtnTrade" type="button" role="tab" aria-selected="false" aria-controls="tabTrade" data-group="moves" data-tab="trade" hidden>Analyzer</button>
+        <button class="nav-sub" id="tabBtnOffseason" type="button" role="tab" aria-selected="false" aria-controls="tabOffseason" data-group="moves" data-tab="offseason" hidden>Report</button>
         <button class="nav-sub" id="tabBtnBoard" type="button" role="tab" aria-selected="false" aria-controls="tabBoard" data-group="draft" data-tab="board" hidden>Board</button>
         <button class="nav-sub" id="tabBtnGrades" type="button" role="tab" aria-selected="false" aria-controls="tabGrades" data-group="draft" data-tab="grades" hidden>Grades</button>
         <button class="nav-sub" id="tabBtnMock" type="button" role="tab" aria-selected="false" aria-controls="tabMock" data-group="draft" data-tab="mock" hidden>Mock</button>
@@ -573,6 +574,9 @@
     </div>
     <div class="boardsection status-panel" id="tabTrade" role="tabpanel" aria-labelledby="tabBtnTrade" hidden>
       <iframe class="status-frame" id="tradeAnalyzerFrame" title="Trade Analyzer" src="about:blank"></iframe>
+    </div>
+    <div class="boardsection status-panel" id="tabOffseason" role="tabpanel" aria-labelledby="tabBtnOffseason" hidden>
+      <iframe class="status-frame" id="offseasonReportFrame" title="Off-season Report Card" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabGrades" role="tabpanel" aria-labelledby="tabBtnGrades" hidden>
       <iframe class="status-frame" id="draftGradesFrame" title="Draft Grades" src="about:blank"></iframe>
@@ -2354,8 +2358,9 @@ const HQ_NAV = {
     defaultTab: 'fa',
     tabs: {
       fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',     src: 'free-agents.html?embed=1&v=20260803-fa-lock',     loaded: 'faFrameLoaded' },
-      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',   src: 'transactions.html?embed=1&v=20260803-star-align',    loaded: 'txFrameLoaded' },
-      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame',  src: 'trade-analyzer.html?embed=1&v=20260803-star-align',    loaded: 'tradeFrameLoaded' }
+      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',   src: 'transactions.html?embed=1&v=20260803-franchise-fix',    loaded: 'txFrameLoaded' },
+      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame',  src: 'trade-analyzer.html?embed=1&v=20260803-star-align',    loaded: 'tradeFrameLoaded' },
+      offseason: { panel: 'tabOffseason', btn: 'tabBtnOffseason', frame: 'offseasonReportFrame', src: 'offseason-report.html?embed=1&v=20260803-offseason-franchise', loaded: 'offseasonFrameLoaded' }
     }
   },
   draft: {
@@ -2390,6 +2395,7 @@ const hqFrameLoaded = {
   faFrameLoaded: false,
   txFrameLoaded: false,
   tradeFrameLoaded: false,
+  offseasonFrameLoaded: false,
   charterFrameLoaded: false
 };
 /* Back-compat aliases used elsewhere in this file. */
@@ -2401,6 +2407,7 @@ let gradesFrameLoaded = false;
 let faFrameLoaded = false;
 let txFrameLoaded = false;
 let tradeFrameLoaded = false;
+let offseasonFrameLoaded = false;
 let charterFrameLoaded = false;
 
 function syncFrameLoadedFlags(){
@@ -2412,6 +2419,7 @@ function syncFrameLoadedFlags(){
   faFrameLoaded = hqFrameLoaded.faFrameLoaded;
   txFrameLoaded = hqFrameLoaded.txFrameLoaded;
   tradeFrameLoaded = hqFrameLoaded.tradeFrameLoaded;
+  offseasonFrameLoaded = hqFrameLoaded.offseasonFrameLoaded;
   charterFrameLoaded = hqFrameLoaded.charterFrameLoaded;
 }
 

@@ -14,9 +14,11 @@
   const TEAM_ALIASES = {
     '20112012champs':'2011-12 Champs',
     'thehitmanharts':'BoobieDominguez',
+    'boobiedominguez':'BoobieDominguez',
     'badgersretirementhome':'Funeral Home',
     'belt':'Belt',
-    '5iveonit':'Belt',
+    /* Boobie currently uses this Sleeper team name; was previously aliased to Belt. */
+    '5iveonit':'BoobieDominguez',
     'lovecadecountry':'Belt',
     /* manager display names → franchise */
     'aliofdan':'Belt',
@@ -64,14 +66,17 @@
     return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   }
   function franchiseKey(teamName, managerName){
+    /* Prefer manager identity — Sleeper team names get reused across franchises. */
+    const byMgr = normalizeTeamName(managerName || '');
+    if (byMgr && TEAM_ALIASES[byMgr]) return TEAM_ALIASES[byMgr];
+    const mgrMatch = byMgr
+      ? Object.keys(TEAM_COLORS).find(k => normalizeTeamName(k) === byMgr)
+      : null;
+    if (mgrMatch) return mgrMatch;
     const norm = normalizeTeamName(teamName);
     if (TEAM_ALIASES[norm]) return TEAM_ALIASES[norm];
     const match = Object.keys(TEAM_COLORS).find(k => normalizeTeamName(k) === norm);
     if (match) return match;
-    const byMgr = normalizeTeamName(managerName || '');
-    if (TEAM_ALIASES[byMgr]) return TEAM_ALIASES[byMgr];
-    const mgrMatch = Object.keys(TEAM_COLORS).find(k => normalizeTeamName(k) === byMgr);
-    if (mgrMatch) return mgrMatch;
     return teamName || managerName || 'Unknown';
   }
 
