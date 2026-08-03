@@ -223,13 +223,30 @@
   /* ---- Smash-hunting Lock OVR (Intel) ----
      Raw smash base = 0.40·Avg + 0.30·Ceil + 0.30·(40·P≥40 + 50·P≥50)
      Rookies / thin samples fall back to projected FP/G.
-     Lock OVR maps smash base → 50–99 by percentile (2K-style; active floor 50).
+     Lock OVR maps smash base → 50–99 on an ABSOLUTE curve (not pool
+     percentile — percentile vs all NBA stuffed every roster guy into the 90s).
      Age / injury stay off OVR — those belong on Trade stars later. */
   const SMASH_WEIGHTS = { avg: 0.40, ceil: 0.30, hit: 0.30 };
   const MIN_SAMPLES_FOR_SMASH = 5;
   const LOCK_OVR_FLOOR = 50;
   const LOCK_OVR_CEIL = 99;
   const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
+
+  /* Absolute smash-base → OVR anchors (2K reading):
+     50 Depth · 60 Rotation · 70 Solid · 80 Strong · 85 All-Star · 90 Superstar · 95 MVP */
+  const LOCK_OVR_ANCHORS = [
+    {base: 10, ovr: 50},
+    {base: 16, ovr: 58},
+    {base: 20, ovr: 65},
+    {base: 24, ovr: 72},
+    {base: 28, ovr: 78},
+    {base: 31, ovr: 82},
+    {base: 34, ovr: 85},
+    {base: 37, ovr: 88},
+    {base: 40, ovr: 91},
+    {base: 44, ovr: 95},
+    {base: 50, ovr: 99}
+  ];
 
   function smashHitScore(dist){
     const h = (dist && dist.hits) || {};
@@ -259,7 +276,25 @@
     return 1;
   }
 
-  /* Percentile 0→1 → Lock OVR in [50, 99]. */
+  /* Piecewise-linear absolute curve; clamps to [50, 99]. */
+  function ovrFromSmashBase(base){
+    const b = Number(base);
+    if (!Number.isFinite(b)) return null;
+    const anchors = LOCK_OVR_ANCHORS;
+    if (b <= anchors[0].base) return LOCK_OVR_FLOOR;
+    if (b >= anchors[anchors.length - 1].base) return LOCK_OVR_CEIL;
+    for (let i = 0; i < anchors.length - 1; i++){
+      const a = anchors[i];
+      const c = anchors[i + 1];
+      if (b >= a.base && b <= c.base){
+        const t = (b - a.base) / (c.base - a.base);
+        return Math.round(a.ovr + t * (c.ovr - a.ovr));
+      }
+    }
+    return LOCK_OVR_FLOOR;
+  }
+
+  /* @deprecated — kept for callers; prefer ovrFromSmashBase. */
   function ovrFromPercentile(pct){
     const p = Math.max(0, Math.min(1, Number(pct) || 0));
     return Math.round(LOCK_OVR_FLOOR + p * (LOCK_OVR_CEIL - LOCK_OVR_FLOOR));
@@ -301,13 +336,13 @@
     return Number.isFinite(v) && v > 0 ? v : null;
   }
 
-  /* Mutates each dist with lockBase / lockOvr / lockTier / lockPct.
-     OVR is pure smash production (no age/injury). */
+  /* Mutates each dist with lockBase / lockOvr / lockTier.
+     OVR is pure smash production on an absolute curve (no age/injury). */
   function attachLockValues(distMap, opts){
     const options = opts || {};
     const playerDb = options.playerDb || {};
     const projById = options.projById || null;
-    const scored = [];
+    let count = 0;
 
     Object.keys(distMap || {}).forEach(pid => {
       const d = distMap[pid];
@@ -335,34 +370,27 @@
         d.lockBase = null;
         d.lockOvr = null;
         d.lockTier = null;
+        d.lockTierLabel = null;
         d.lockScore = null;
         d.lockStars = null;
+        d.lockPct = null;
         return;
       }
 
+      const ovr = ovrFromSmashBase(base);
+      const tier = lockOvrTier(ovr);
       d.lockBase = base;
       d.lockBaseSource = baseSource;
       d.lockAgeBand = lockAgeBand(p.age, isRookie);
-      scored.push({pid, base});
-    });
-
-    const sorted = scored.map(s => s.base).sort((a, b) => a - b);
-    scored.forEach(({pid, base}) => {
-      const d = distMap[pid];
-      let lo = 0;
-      for (let i = 0; i < sorted.length; i++) if (sorted[i] < base) lo = i + 1;
-      const pct = sorted.length <= 1 ? 1 : lo / (sorted.length - 1);
-      const ovr = ovrFromPercentile(pct);
-      const tier = lockOvrTier(ovr);
-      d.lockPct = pct;
       d.lockOvr = ovr;
       d.lockTier = tier.key;
       d.lockTierLabel = tier.label;
-      /* Keep score alias = OVR for sort callers; stars reserved for trades later. */
       d.lockScore = ovr;
       d.lockStars = null;
+      d.lockPct = null;
+      count++;
     });
-    return scored.length;
+    return count;
   }
 
   global.LockInDist = {
@@ -372,6 +400,7 @@
     MIN_SAMPLES_FOR_SMASH,
     LOCK_OVR_FLOOR,
     LOCK_OVR_CEIL,
+    LOCK_OVR_ANCHORS,
     AGE_MULT,
     normalCdf,
     normalHitRate,
@@ -388,6 +417,7 @@
     smashLockBase,
     lockAgeBand,
     injuryStatusMult,
+    ovrFromSmashBase,
     ovrFromPercentile,
     lockOvrTier,
     starsFromPercentile,
