@@ -121,15 +121,16 @@
     letter-spacing:.04em;text-transform:uppercase;color:var(--ink-dim);margin-top:2px;
   }
   td.trade .trade-stars{
-    display:inline-flex;align-items:center;gap:0;
-    font-size:13px;letter-spacing:0;color:var(--gold);white-space:nowrap;line-height:1;height:1em;
+    display:inline-flex;align-items:center;gap:1px;
+    font-size:14px;letter-spacing:0;color:var(--gold);white-space:nowrap;
+    line-height:1;height:1em;vertical-align:middle;
   }
   td.trade .trade-stars .star{
-    display:inline-block;width:1em;height:1em;line-height:1;
-    overflow:hidden;flex:0 0 auto;text-align:left;
+    display:inline-flex;align-items:center;justify-content:flex-start;
+    width:.9em;height:1em;line-height:1;font-size:1em;
+    overflow:hidden;flex:0 0 auto;
   }
-  td.trade .trade-stars .star.half{width:.5em}
-  td.trade .trade-stars .star.empty{color:var(--ink-dim);opacity:.4}
+  td.trade .trade-stars .star.half{width:.45em}
   td.fit{font-size:12px;color:#C9CDD8}
   td.fit .slot{color:var(--green)}
   tr.mine td{background:color-mix(in srgb, var(--gold) 7%, transparent)}
@@ -224,7 +225,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-fa-lock';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-fa-stars-clean';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });

@@ -278,16 +278,16 @@
     letter-spacing:.04em;text-transform:uppercase;color:var(--ink-dim);margin-top:2px;
   }
   table.lockin .trade-stars{
-    display:inline-flex;align-items:center;gap:0;
-    font-size:13px;letter-spacing:0;color:var(--gold);white-space:nowrap;line-height:1;
-    height:1em;
+    display:inline-flex;align-items:center;gap:1px;
+    font-size:14px;letter-spacing:0;color:var(--gold);white-space:nowrap;
+    line-height:1;height:1em;vertical-align:middle;
   }
   table.lockin .trade-stars .star{
-    display:inline-block;width:1em;height:1em;line-height:1;
-    overflow:hidden;flex:0 0 auto;text-align:left;
+    display:inline-flex;align-items:center;justify-content:flex-start;
+    width:.9em;height:1em;line-height:1;font-size:1em;
+    overflow:hidden;flex:0 0 auto;
   }
-  table.lockin .trade-stars .star.half{width:.5em}
-  table.lockin .trade-stars .star.empty{color:var(--ink-dim);opacity:.4}
+  table.lockin .trade-stars .star.half{width:.45em}
 
   /* trade intel */
   .trade-row{
@@ -367,7 +367,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-dynasty-top';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-stars-clean';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1067,9 +1067,8 @@ function renderLockIn(t){
       ? LockInDist.formatStarsHtml(filled, {className: 'trade-stars'})
       : (filled != null
         ? ('<span class="trade-stars" aria-label="' + filled + ' of 5">'
-          + Array.from({length: Math.floor(filled)}, () => '<span class="star full">★</span>').join('')
+          + Array.from({length: Math.floor(filled)}, () => '<span class="star full" aria-hidden="true">★</span>').join('')
           + (filled % 1 ? '<span class="star half" aria-hidden="true">★</span>' : '')
-          + Array.from({length: 5 - Math.ceil(filled)}, () => '<span class="star empty">☆</span>').join('')
           + '</span>')
         : '');
     const tradeCell = filled != null

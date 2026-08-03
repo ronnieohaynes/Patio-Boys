@@ -82,20 +82,19 @@
   }
   .asset .dv{color:var(--gold)}
   .asset .tx-stars{
-    display:inline-flex;align-items:center;gap:0;
-    color:var(--gold);letter-spacing:0;font-size:12px;white-space:nowrap;
-    line-height:1;height:1em;
+    display:inline-flex;align-items:center;gap:1px;
+    color:var(--gold);letter-spacing:0;font-size:13px;white-space:nowrap;
+    line-height:1;height:1em;vertical-align:middle;
   }
   .asset .tx-stars .star{
-    display:inline-block;width:1em;height:1em;line-height:1;
-    overflow:hidden;flex:0 0 auto;text-align:left;
+    display:inline-flex;align-items:center;justify-content:flex-start;
+    width:.9em;height:1em;line-height:1;font-size:1em;
+    overflow:hidden;flex:0 0 auto;
   }
-  .asset .tx-stars .star.half{width:.5em}
-  .asset .tx-stars .star.empty{color:var(--ink-dim);opacity:.4}
+  .asset .tx-stars .star.half{width:.45em}
   .asset.pending{color:var(--ink-dim)}
   .asset.drop{color:var(--coral)}
   .asset.drop .dv, .asset.drop .tx-stars{color:var(--coral)}
-  .asset.drop .tx-stars .star.empty{color:var(--ink-dim);opacity:.4}
   .empty{
     padding:28px;text-align:center;color:var(--ink-dim);
     font-family:'IBM Plex Mono',monospace;font-size:12px;
@@ -162,7 +161,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-star-align';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-stars-clean';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });

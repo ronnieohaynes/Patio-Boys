@@ -92,18 +92,17 @@
     white-space:nowrap;padding-top:2px;text-align:right;line-height:1.25;
   }
   .player-row .val .stars{
-    display:inline-flex;align-items:center;gap:0;
-    font-size:12px;letter-spacing:0;line-height:1;height:1em;
+    display:inline-flex;align-items:center;gap:1px;
+    font-size:13px;letter-spacing:0;line-height:1;height:1em;vertical-align:middle;
   }
   .player-row .val .stars .star,
   .side-card li .dv .stars .star{
-    display:inline-block;width:1em;height:1em;line-height:1;
-    overflow:hidden;flex:0 0 auto;text-align:left;
+    display:inline-flex;align-items:center;justify-content:flex-start;
+    width:.9em;height:1em;line-height:1;font-size:1em;
+    overflow:hidden;flex:0 0 auto;
   }
   .player-row .val .stars .star.half,
-  .side-card li .dv .stars .star.half{width:.5em}
-  .player-row .val .stars .star.empty,
-  .side-card li .dv .stars .star.empty{color:var(--ink-dim);opacity:.4}
+  .side-card li .dv .stars .star.half{width:.45em}
   .player-row .val .score{display:block;font-size:12px;font-weight:600}
   .player-row .val .ovr-mini{
     display:block;font-size:9px;color:var(--ink-dim);letter-spacing:.04em;text-transform:uppercase;
@@ -197,8 +196,8 @@
     font-family:'IBM Plex Mono',monospace;color:var(--gold);font-size:11px;text-align:right;line-height:1.25;
   }
   .side-card li .dv .stars{
-    display:inline-flex;align-items:center;gap:0;
-    font-size:12px;letter-spacing:0;line-height:1;height:1em;
+    display:inline-flex;align-items:center;gap:1px;
+    font-size:13px;letter-spacing:0;line-height:1;height:1em;vertical-align:middle;
   }
   .side-card li .dv .score{display:block}
   .side-card li .dv .ovr-mini{display:block;font-size:9px;color:var(--ink-dim)}
@@ -283,7 +282,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-star-align';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-stars-clean';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -648,11 +647,9 @@ function starsHtml(n){
   const stars = Math.max(1, Math.min(5, Math.round(raw * 2) / 2));
   const full = Math.floor(stars);
   const half = stars - full >= 0.5;
-  const empty = 5 - full - (half ? 1 : 0);
   let html = '<span class="stars" aria-label="' + stars + ' of 5">';
-  for (let i = 0; i < full; i++) html += '<span class="star full">★</span>';
+  for (let i = 0; i < full; i++) html += '<span class="star full" aria-hidden="true">★</span>';
   if (half) html += '<span class="star half" aria-hidden="true">★</span>';
-  for (let i = 0; i < empty; i++) html += '<span class="star empty">☆</span>';
   return html + '</span>';
 }
 

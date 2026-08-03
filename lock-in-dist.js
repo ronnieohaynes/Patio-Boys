@@ -425,28 +425,25 @@
     return Math.max(1, Math.min(5, stepped));
   }
 
-  /* Plain-text stars, e.g. ★★★★½☆ */
+  /* Plain-text stars — filled (+ optional ½) only, no empty ☆ clutter. */
   function formatStars(n){
     const stars = clampTradeStars(n);
     if (stars == null) return '—';
     const full = Math.floor(stars);
     const half = stars - full >= 0.5;
-    const empty = 5 - full - (half ? 1 : 0);
-    return '★'.repeat(full) + (half ? '½' : '') + '☆'.repeat(Math.max(0, empty));
+    return '★'.repeat(full) + (half ? '½' : '');
   }
 
-  /* HTML stars: one flex slot per star so half glyphs stay level with full/empty. */
+  /* HTML stars: filled + half only. Empty ☆ were misaligned and noisy in tables. */
   function formatStarsHtml(n, opts){
     const stars = clampTradeStars(n);
     const cls = (opts && opts.className) || 'stars';
     if (stars == null) return '<span class="' + cls + ' dim">—</span>';
     const full = Math.floor(stars);
     const half = stars - full >= 0.5;
-    const empty = 5 - full - (half ? 1 : 0);
     let html = '<span class="' + cls + '" aria-label="' + stars + ' of 5">';
-    for (let i = 0; i < full; i++) html += '<span class="star full">★</span>';
+    for (let i = 0; i < full; i++) html += '<span class="star full" aria-hidden="true">★</span>';
     if (half) html += '<span class="star half" aria-hidden="true">★</span>';
-    for (let i = 0; i < empty; i++) html += '<span class="star empty">☆</span>';
     html += '</span>';
     return html;
   }
