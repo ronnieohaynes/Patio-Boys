@@ -303,6 +303,26 @@
     font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:var(--gold);
   }
   .prospect .proj.na{color:var(--ink-dim);font-weight:500}
+  .prospect .lock-val{
+    display:flex;flex-direction:column;align-items:flex-end;justify-content:center;
+    gap:2px;min-width:58px;flex-shrink:0;line-height:1;
+  }
+  .prospect .lock-ovr{
+    font-family:'Anton',sans-serif;font-size:15px;color:var(--gold);letter-spacing:.02em;
+  }
+  .prospect .lock-ovr.na{
+    color:var(--ink-dim);font-size:10px;font-family:'IBM Plex Mono',monospace;font-weight:500;
+  }
+  .prospect .trade-stars{
+    display:inline-flex;align-items:center;gap:1px;
+    font-size:11px;letter-spacing:0;color:var(--gold);white-space:nowrap;
+    line-height:1;height:1em;
+  }
+  .prospect .trade-stars .star{
+    display:inline-flex;align-items:center;justify-content:flex-start;
+    width:.82em;height:1em;line-height:1;overflow:hidden;flex:0 0 auto;
+  }
+  .prospect .trade-stars .star.half{width:.41em}
   .prospect .draftbtn{
     flex-shrink:0;background:var(--surface-2);border:1px solid var(--hairline);border-radius:5px;
     color:var(--ink);font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
@@ -428,8 +448,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260802';
-  ['2k-ratings-snapshot.js','team-needs.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-draft-lock';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -953,7 +973,47 @@ async function loadWaiverWire(){
     });
     const waiverPool = waivers.map(p => attachProjection(p, maps));
     const customs = state.customProspects.map(p => attachProjection({...p}, maps));
-    state.pool = sortPool(rookies.concat(waiverPool, customs).filter(p => !state.hiddenIds.includes(p.id)));
+    let pool = rookies.concat(waiverPool, customs).filter(p => !state.hiddenIds.includes(p.id));
+
+    /* Lock OVR / Trade ★ — same engine as Team Intel / FA (prior season smash). */
+    if (window.LockInDist && typeof LockInDist.fetchLockValueIndex === 'function'){
+      try {
+        let statsSeason = state.projSeason || league.season;
+        if (league.previous_league_id){
+          try {
+            const prevRes = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id);
+            if (prevRes.ok) statsSeason = (await prevRes.json()).season || statsSeason;
+          } catch (e){ /* keep */ }
+        }
+        const lockIds = pool.map(p => p.sleeperId).filter(Boolean);
+        Object.values(state.teamRosters || {}).forEach(ids => {
+          (ids || []).forEach(id => lockIds.push(String(id)));
+        });
+        const lockPack = await LockInDist.fetchLockValueIndex({
+          scoring: state.scoring,
+          statsSeason,
+          playerDb,
+          projById: maps.byId,
+          playerIds: lockIds,
+          twoKSnapshot: window.TWO_K_SNAPSHOT || null
+        });
+        const dist = lockPack.distMap || {};
+        state.lockStatsSeason = lockPack.statsSeason;
+        pool = pool.map(p => {
+          const lock = p.sleeperId ? (dist[p.sleeperId] || dist[String(p.sleeperId)]) : null;
+          return Object.assign({}, p, {
+            lockOvr: lock && lock.lockOvr != null ? lock.lockOvr : null,
+            lockTier: lock && lock.lockTierLabel ? lock.lockTierLabel : null,
+            tradeScore: lock && lock.tradeScore != null ? lock.tradeScore : null,
+            tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null
+          });
+        });
+      } catch (le){
+        state.lockError = le.message || String(le);
+      }
+    }
+
+    state.pool = sortPool(pool);
     state.projMatched = state.pool.filter(p => p.proj != null).length;
     state.needsReady = !!window.TeamNeedsModel && state.slots.length > 0
       && Object.keys(state.teamRosters).length === Object.keys(TEAM_PICKS).length;
@@ -2071,11 +2131,23 @@ function renderPool(){
     const projHtml = showProj != null
       ? '<span class="proj">' + (pros.proj != null ? 'Proj ' : 'Outlook ') + Number(showProj).toFixed(1) + ' FP/G</span>'
       : '<span class="proj na">\u2014</span>';
+    const lockHtml = pros.lockOvr != null
+      ? ('<span class="lock-val" title="' + escapeHtml(
+          'Lock OVR ' + pros.lockOvr
+          + (pros.lockTier ? ' · ' + pros.lockTier : '')
+          + (pros.tradeScore != null ? ' · trade ' + Number(pros.tradeScore).toFixed(1) : '')
+        ) + '"><span class="lock-ovr">' + Math.round(pros.lockOvr) + '</span>'
+        + (window.LockInDist && LockInDist.formatStarsHtml
+          ? LockInDist.formatStarsHtml(pros.tradeStars, {className: 'trade-stars'})
+          : '')
+        + '</span>')
+      : '<span class="lock-val"><span class="lock-ovr na">\u2014</span></span>';
     return '<div class="prospect' + (fit ? ' best-fit' : '') + '">'
       + '<span class="rk">' + (i + 1) + '</span>'
       + '<span class="pinfo"><span class="pname">' + escapeHtml(pros.name) + dynBadge + injBadge + fitBadge + '</span>'
       + '<span class="pmeta"><span class="source ' + source + '">' + sourceLabel + '</span><span class="pos">' + escapeHtml(pros.pos) + '</span> \u00b7 ' + escapeHtml(pros.note) + '</span></span>'
       + projHtml
+      + lockHtml
       + action
       + '<button class="delbtn" type="button" data-del="' + pros.id + '" title="Remove from pool" aria-label="Remove ' + escapeHtml(pros.name) + ' from pool">&times;</button>'
       + '</div>';

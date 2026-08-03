@@ -78,6 +78,24 @@
     background:color-mix(in srgb, var(--gold) 22%, transparent);color:var(--gold);
     font-size:8px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;vertical-align:2px;
   }
+  .grade-card .g-picks .lock,
+  .pick-row .lock-inline{
+    display:inline-flex;align-items:center;gap:5px;margin-left:6px;vertical-align:middle;
+  }
+  .grade-card .g-picks .lock .ovr,
+  .pick-row .lock-inline .ovr{
+    font-family:'Anton',sans-serif;font-size:13px;color:var(--gold);line-height:1;
+  }
+  .trade-stars{
+    display:inline-flex;align-items:center;gap:1px;
+    font-size:11px;letter-spacing:0;color:var(--gold);white-space:nowrap;
+    line-height:1;height:1em;vertical-align:middle;
+  }
+  .trade-stars .star{
+    display:inline-flex;align-items:center;justify-content:flex-start;
+    width:.82em;height:1em;line-height:1;overflow:hidden;flex:0 0 auto;
+  }
+  .trade-stars .star.half{width:.41em}
   .grade-card .g-split{
     display:flex;gap:10px;flex-wrap:wrap;margin:0 0 8px;
     font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
@@ -161,8 +179,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260802';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-draft-lock';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -511,7 +529,7 @@ function attachOvr(pick){
   return pick;
 }
 
-function makeBoardPlayer(pid, playerDb, projMaps, histById, sleeperMaps){
+function makeBoardPlayer(pid, playerDb, projMaps, histById, sleeperMaps, lockDist){
   const p = playerDb[pid] || {};
   const name = playerName(p);
   const metric = (projMaps.byId.get(String(pid))
@@ -524,6 +542,7 @@ function makeBoardPlayer(pid, playerDb, projMaps, histById, sleeperMaps){
     : null;
   const histMetric = histById && histById.get(String(pid)) != null
     ? histById.get(String(pid)) : null;
+  const lock = lockDist && (lockDist[pid] || lockDist[String(pid)]) || null;
   return attachOvr({
     id: String(pid),
     playerId: String(pid),
@@ -535,8 +554,25 @@ function makeBoardPlayer(pid, playerDb, projMaps, histById, sleeperMaps){
     metric,
     sleeperMetric,
     histMetric,
-    positions: p.fantasy_positions || [p.position].filter(Boolean)
+    positions: p.fantasy_positions || [p.position].filter(Boolean),
+    lockOvr: lock && lock.lockOvr != null ? lock.lockOvr : null,
+    lockTier: lock && lock.lockTierLabel ? lock.lockTierLabel : null,
+    tradeScore: lock && lock.tradeScore != null ? lock.tradeScore : null,
+    tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null
   });
+}
+
+function lockInlineHtml(p, cls){
+  if (!p || p.lockOvr == null) return '';
+  const wrap = cls || 'lock';
+  const stars = (window.LockInDist && LockInDist.formatStarsHtml)
+    ? LockInDist.formatStarsHtml(p.tradeStars, {className: 'trade-stars'})
+    : '';
+  return '<span class="' + wrap + '" title="' + escapeHtml(
+    'Lock OVR ' + p.lockOvr
+    + (p.lockTier ? ' · ' + p.lockTier : '')
+    + (p.tradeScore != null ? ' · trade ' + Number(p.tradeScore).toFixed(1) : '')
+  ) + '"><span class="ovr">' + Math.round(p.lockOvr) + '</span>' + stars + '</span>';
 }
 
 async function load(){
@@ -573,11 +609,31 @@ async function load(){
 
     const scoring = league.scoring_settings || {};
     const projMaps = buildConsensusProjMaps(scoring);
-    status.textContent = 'Loading Sleeper projections and last-3-season averages\u2026';
-    const [histById, sleeperMaps] = await Promise.all([
+    const draftedSeedIds = picks.map(pk => String(pk.player_id)).filter(Boolean);
+    status.textContent = 'Loading Sleeper projections, last-3-season averages, and Lock values\u2026';
+    let statsSeason = league.season;
+    if (league.previous_league_id){
+      try {
+        const prevRes = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id);
+        if (prevRes.ok) statsSeason = (await prevRes.json()).season || statsSeason;
+      } catch (e){ /* keep */ }
+    }
+    const [histById, sleeperMaps, lockPack] = await Promise.all([
       loadLast3SeasonAvg(scoring, league.season),
-      loadSleeperProjMaps(scoring, league.season || '2026')
+      loadSleeperProjMaps(scoring, league.season || '2026'),
+      (window.LockInDist && LockInDist.fetchLockValueIndex)
+        ? LockInDist.fetchLockValueIndex({
+            scoring,
+            statsSeason,
+            playerDb,
+            projById: projMaps.byId,
+            playerIds: draftedSeedIds,
+            twoKSnapshot: window.TWO_K_SNAPSHOT || null
+          }).catch(() => null)
+        : Promise.resolve(null)
     ]);
+    const lockDist = (lockPack && lockPack.distMap) || {};
+    const lockStatsSeason = lockPack && lockPack.statsSeason;
 
     const userById = {};
     users.forEach(u => { userById[u.user_id] = u; });
@@ -617,7 +673,7 @@ async function load(){
     });
 
     function boardPlayer(pid){
-      return makeBoardPlayer(pid, playerDb, projMaps, histById, sleeperMaps);
+      return makeBoardPlayer(pid, playerDb, projMaps, histById, sleeperMaps, lockDist);
     }
 
     const universeMap = new Map();
@@ -666,7 +722,11 @@ async function load(){
         ovr: pick.ovr,
         yearsExp: pick.yearsExp,
         injuryStatus: pick.injuryStatus,
-        source: pick.source
+        source: pick.source,
+        lockOvr: pick.lockOvr,
+        lockTier: pick.lockTier,
+        tradeScore: pick.tradeScore,
+        tradeStars: pick.tradeStars
       });
     });
 
@@ -703,7 +763,11 @@ async function load(){
         bestAvailable: best && best.id !== pid ? best.name : null,
         bestBoard: best ? best.board : null,
         leftOnBoard: left,
-        points: letterToPoints(grade)
+        points: letterToPoints(grade),
+        lockOvr: selected ? selected.lockOvr : null,
+        lockTier: selected ? selected.lockTier : null,
+        tradeScore: selected ? selected.tradeScore : null,
+        tradeStars: selected ? selected.tradeStars : null
       };
       pickEvals.push(evalRow);
       if (team){
@@ -828,6 +892,7 @@ async function load(){
     status.classList.remove('error');
     status.textContent = 'Grades are mostly process: each pick vs the best players still available on the board'
       + ' (vets: cons+L3 · rookies: Sleeper+ESPN comps)'
+      + (lockStatsSeason ? ' · Lock OVR / Trade \u2605 from ' + lockStatsSeason + ' smash' : '')
       + (mine ? ' · ' + MY_TEAM + ' ' + mine.grade + ' (#' + mine.rank + ', avg remaining rank #' + mine.avgRank.toFixed(1) + ')' : '') + '.';
 
     const report = document.getElementById('report');
@@ -843,6 +908,7 @@ async function load(){
             + (p.ceiling && p.ceiling !== 'role'
               ? '<span class="ceil">' + escapeHtml(ceilingLabel(p.ceiling)) + '</span>'
               : '')
+            + lockInlineHtml(p)
             + '</span>'
             + '<span class="val">' + escapeHtml(p.grade || '\u2014')
             + (p.rank ? ' \u00b7 #' + p.rank + '/' + p.available : '')
@@ -898,7 +964,9 @@ async function load(){
           + '<div class="num">#' + pk.pick + '</div>'
           + '<div class="team">' + escapeHtml(pk.team)
           + '<div class="meta">Grade ' + escapeHtml(pk.grade) + ' \u00b7 #' + pk.rank + ' of ' + pk.available + ' left</div></div>'
-          + '<div class="player-wrap"><div class="player">' + escapeHtml(pk.name) + '</div>'
+          + '<div class="player-wrap"><div class="player">' + escapeHtml(pk.name)
+          + ' ' + lockInlineHtml(pk, 'lock-inline')
+          + '</div>'
           + '<div class="meta">R' + pk.round + ' \u00b7 ' + escapeHtml(pk.pos)
           + (pk.ceiling && pk.ceiling !== 'role' ? ' \u00b7 ' + escapeHtml(ceilingLabel(pk.ceiling)) : '')
           + (pk.bestAvailable ? ' \u00b7 best left: ' + escapeHtml(pk.bestAvailable) : ' \u00b7 BPA')
