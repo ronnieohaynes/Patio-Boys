@@ -342,7 +342,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-lockin';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-lockin-avg';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -534,11 +534,16 @@ async function loadCeilings(){
   }
   state.statsSeason = statsSeason;
   const weeks = Array.from({length: 25}, (_, i) => i + 1);
-  const weeklyResults = await Promise.all(weeks.map(w =>
-    fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+  const [seasonStats, ...weeklyResults] = await Promise.all([
+    fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
       .then(r => r.ok ? r.json() : null)
-      .catch(() => null)
-  ));
+      .catch(() => null),
+    ...weeks.map(w =>
+      fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null)
+    )
+  ]);
   state.statsWeeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
   if (!state.statsWeeksFound) throw new Error('No weekly stats available for ' + statsSeason);
 
@@ -548,8 +553,11 @@ async function loadCeilings(){
   let samplesByPlayer;
   let distMap;
   if (window.LockInDist){
+    const seasonAvgByPid = seasonStats
+      ? LockInDist.buildSeasonAvgMap(seasonStats, scoring)
+      : {};
     samplesByPlayer = LockInDist.buildSamplesByPlayer(weeklyResults, scoring);
-    distMap = LockInDist.buildDistMap(samplesByPlayer, marks);
+    distMap = LockInDist.buildDistMap(samplesByPlayer, marks, seasonAvgByPid);
   } else {
     // Fallback if lock-in-dist.js failed to load.
     samplesByPlayer = {};
@@ -572,7 +580,7 @@ async function loadCeilings(){
       const stdev = Math.sqrt(arr.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / arr.length);
       const hits = {};
       marks.forEach(m => { hits[m] = arr.filter(v => v >= m).length / arr.length; });
-      distMap[pid] = {n: arr.length, mean, stdev, ceiling: mean + stdev, hits, normalHits: hits, marks, samples: arr};
+      distMap[pid] = {n: arr.length, mean, sampleMean: mean, stdev, ceiling: mean + stdev, hits, normalHits: hits, marks, samples: arr};
     });
   }
 
