@@ -233,14 +233,16 @@
   const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
 
   /* Absolute smash-base → OVR anchors (2K reading):
+     Top (85+) stays tight; mid/low softened so solid/strong starters
+     aren't crushed relative to All-Stars.
      50 Depth · 60 Rotation · 70 Solid · 80 Strong · 85 All-Star · 90 Superstar · 95 MVP */
   const LOCK_OVR_ANCHORS = [
     {base: 10, ovr: 50},
-    {base: 16, ovr: 58},
-    {base: 20, ovr: 65},
-    {base: 24, ovr: 72},
-    {base: 28, ovr: 78},
-    {base: 31, ovr: 82},
+    {base: 16, ovr: 60},
+    {base: 20, ovr: 68},
+    {base: 24, ovr: 75},
+    {base: 27, ovr: 80},
+    {base: 30, ovr: 83},
     {base: 34, ovr: 85},
     {base: 37, ovr: 88},
     {base: 40, ovr: 91},
