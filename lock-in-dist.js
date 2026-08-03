@@ -327,6 +327,37 @@
     return '★'.repeat(stars) + '☆'.repeat(5 - stars);
   }
 
+  /* Absolute tradeScore → stars (2K trade-finder style). */
+  const TRADE_STAR_BANDS = [
+    {min: 95, stars: 5},
+    {min: 85, stars: 4},
+    {min: 75, stars: 3},
+    {min: 65, stars: 2},
+    {min: 0, stars: 1}
+  ];
+
+  function tradeStarsFromScore(score){
+    const s = Number(score);
+    if (!Number.isFinite(s)) return null;
+    for (let i = 0; i < TRADE_STAR_BANDS.length; i++){
+      if (s >= TRADE_STAR_BANDS[i].min) return TRADE_STAR_BANDS[i].stars;
+    }
+    return 1;
+  }
+
+  /* tradeScore = LockOVR × age × injury (+1 young bump). */
+  function tradeScoreFromOvr(ovr, meta){
+    const o = Number(ovr);
+    if (!Number.isFinite(o)) return null;
+    const info = meta || {};
+    const band = info.ageBand || lockAgeBand(info.age, info.isRookie);
+    const am = AGE_MULT[band] || 0.95;
+    const im = injuryStatusMult(info.injuryStatus);
+    let score = o * am * im;
+    if (band === 'young') score += 1;
+    return score;
+  }
+
   function projFromMap(projById, pid){
     if (!projById) return null;
     const key = String(pid);
@@ -338,8 +369,8 @@
     return Number.isFinite(v) && v > 0 ? v : null;
   }
 
-  /* Mutates each dist with lockBase / lockOvr / lockTier.
-     OVR is pure smash production on an absolute curve (no age/injury). */
+  /* Mutates each dist with lockBase / lockOvr / lockTier / tradeScore / tradeStars.
+     OVR is pure smash; Trade stars layer age + injury on top. */
   function attachLockValues(distMap, opts){
     const options = opts || {};
     const playerDb = options.playerDb || {};
@@ -376,20 +407,36 @@
         d.lockScore = null;
         d.lockStars = null;
         d.lockPct = null;
+        d.tradeScore = null;
+        d.tradeStars = null;
         return;
       }
 
       const ovr = ovrFromSmashBase(base);
       const tier = lockOvrTier(ovr);
+      const band = lockAgeBand(p.age, isRookie);
+      const injuryStatus = p.injury_status || p.injuryStatus || '';
+      const tradeScore = tradeScoreFromOvr(ovr, {
+        ageBand: band,
+        age: p.age,
+        isRookie,
+        injuryStatus
+      });
+      const tradeStars = tradeStarsFromScore(tradeScore);
+
       d.lockBase = base;
       d.lockBaseSource = baseSource;
-      d.lockAgeBand = lockAgeBand(p.age, isRookie);
+      d.lockAgeBand = band;
       d.lockOvr = ovr;
       d.lockTier = tier.key;
       d.lockTierLabel = tier.label;
       d.lockScore = ovr;
       d.lockStars = null;
       d.lockPct = null;
+      d.tradeScore = tradeScore;
+      d.tradeStars = tradeStars;
+      d.tradeAgeMult = AGE_MULT[band] || 0.95;
+      d.tradeInjuryMult = injuryStatusMult(injuryStatus);
       count++;
     });
     return count;
@@ -403,6 +450,7 @@
     LOCK_OVR_FLOOR,
     LOCK_OVR_CEIL,
     LOCK_OVR_ANCHORS,
+    TRADE_STAR_BANDS,
     AGE_MULT,
     normalCdf,
     normalHitRate,
@@ -424,6 +472,8 @@
     lockOvrTier,
     starsFromPercentile,
     formatStars,
+    tradeStarsFromScore,
+    tradeScoreFromOvr,
     attachLockValues
   };
 })(window);

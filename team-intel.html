@@ -273,6 +273,10 @@
     display:block;font-family:'IBM Plex Mono',monospace;font-size:9px;
     letter-spacing:.04em;text-transform:uppercase;color:var(--ink-dim);margin-top:2px;
   }
+  table.lockin .trade-stars{
+    font-size:13px;letter-spacing:.02em;color:var(--gold);white-space:nowrap;line-height:1.1;
+  }
+  table.lockin .trade-stars .dim{color:var(--ink-dim);opacity:.4}
 
   /* trade intel */
   .trade-row{
@@ -357,7 +361,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-lock-ovr-soft';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260803-trade-stars';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
