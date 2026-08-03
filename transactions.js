@@ -446,12 +446,15 @@
       const assets = (side.assets || []).map(a => {
         if (a.kind === 'pick' && !a.resolvedPid){
           pendingPicks++;
-          return Object.assign({}, a, { dynasty: null, graded: false, label: assetLabel(a) });
+          return Object.assign({}, a, {
+            dynasty: null, tradeStars: null, graded: false, label: assetLabel(a)
+          });
         }
         const pid = a.kind === 'player' ? a.pid : a.resolvedPid;
         const v = valueForPidAt(maps, pid, playerDb, asOfSeason, currentSeason);
         return Object.assign({}, a, {
           dynasty: v,
+          tradeStars: tradeStarsForValue(v),
           graded: true,
           label: assetLabel(Object.assign({}, a, { name: a.name || playerName(playerDb[pid], pid) }))
         });
@@ -543,6 +546,7 @@
         pid: String(pid),
         name: playerName(playerDb[pid], pid),
         dynasty: v,
+        tradeStars: tradeStarsForValue(v),
         graded: true,
         label: playerName(playerDb[pid], pid)
       };
@@ -554,6 +558,7 @@
         pid: String(pid),
         name: playerName(playerDb[pid], pid),
         dynasty: v,
+        tradeStars: tradeStarsForValue(v),
         graded: true,
         label: playerName(playerDb[pid], pid)
       };
@@ -618,21 +623,25 @@
   /* Per-season Lock OVR index → tradeScore (assets) + lockBase (roster fit).
      When the fantasy season has no NBA samples yet (offseason / preseason),
      fall back to the prior completed season — same idea as Team Intel /
-     Trade Analyzer. Asset grades still age-adjust to the transaction year. */
-  async function loadLockValueMaps(scoring, season, playerDb){
+     Trade Analyzer. Asset grades still age-adjust to the transaction year.
+     Rookies are seeded from next-year proj + ESPN comps when smash is empty. */
+  async function loadLockValueMaps(scoring, season, playerDb, playerIds){
     const Lock = global.LockInDist;
     if (!Lock || typeof Lock.fetchLockValueIndex !== 'function'){
       throw new Error('LockInDist.fetchLockValueIndex unavailable');
     }
     const fantasySeason = String(season);
     const projById = consensusProjById(scoring, fantasySeason);
+    const ids = (playerIds || []).map(String);
 
     async function fetchIndex(statsSeason){
       return Lock.fetchLockValueIndex({
         scoring: scoring || {},
         statsSeason: String(statsSeason),
         playerDb: playerDb || {},
-        projById
+        projById,
+        playerIds: ids,
+        twoKSnapshot: global.TWO_K_SNAPSHOT || null
       });
     }
 
@@ -653,7 +662,10 @@
       if (!d || d.lockOvr == null) return 0;
       const p = (db && (db[id] || db[pid])) || {};
       const yearsExp = Number(p.years_exp);
-      const isRookie = yearsExp === 0;
+      const isRookie = yearsExp === 0
+        || (Lock.isRookiePlayer && Lock.isRookiePlayer(p, id, {
+          rookieNames: Lock.rookieNamesFromSnapshot && Lock.rookieNamesFromSnapshot()
+        }));
       const score = Lock.tradeScoreFromOvr(d.lockOvr, {
         age: p.age,
         isRookie,
@@ -680,6 +692,13 @@
       valueForPid,
       fitMetricForPid
     };
+  }
+
+  function tradeStarsForValue(v){
+    const Lock = global.LockInDist;
+    if (!Lock || typeof Lock.tradeStarsFromScore !== 'function') return null;
+    if (v == null || !Number.isFinite(Number(v)) || Number(v) <= 0) return null;
+    return Lock.tradeStarsFromScore(Number(v));
   }
 
   async function compute(leagueId, opts){
@@ -732,11 +751,34 @@
     }
     const mapsBySeason = {};
     const scoringBySeason = {};
+    const pidsBySeason = {};
     seasons.forEach(s => { scoringBySeason[s.season] = s.scoring; });
+    unique.forEach(tx => {
+      const season = String(tx.season);
+      const bag = pidsBySeason[season] || (pidsBySeason[season] = new Set());
+      Object.keys(tx.adds || {}).forEach(pid => bag.add(String(pid)));
+      Object.keys(tx.drops || {}).forEach(pid => bag.add(String(pid)));
+      (tx.draft_picks || []).forEach(pk => {
+        const resolved = resolvePick(pk);
+        if (resolved) bag.add(String(resolved));
+      });
+    });
+    /* Roster-fit grades also need values for everyone on the pre-txn roster. */
+    const seasonByTxnId = new Map(unique.map(t => [String(t.transaction_id), String(t.season)]));
+    Object.keys(preRostersByTxn).forEach(txid => {
+      const season = seasonByTxnId.get(String(txid));
+      if (!season) return;
+      const bag = pidsBySeason[season] || (pidsBySeason[season] = new Set());
+      const byRid = preRostersByTxn[txid] || {};
+      Object.keys(byRid).forEach(rid => {
+        (byRid[rid] || []).forEach(pid => bag.add(String(pid)));
+      });
+    });
     const seasonSet = new Set(unique.map(t => String(t.season)));
     await Promise.all([...seasonSet].map(async season => {
       const scoring = scoringBySeason[season] || seasons[0].scoring;
-      mapsBySeason[season] = await loadLockValueMaps(scoring, season, playerDb);
+      const ids = [...(pidsBySeason[season] || [])];
+      mapsBySeason[season] = await loadLockValueMaps(scoring, season, playerDb, ids);
     }));
 
     onProgress('Grading transactions…');
