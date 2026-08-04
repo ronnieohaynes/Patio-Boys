@@ -414,7 +414,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-intel-rook';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-taxi';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -511,6 +511,8 @@ function setLoadNote(text, isError){
 function buildTeams(users, rosters){
   const userById = {};
   users.forEach(u => { userById[u.user_id] = u; });
+  const leagueSettings = (state.league && state.league.settings) || {};
+  const rosterPositions = (state.league && state.league.roster_positions) || [];
   const teams = rosters.map((r, i) => {
     const u = userById[r.owner_id] || {};
     const rawName = (u.metadata && u.metadata.team_name) ? u.metadata.team_name : (u.display_name || 'Unknown');
@@ -518,6 +520,12 @@ function buildTeams(users, rosters){
     const s = r.settings || {};
     const wins = s.wins || 0, losses = s.losses || 0, ties = s.ties || 0;
     const rawPf = (s.fpts || 0) + (s.fpts_decimal || 0) / 100;
+    const split = window.TeamNeedsModel && TeamNeedsModel.splitRoster
+      ? TeamNeedsModel.splitRoster(r, {settings: leagueSettings, rosterPositions})
+      : null;
+    const allPlayers = split
+      ? split.allIds
+      : [...new Set((r.players || []).map(String))];
     return {
       key,
       displayName: rawName,
@@ -528,8 +536,17 @@ function buildTeams(users, rosters){
       rosterId: r.roster_id,
       wins, losses, ties, rawPf,
       record: wins + '-' + losses + (ties ? '-' + ties : ''),
-      players: r.players || [],
-      rosterSize: (r.players || []).length,
+      players: allPlayers,
+      taxi: split ? split.taxiIds : (r.taxi || []).map(String),
+      reserve: split ? split.reserveIds : (r.reserve || []).map(String),
+      regularIds: split ? split.regularIds : allPlayers,
+      regularCap: split ? split.regularCap : 18,
+      regularUsed: split ? split.regularUsed : allPlayers.length,
+      taxiSlots: split ? split.taxiSlots : (Number(leagueSettings.taxi_slots) || 0),
+      taxiUsed: split ? split.taxiUsed : (r.taxi || []).length,
+      taxiOpen: split ? split.taxiOpen : 0,
+      taxiYears: split ? split.taxiYears : 2,
+      rosterSize: allPlayers.length,
       maxPts: null, maxPtsGrade: null, maxPtsRank: null
     };
   }).sort((a, b) => b.wins - a.wins || b.rawPf - a.rawPf);
@@ -715,6 +732,19 @@ async function loadProjections(){
   });
   if (!byId.size) throw new Error('No usable projection stats for league scoring');
   state.projById = byId;
+}
+
+/* e.g. 16/18 · 2T — active cap vs taxi stash (not raw Sleeper players.length). */
+function rosterSizeLabel(t){
+  if (!t) return '—';
+  const cap = t.regularCap || 18;
+  const used = t.regularUsed != null ? t.regularUsed : t.rosterSize;
+  let label = used + '/' + cap;
+  if (t.taxiSlots){
+    label += ' · ' + (t.taxiUsed || 0) + 'T';
+    if (t.reserve && t.reserve.length) label += ' · ' + t.reserve.length + 'IR';
+  }
+  return label;
 }
 
 function playerName(pid){
@@ -963,8 +993,18 @@ function renderObservations(t){
     statusTag.textContent = '';
   }
 
-  const avgRoster = state.teams.reduce((s, x) => s + x.rosterSize, 0) / n;
-  items.push('Carrying <strong>' + t.rosterSize + ' players</strong> against a league average of ' + avgRoster.toFixed(1) + '.');
+  const avgRegular = state.teams.reduce((s, x) => s + (x.regularUsed || x.rosterSize), 0) / n;
+  const taxiBits = [];
+  if (t.taxiSlots){
+    taxiBits.push((t.taxiUsed || 0) + '/' + t.taxiSlots + ' taxi');
+    if (t.taxiOpen > 0) taxiBits.push(t.taxiOpen + ' open for players with &lt;' + ((t.taxiYears != null ? t.taxiYears : 2) + 1) + ' seasons');
+  }
+  items.push('Active roster <strong>'
+    + (t.regularUsed != null ? t.regularUsed : t.rosterSize)
+    + '/' + (t.regularCap || 18)
+    + '</strong> (league avg ' + avgRegular.toFixed(1) + ')'
+    + (taxiBits.length ? ' · ' + taxiBits.join(' · ') : '')
+    + '.');
 
   const hist = state.historyByOwner[t.ownerId] || [];
   hist.forEach(h => {
@@ -1641,7 +1681,7 @@ function renderTeam(){
   document.getElementById('heroManager').textContent = t.manager;
   document.getElementById('statRecord').textContent = t.record;
   document.getElementById('statGrade').textContent = state.maxPtsReady ? t.maxPtsGrade : '…';
-  document.getElementById('statRoster').textContent = t.rosterSize;
+  document.getElementById('statRoster').textContent = rosterSizeLabel(t);
   renderLineup(t);
   renderBench(t);
   renderLockIn(t);
