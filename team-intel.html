@@ -214,10 +214,7 @@
 
   /* roster moves */
   .moves-grid{
-    display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;
-  }
-  @media(max-width:900px){
-    .moves-grid{grid-template-columns:1fr}
+    display:grid;grid-template-columns:1fr;gap:14px;max-width:520px;
   }
   .moves-col h3{
     font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
@@ -420,7 +417,7 @@
     <div class="intel-grid">
       <div class="panel panel-span">
         <div class="panel-head"><h2>Roster Moves</h2><span class="tag" id="movesTag"></span></div>
-        <div class="panel-body" id="movesBody"><p class="pending">Scouting free agents and trade packages&hellip;</p></div>
+        <div class="panel-body" id="movesBody"><p class="pending">Scouting free-agent adds&hellip;</p></div>
       </div>
       <div class="panel">
         <div class="panel-head"><h2>Team Status</h2><span class="tag" id="statusTag"></span></div>
@@ -436,7 +433,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-moves';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-finder';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1538,64 +1535,13 @@ function renderBench(t){
     + escapeHtml(metricLong) + ' of these top five bench players, graded against all teams.</p>';
 }
 
-/* ---------- Roster Moves: FA adds, trade targets, outbound packages ---------- */
+/* ---------- Roster Moves: free-agent adds (Trade Finder lives in Analyzer) ---------- */
 
 const MOVES_ADD_GAIN = 0.5;
-const MOVES_FAIR_SOFT = 0.80;
-const MOVES_FAIR_HARD = 0.62;
 
 function lockRow(pid){
   if (!state.lockInByPid) return null;
   return state.lockInByPid[pid] || state.lockInByPid[String(pid)] || null;
-}
-
-function tradeValueOf(pid){
-  const d = lockRow(pid);
-  if (d && d.tradeScore != null && Number.isFinite(Number(d.tradeScore))) return Number(d.tradeScore);
-  if (d && d.lockOvr != null && Number.isFinite(Number(d.lockOvr))) return Number(d.lockOvr);
-  const rec = needsPlayerRecord(pid);
-  if (rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric) * 3.2;
-  return 0;
-}
-
-function starsOf(pid){
-  const d = lockRow(pid);
-  return d && d.tradeStars != null ? d.tradeStars : null;
-}
-
-function lockOvrOf(pid){
-  const d = lockRow(pid);
-  return d && d.lockOvr != null ? d.lockOvr : null;
-}
-
-function fairnessRatio(sendVal, getVal){
-  const a = Math.max(0, Number(sendVal) || 0);
-  const b = Math.max(0, Number(getVal) || 0);
-  if (a <= 0 && b <= 0) return 1;
-  const hi = Math.max(a, b);
-  const lo = Math.min(a, b);
-  return hi > 0 ? lo / hi : 0;
-}
-
-function fairnessLabel(ratio){
-  if (ratio >= 0.92) return 'Even';
-  if (ratio >= MOVES_FAIR_SOFT) return 'Close';
-  if (ratio >= MOVES_FAIR_HARD) return 'Stretch';
-  return 'Unlikely';
-}
-
-function enrichedRecord(pid){
-  const rec = needsPlayerRecord(pid);
-  const p = (state.playerDb || {})[pid] || {};
-  const d = lockRow(pid);
-  return Object.assign({}, rec, {
-    yearsExp: p.years_exp ?? null,
-    injuryStatus: p.injury_status || null,
-    lockOvr: d && d.lockOvr != null ? d.lockOvr : null,
-    tradeScore: d && d.tradeScore != null ? d.tradeScore : null,
-    tradeStars: d && d.tradeStars != null ? d.tradeStars : null,
-    tradeValue: tradeValueOf(pid)
-  });
 }
 
 async function loadFreeAgents(){
@@ -1741,173 +1687,14 @@ function scoreFaAddsForTeam(t, slots, opt){
     .slice(0, 4);
 }
 
-function scoreTradeTargetsForTeam(t, slots, opt){
-  const ours = new Set((t.players || []).map(String));
-  const targets = [];
-  state.teams.forEach(other => {
-    if (other.key === t.key) return;
-    (other.players || []).forEach(pid => {
-      const id = String(pid);
-      if (ours.has(id)) return;
-      const rec = enrichedRecord(id);
-      if (rec.metric == null && rec.lockOvr == null) return;
-      const fit = TeamNeedsModel.candidateGain(rec, opt);
-      if (fit.gain < MOVES_ADD_GAIN && !(fit.slot && fit.ageBonus > 0.4)) return;
-      const band = TeamNeedsModel.ageBand(rec);
-      targets.push({
-        id,
-        name: rec.name,
-        pos: (rec.positions || []).join('/') || playerPos(id),
-        owner: other.displayName,
-        ownerKey: other.key,
-        slot: fit.slot,
-        gain: fit.gain,
-        lockOvr: rec.lockOvr,
-        tradeStars: rec.tradeStars,
-        tradeValue: rec.tradeValue,
-        age: rec.age,
-        ageBand: band,
-        displaced: fit.displaced && fit.displaced.player ? fit.displaced.player.name : null,
-        score: fit.gain * 25 + (rec.lockOvr || 0) + (fit.ageBonus || 0) * 10
-      });
-    });
-  });
-  return targets.sort((a, b) => b.score - a.score || (b.lockOvr || 0) - (a.lockOvr || 0)).slice(0, 6);
-}
-
-function surplusCandidates(t, slots, opt){
-  const starterIds = new Set(
-    (opt.fills || []).filter(f => f && f.player).map(f => String(f.player.id))
-  );
-
-  return (t.players || []).map(pid => {
-    const id = String(pid);
-    const rec = enrichedRecord(id);
-    const isStarter = starterIds.has(id);
-    const band = TeamNeedsModel.ageBand(rec);
-    const ovr = rec.lockOvr;
-    /* Keep true studs off the block unless they're aging out. */
-    if (isStarter && ovr != null && ovr >= 88 && band !== 'decline') return null;
-    let impact = 0;
-    if (isStarter){
-      impact = Number(rec.metric) || (ovr != null ? ovr / 10 : 8);
-    }
-    const shipScore =
-      (isStarter ? 0 : 40)
-      + (band === 'decline' ? 35 : 0)
-      + (band === 'prime' ? 5 : 0)
-      + Math.max(0, 70 - (ovr || 50))
-      - impact * 2;
-    return {
-      id,
-      name: rec.name,
-      pos: (rec.positions || []).join('/') || playerPos(id),
-      lockOvr: rec.lockOvr,
-      tradeStars: rec.tradeStars,
-      tradeValue: rec.tradeValue,
-      age: rec.age,
-      ageBand: band,
-      isStarter,
-      shipScore,
-      metric: rec.metric
-    };
-  }).filter(p => p && (p.tradeValue > 0 || p.lockOvr != null))
-    .sort((a, b) => b.shipScore - a.shipScore || a.tradeValue - b.tradeValue);
-}
-
-function buildTradePackages(t, targets, slots, opt){
-  const surplus = surplusCandidates(t, slots, opt);
-  if (!surplus.length || !targets.length) return [];
-  const packages = [];
-  const usedTarget = new Set();
-
-  targets.slice(0, 8).forEach(target => {
-    if (usedTarget.has(target.id)) return;
-    const getVal = target.tradeValue || 0;
-    if (getVal <= 0) return;
-
-    /* 1-for-1 */
-    let best = null;
-    surplus.forEach(send => {
-      if (String(send.id) === String(target.id)) return;
-      const ratio = fairnessRatio(send.tradeValue, getVal);
-      if (ratio < MOVES_FAIR_HARD) return;
-      const delta = Math.abs(send.tradeValue - getVal);
-      const score = ratio * 100 - delta * 0.15 + (send.ageBand === 'decline' ? 8 : 0)
-        + (!send.isStarter ? 6 : 0) + target.gain * 3;
-      if (!best || score > best.score){
-        best = {
-          kind: '1-for-1',
-          send: [send],
-          get: target,
-          sendVal: send.tradeValue,
-          getVal,
-          ratio,
-          fair: fairnessLabel(ratio),
-          score,
-          why: (target.slot
-            ? ('Fills ' + target.slot + ' (+' + target.gain.toFixed(1) + ' FP/G)')
-            : 'Lineup upgrade')
-            + (send.ageBand === 'decline' ? ' · ships aging ' + send.name : '')
-        };
-      }
-    });
-
-    /* 2-for-1 when 1-for-1 is a stretch or missing */
-    if (!best || best.ratio < MOVES_FAIR_SOFT){
-      for (let i = 0; i < Math.min(surplus.length, 10); i++){
-        for (let j = i + 1; j < Math.min(surplus.length, 12); j++){
-          const a = surplus[i];
-          const b = surplus[j];
-          const sendVal = a.tradeValue + b.tradeValue;
-          const ratio = fairnessRatio(sendVal, getVal);
-          if (ratio < MOVES_FAIR_HARD) continue;
-          const delta = Math.abs(sendVal - getVal);
-          const score = ratio * 100 - delta * 0.12
-            + (!a.isStarter && !b.isStarter ? 8 : 0)
-            + target.gain * 3;
-          if (!best || score > best.score){
-            best = {
-              kind: '2-for-1',
-              send: [a, b],
-              get: target,
-              sendVal,
-              getVal,
-              ratio,
-              fair: fairnessLabel(ratio),
-              score,
-              why: (target.slot
-                ? ('Fills ' + target.slot + ' (+' + target.gain.toFixed(1) + ' FP/G)')
-                : 'Lineup upgrade')
-                + ' · package balances Trade ★'
-            };
-          }
-        }
-      }
-    }
-
-    if (best){
-      usedTarget.add(target.id);
-      packages.push(best);
-    }
-  });
-
-  return packages.sort((a, b) => b.score - a.score).slice(0, 4);
-}
-
 function buildRosterMoves(t){
   if (!window.TeamNeedsModel || !state.league || !state.playerDb) return null;
   const slots = TeamNeedsModel.parseSlots(state.league.roster_positions || []);
   if (!slots.length) return null;
   const ourPlayers = (t.players || []).map(needsPlayerRecord);
   const opt = TeamNeedsModel.optimize(ourPlayers, slots);
-  const fa = scoreFaAddsForTeam(t, slots, opt);
-  const targets = scoreTradeTargetsForTeam(t, slots, opt);
-  const packages = buildTradePackages(t, targets, slots, opt);
   return {
-    fa,
-    targets: targets.slice(0, 4),
-    packages,
+    fa: scoreFaAddsForTeam(t, slots, opt),
     lineupTotal: opt.total,
     slots
   };
@@ -1932,7 +1719,7 @@ function renderRosterMoves(t){
   }
   if (!state.freeAgentsSettled){
     tag.textContent = 'Scouting\u2026';
-    body.innerHTML = '<p class="pending">Pulling free agents and Lock values for trade packages&hellip;</p>';
+    body.innerHTML = '<p class="pending">Pulling free agents and Lock values&hellip;</p>';
     return;
   }
   if (state.freeAgentsError && !(state.freeAgents && state.freeAgents.length)){
@@ -1951,8 +1738,7 @@ function renderRosterMoves(t){
     return;
   }
 
-  tag.textContent = pack.fa.length + ' FA · ' + pack.targets.length + ' targets · '
-    + pack.packages.length + ' packages';
+  tag.textContent = pack.fa.length + ' FA adds';
 
   const faHtml = pack.fa.length
     ? '<ul class="moves">' + pack.fa.map(a => {
@@ -1971,56 +1757,13 @@ function renderRosterMoves(t){
     }).join('') + '</ul>'
     : '<p class="pending" style="margin:0">No clear waiver adds right now.</p>';
 
-  const tgHtml = pack.targets.length
-    ? '<ul class="moves">' + pack.targets.map(a => {
-      return '<li><span class="mv-name"><span class="mv-tag trade">Target</span>'
-        + escapeHtml(a.name) + '</span>'
-        + '<div class="mv-meta">From <strong style="color:var(--ink)">' + escapeHtml(a.owner) + '</strong>'
-        + ' · ' + escapeHtml(a.pos)
-        + (a.lockOvr != null ? ' · Lock ' + Math.round(a.lockOvr) : '')
-        + (a.tradeStars != null ? ' · ' + moveStarsTxt(a.tradeStars) : '')
-        + (a.slot ? ' · → ' + escapeHtml(a.slot) : '')
-        + '</div>'
-        + '<div class="mv-why">Ask in a trade'
-        + (a.displaced ? ' over ' + escapeHtml(a.displaced) : '')
-        + (a.gain > 0.05 ? ' · <span class="hl">+' + a.gain.toFixed(1) + ' lineup</span>' : '')
-        + '</div></li>';
-    }).join('') + '</ul>'
-    : '<p class="pending" style="margin:0">No high-lift trade targets found vs other rosters.</p>';
-
-  const pkHtml = pack.packages.length
-    ? '<ul class="moves">' + pack.packages.map(p => {
-      const sendNames = p.send.map(s => s.name).join(' + ');
-      const sendMeta = p.send.map(s =>
-        (s.lockOvr != null ? 'Lock ' + Math.round(s.lockOvr) : '—')
-        + (s.tradeStars != null ? ' ' + moveStarsTxt(s.tradeStars) : '')
-      ).join(' · ');
-      return '<li><span class="mv-name"><span class="mv-tag ship">Ship</span>'
-        + escapeHtml(sendNames)
-        + ' <span style="color:var(--ink-dim);font-weight:500">→</span> '
-        + escapeHtml(p.get.name) + '</span>'
-        + '<div class="mv-meta">To <strong style="color:var(--ink)">' + escapeHtml(p.get.owner) + '</strong>'
-        + ' · ' + escapeHtml(p.fair)
-        + ' · send ' + p.sendVal.toFixed(0) + ' / get ' + p.getVal.toFixed(0) + ' trade score'
-        + '</div>'
-        + '<div class="mv-why">' + escapeHtml(p.why)
-        + '<br><span style="color:var(--ink-dim)">' + escapeHtml(sendMeta)
-        + ' for Lock ' + (p.get.lockOvr != null ? Math.round(p.get.lockOvr) : '—')
-        + (p.get.tradeStars != null ? ' ' + moveStarsTxt(p.get.tradeStars) : '')
-        + '</span></div></li>';
-    }).join('') + '</ul>'
-    : '<p class="pending" style="margin:0">No balanced packages within Trade ★ bands yet.</p>';
-
   body.innerHTML = '<div class="moves-grid">'
     + '<div class="moves-col"><h3>Free agents to add</h3>' + faHtml + '</div>'
-    + '<div class="moves-col"><h3>Trade targets</h3>' + tgHtml + '</div>'
-    + '<div class="moves-col"><h3>Packages to offer</h3>' + pkHtml + '</div>'
     + '</div>'
-    + '<p class="moves-foot">Adds use the same lineup optimizer as before (marginal FP/G). '
+    + '<p class="moves-foot">Adds use the lineup optimizer (marginal FP/G). '
     + 'Taxi-eligible players (&lt;' + ((t.taxiYears != null ? t.taxiYears : 2) + 1)
     + ' seasons) stash without a drop when a taxi spot is open. '
-    + 'Packages balance <strong>Trade ★ / trade score</strong> (Lock OVR × age × injury) toward even deals with '
-    + escapeHtml(t.displayName) + '\'s surplus — try these as opening asks, not gospel.</p>';
+    + 'For trade packages, use <strong>Trade Finder</strong> in the Trade Analyzer.</p>';
 }
 
 function assetLabel(a){
