@@ -308,8 +308,8 @@
   }
   table.depth tr:last-child td{border-bottom:none}
   table.depth .pos{
-    font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);
-    font-weight:600;width:42px;padding-top:10px;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    font-weight:600;width:56px;padding-top:10px;white-space:nowrap;
   }
   table.depth .slot-empty{color:var(--ink-dim)}
   table.depth .slot-name{color:var(--ink);font-weight:500;display:block}
@@ -414,7 +414,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-depth';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-depth10';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
