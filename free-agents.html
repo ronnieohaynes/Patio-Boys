@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-fa-rec';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-fa-toplock';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -554,17 +554,21 @@ function currentTeam(){
   return state.teams.find(t => t.team === state.selectedTeam) || state.teams[0];
 }
 
-function filteredList(){
+function filteredAgents(){
   const team = currentTeam();
   if (!team) return [];
   const scored = state.scoredByTeam[team.team] || [];
   const pos = document.getElementById('posFilter').value;
   const q = normalizeName(document.getElementById('search').value);
-  let rows = scored.filter(a => {
+  return scored.filter(a => {
     if (!matchesPosFilter(a.positions, pos)) return false;
     if (!q) return true;
     return normalizeName(a.name).includes(q) || normalizeName(a.nbaTeam).includes(q);
   });
+}
+
+function filteredList(){
+  let rows = filteredAgents();
   const sort = state.tableSort || {key: 'rec', dir: 'desc'};
   const key = sort.key || 'rec';
   const dir = sort.dir || 'desc';
@@ -598,6 +602,31 @@ function filteredList(){
   return rows;
 }
 
+/* Top-3 cards always rank by Lock OVR — table column sort does not move them. */
+function topLockTargets(limit){
+  const n = limit == null ? 3 : limit;
+  const TS = window.TableSort;
+  return filteredAgents().slice().sort((a, b) => {
+    if (TS){
+      const lock = TS.cmp(a.lockOvr, b.lockOvr, 'desc');
+      if (lock) return lock;
+      const trade = TS.cmp(
+        a.tradeScore != null ? a.tradeScore : a.tradeStars,
+        b.tradeScore != null ? b.tradeScore : b.tradeStars,
+        'desc'
+      );
+      if (trade) return trade;
+      const proj = TS.cmp(a.metric, b.metric, 'desc');
+      if (proj) return proj;
+      return TS.cmp(a.name, b.name, 'asc');
+    }
+    return (b.lockOvr || 0) - (a.lockOvr || 0)
+      || (b.tradeScore || 0) - (a.tradeScore || 0)
+      || (b.metric || 0) - (a.metric || 0)
+      || a.name.localeCompare(b.name);
+  }).slice(0, n);
+}
+
 function recCellHtml(a){
   const verdictCls = a.shouldAdd ? 'add' : 'pass';
   const dropBit = a.drop
@@ -619,15 +648,14 @@ function render(){
   const color = TEAM_COLORS[team.team] || 'var(--gold)';
   document.getElementById('teamTitle').textContent = team.team + (team.team === MY_TEAM ? ' (you)' : '');
   document.getElementById('teamSub').textContent =
-    'Top 3 adds · who to drop · depth-chart fit';
+    'Top 3 by Lock · who to drop · depth-chart fit';
 
   document.querySelectorAll('.team-chip').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.team === team.team);
   });
 
   const rows = filteredList();
-  const adds = rows.filter(a => a.shouldAdd);
-  const top = (adds.length ? adds : rows).slice(0, 3);
+  const top = topLockTargets(3);
   const fitGrid = document.getElementById('fitGrid');
   if (!top.length){
     fitGrid.innerHTML = '<div class="fit-card" style="--team-color:' + color + '">'
@@ -640,7 +668,7 @@ function render(){
         + (a.drop ? ' — drop <strong>' + escapeHtml(a.drop.name) + '</strong>' : '')
         + (a.depthLabel ? '. Fits <strong>' + escapeHtml(a.depthLabel) + '</strong>.' : '.');
       return '<article class="fit-card" style="--team-color:' + color + '">'
-        + '<p class="rank">' + (a.shouldAdd ? 'Add' : 'Watch') + ' #' + (i + 1) + '</p>'
+        + '<p class="rank">Lock target #' + (i + 1) + '</p>'
         + '<h3 class="name">' + escapeHtml(a.name) + '</h3>'
         + '<p class="meta">' + escapeHtml(a.pos) + ' \u00b7 ' + escapeHtml(a.nbaTeam || 'FA')
         + (a.lockOvr != null ? ' \u00b7 Lock ' + Math.round(a.lockOvr) : '')

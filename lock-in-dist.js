@@ -222,8 +222,9 @@
 
   /* ---- Smash-hunting Lock OVR (Intel) ----
      Raw smash base = 0.40·Avg + 0.30·Ceil + 0.30·(40·P≥40 + 50·P≥50)
-     Rookies: reverse-engineer from next-year proj + ESPN/Woo comps (50/50).
-     Thin samples (N < 5 weekly game lines) fall back to projected FP/G.
+     Rookies: Y1 proj + early-career comps (peak floors haircut) or draft-rank
+     bands (50/50), soft-capped until smash samples exist.
+     Thin vet samples (N < 5 weekly game lines) fall back to projected FP/G.
      Lock OVR maps smash base → 50–99 on an ABSOLUTE curve (not pool
      percentile — percentile vs all NBA stuffed every roster guy into the 90s).
      Age / injury stay off OVR — those belong on Trade stars later. */
@@ -234,25 +235,46 @@
   const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
   const ROOKIE_PROJ_W = 0.5;
   const ROOKIE_COMP_W = 0.5;
+  /* Peak-comp floors describe prime comps (Brown/Booker/etc). Lock OVR for
+     rookies should read as early-career smash (Y1–Y3), not prime — so we
+     haircut peak floors before they enter the OVR curve. */
+  const ROOKIE_EARLY_CAREER_MULT = {
+    franchise: 0.55,
+    allstar_prospect: 0.68,
+    starter: 0.70,
+    default: 0.68
+  };
+  /* Soft ceiling until a rookie has real weekly smash samples — keeps
+     unproven lottery names out of All-Star / Superstar Lock territory. */
+  const ROOKIE_LOCK_OVR_CAP = 82;
+  /* Draft-rank → early-career smash proxy when ESPN comps / Y1 proj are thin.
+     Tuned to land lottery ~mid-60s Lock, mid-first ~high-50s, late ~low-50s. */
+  const ROOKIE_RANK_BASE = [
+    {maxRank: 3, base: 22},
+    {maxRank: 10, base: 17},
+    {maxRank: 20, base: 14},
+    {maxRank: 30, base: 12},
+    {maxRank: 45, base: 10},
+    {maxRank: 999, base: 9}
+  ];
 
-  /* ESPN post–summer league outlook floors = comparison-derived FP/G proxies
-     (same table as Trade Analyzer / awards). Used to reverse-engineer Lock OVR
-     for draft-class rookies who have no NBA smash samples yet. */
+  /* ESPN post–summer league outlook. `floor` = peak-comp FP/G proxy.
+     Lock valuation uses early-career haircut of that floor (not prime). */
   const ESPN_ROOKIE_OUTLOOK = {
-    ajdybantsa:{outlook:1, comps:'Jaylen Brown / Kawhi high · RJ Barrett low', floor:45},
-    darrynpeterson:{outlook:2, comps:'Booker / Lillard+tools high · Murray+D low', floor:44},
-    cameronboozer:{outlook:3, comps:'Kevin Love+ball skills · Sabonis+3', floor:24},
-    calebwilson:{outlook:4, comps:'Bouncier Siakam high · John Collins low', floor:18},
-    braydenburries:{outlook:5, comps:'Summer riser', floor:16},
-    mikelbrownjr:{outlook:6, comps:'Lottery guard', floor:15},
-    mikelbrown:{outlook:6, comps:'Lottery guard', floor:15},
-    yaxellendeborg:{outlook:7, comps:'Summer riser', floor:14},
-    morezjohnsonjr:{outlook:8, comps:'Big upside', floor:13},
-    morezjohnson:{outlook:8, comps:'Big upside', floor:13},
-    kingstonflemings:{outlook:9, comps:'Lottery guard', floor:13},
-    keatonwagler:{outlook:10, comps:'Haliburton pace high · Nembhard low', floor:12},
-    dariusacuffjr:{outlook:11, comps:'Brunson high · Bibby low', floor:12},
-    dariusacuff:{outlook:11, comps:'Brunson high · Bibby low', floor:12}
+    ajdybantsa:{outlook:1, ceiling:'franchise', comps:'Jaylen Brown / Kawhi high · RJ Barrett low', floor:45},
+    darrynpeterson:{outlook:2, ceiling:'franchise', comps:'Booker / Lillard+tools high · Murray+D low', floor:44},
+    cameronboozer:{outlook:3, ceiling:'allstar_prospect', comps:'Kevin Love+ball skills · Sabonis+3', floor:24},
+    calebwilson:{outlook:4, ceiling:'starter', comps:'Bouncier Siakam high · John Collins low', floor:18},
+    braydenburries:{outlook:5, ceiling:'starter', comps:'Summer riser', floor:16},
+    mikelbrownjr:{outlook:6, ceiling:'starter', comps:'Lottery guard', floor:15},
+    mikelbrown:{outlook:6, ceiling:'starter', comps:'Lottery guard', floor:15},
+    yaxellendeborg:{outlook:7, ceiling:'starter', comps:'Summer riser', floor:14},
+    morezjohnsonjr:{outlook:8, ceiling:'starter', comps:'Big upside', floor:13},
+    morezjohnson:{outlook:8, ceiling:'starter', comps:'Big upside', floor:13},
+    kingstonflemings:{outlook:9, ceiling:'starter', comps:'Lottery guard', floor:13},
+    keatonwagler:{outlook:10, ceiling:'starter', comps:'Haliburton pace high · Nembhard low', floor:12},
+    dariusacuffjr:{outlook:11, ceiling:'starter', comps:'Brunson high · Bibby low', floor:12},
+    dariusacuff:{outlook:11, ceiling:'starter', comps:'Brunson high · Bibby low', floor:12}
   };
 
   function normalizePlayerName(name){
@@ -276,14 +298,74 @@
     return names;
   }
 
-  function rookieCompFloor(p, nameKey){
+  function rookieRankByName(snapshot){
+    const map = new Map();
+    const pack = snapshot || global.TWO_K_SNAPSHOT || null;
+    ((pack && pack.rookies) || []).forEach(r => {
+      const key = normalizePlayerName(r && r.name);
+      const rank = Number(r && r.rank);
+      if (!key || !Number.isFinite(rank) || rank <= 0) return;
+      if (!map.has(key) || rank < map.get(key)) map.set(key, rank);
+    });
+    return map;
+  }
+
+  function rookieOutlookRow(p, nameKey){
     const key = nameKey || normalizePlayerName(sleeperPlayerName(p));
-    const row = ESPN_ROOKIE_OUTLOOK[key];
+    return ESPN_ROOKIE_OUTLOOK[key] || null;
+  }
+
+  function rookieEarlyCareerMult(row){
+    if (!row) return ROOKIE_EARLY_CAREER_MULT.default;
+    const c = row.ceiling;
+    if (c && ROOKIE_EARLY_CAREER_MULT[c] != null) return ROOKIE_EARLY_CAREER_MULT[c];
+    const o = Number(row.outlook);
+    if (o <= 2) return ROOKIE_EARLY_CAREER_MULT.franchise;
+    if (o <= 3) return ROOKIE_EARLY_CAREER_MULT.allstar_prospect;
+    return ROOKIE_EARLY_CAREER_MULT.starter;
+  }
+
+  /* Peak-comp floor (prime comparison FP) — kept for tooltips / diagnostics. */
+  function rookieCompPeak(p, nameKey){
+    const row = rookieOutlookRow(p, nameKey);
     const f = row && Number(row.floor);
     return Number.isFinite(f) && f > 0 ? f : null;
   }
 
-  /* 50% next-year proj + 50% comps floor → smash-equivalent lockBase. */
+  /* Early-career smash proxy from draft rank when comps are missing. */
+  function rookieRankFloor(p, nameKey, snapshot){
+    const key = nameKey || normalizePlayerName(sleeperPlayerName(p));
+    if (!key) return null;
+    const ranks = rookieRankByName(snapshot);
+    const rank = ranks.get(key);
+    if (!Number.isFinite(rank)) return null;
+    for (let i = 0; i < ROOKIE_RANK_BASE.length; i++){
+      if (rank <= ROOKIE_RANK_BASE[i].maxRank) return ROOKIE_RANK_BASE[i].base;
+    }
+    return null;
+  }
+
+  /* Early-career (Y1–Y3) smash proxy from peak comps — used for Lock OVR. */
+  function rookieCompFloor(p, nameKey){
+    const row = rookieOutlookRow(p, nameKey);
+    const peak = rookieCompPeak(p, nameKey);
+    if (peak == null) return null;
+    return peak * rookieEarlyCareerMult(row);
+  }
+
+  /* Early-career comps with draft-rank as a floor (and fallback). Rank stops
+     thin ESPN starter floors from underselling mid-lottery names; franchise
+     comps still clear the rank band for the top of the class. */
+  function rookieValueFloor(p, nameKey, snapshot){
+    const comp = rookieCompFloor(p, nameKey);
+    const rank = rookieRankFloor(p, nameKey, snapshot);
+    if (comp != null && rank != null) return Math.max(comp, rank);
+    if (comp != null) return comp;
+    return rank;
+  }
+
+  /* 50% next-year (Y1) proj + 50% early-career comps/rank → smash-equivalent lockBase.
+     Year-1 proj is already early-career; comps are haircut from peak. */
   function blendRookieBase(proj, comp){
     const p = Number(proj);
     const c = Number(comp);
@@ -293,6 +375,13 @@
     if (hasP) return p;
     if (hasC) return c;
     return null;
+  }
+
+  function clampRookieOvr(ovr, hasSmashSamples){
+    const n = Number(ovr);
+    if (!Number.isFinite(n)) return null;
+    if (hasSmashSamples) return n;
+    return Math.min(n, ROOKIE_LOCK_OVR_CAP);
   }
 
   function isRookiePlayer(p, pid, opts){
@@ -512,7 +601,11 @@
         rookieNames
       });
       const proj = projFromMap(projById, pid);
-      const comp = isRookie ? rookieCompFloor(p) : null;
+      const peakComp = isRookie ? rookieCompPeak(p) : null;
+      const earlyComp = isRookie ? rookieCompFloor(p) : null;
+      const rankFloor = isRookie ? rookieRankFloor(p, null, options.twoKSnapshot) : null;
+      const comp = isRookie ? rookieValueFloor(p, null, options.twoKSnapshot) : null;
+      const earlyMult = isRookie ? rookieEarlyCareerMult(rookieOutlookRow(p)) : null;
       const thin = !(d.n >= MIN_SAMPLES_FOR_SMASH);
 
       let base = null;
@@ -520,8 +613,13 @@
       if (isRookie){
         base = blendRookieBase(proj, comp);
         if (base != null){
-          baseSource = (proj != null && comp != null) ? 'rookie-proj-comp'
-            : (comp != null ? 'rookie-comp' : 'rookie-proj');
+          if (proj != null && earlyComp != null) baseSource = 'rookie-proj-early';
+          else if (proj != null && rankFloor != null) baseSource = 'rookie-proj-rank';
+          else if (earlyComp != null && rankFloor != null && comp === rankFloor && earlyComp < rankFloor){
+            baseSource = 'rookie-rank-floor';
+          } else if (earlyComp != null) baseSource = 'rookie-early-comp';
+          else if (rankFloor != null) baseSource = 'rookie-rank';
+          else baseSource = 'rookie-proj';
         } else {
           base = smashLockBase(d);
           baseSource = base != null ? 'smash' : null;
@@ -548,10 +646,14 @@
         d.tradeScore = null;
         d.tradeStars = null;
         d.rookieComp = comp;
+        d.rookieCompPeak = peakComp;
+        d.rookieEarlyMult = earlyMult;
+        d.rookieRankFloor = rankFloor;
         return;
       }
 
-      const ovr = ovrFromSmashBase(base);
+      const rawOvr = ovrFromSmashBase(base);
+      const ovr = isRookie ? clampRookieOvr(rawOvr, !thin) : rawOvr;
       const tier = lockOvrTier(ovr);
       const band = lockAgeBand(p.age, isRookie);
       const injuryStatus = p.injury_status || p.injuryStatus || '';
@@ -577,7 +679,11 @@
       d.tradeAgeMult = AGE_MULT[band] || 0.95;
       d.tradeInjuryMult = injuryStatusMult(injuryStatus);
       d.rookieComp = comp;
+      d.rookieCompPeak = peakComp;
+      d.rookieEarlyMult = earlyMult;
+      d.rookieRankFloor = rankFloor;
       d.rookieProj = proj;
+      d.rookieOvrCapped = isRookie && thin && rawOvr > ROOKIE_LOCK_OVR_CAP;
       count++;
     });
     return count;
@@ -637,12 +743,20 @@
       const p = playerDb[id] || playerDb[String(id)] || {};
       const proj = projFromMap(projById, id);
       const rookie = isRookiePlayer(p, id, {rookieIds, rookieNames});
-      const comp = rookie ? rookieCompFloor(p) : null;
+      const earlyComp = rookie ? rookieCompFloor(p) : null;
+      const rankFloor = rookie ? rookieRankFloor(p, null, options.twoKSnapshot) : null;
+      const comp = rookie ? rookieValueFloor(p, null, options.twoKSnapshot) : null;
       const seed = rookie ? blendRookieBase(proj, comp) : proj;
-      const source = rookie
-        ? ((proj != null && comp != null) ? 'rookie-proj-comp'
-          : (comp != null ? 'rookie-comp' : 'proj'))
-        : 'proj';
+      let source = 'proj';
+      if (rookie){
+        if (proj != null && earlyComp != null) source = 'rookie-proj-early';
+        else if (proj != null && rankFloor != null) source = 'rookie-proj-rank';
+        else if (earlyComp != null && rankFloor != null && comp === rankFloor && earlyComp < rankFloor){
+          source = 'rookie-rank-floor';
+        } else if (earlyComp != null) source = 'rookie-early-comp';
+        else if (rankFloor != null) source = 'rookie-rank';
+        else source = 'proj';
+      }
       seedDistEntry(distMap, id, seed, source);
     });
 
@@ -705,6 +819,9 @@
     AGE_MULT,
     ROOKIE_PROJ_W,
     ROOKIE_COMP_W,
+    ROOKIE_EARLY_CAREER_MULT,
+    ROOKIE_LOCK_OVR_CAP,
+    ROOKIE_RANK_BASE,
     ESPN_ROOKIE_OUTLOOK,
     letterFromPct,
     maxPointsPct,
@@ -725,8 +842,15 @@
     normalizePlayerName,
     sleeperPlayerName,
     rookieNamesFromSnapshot,
+    rookieOutlookRow,
+    rookieEarlyCareerMult,
+    rookieCompPeak,
+    rookieRankByName,
+    rookieRankFloor,
     rookieCompFloor,
+    rookieValueFloor,
     blendRookieBase,
+    clampRookieOvr,
     isRookiePlayer,
     matchRookieIdsByName,
     lockAgeBand,
