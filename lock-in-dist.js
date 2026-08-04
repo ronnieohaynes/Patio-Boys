@@ -282,6 +282,18 @@
       .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
   }
 
+  /* Sleeper often drops Jr./Sr.; 2K/ESPN keep them. Index both forms. */
+  function playerNameKeys(name){
+    const key = normalizePlayerName(name);
+    if (!key) return [];
+    const keys = [key];
+    const stripped = key.replace(/(jr|sr|ii|iii|iv)$/,'');
+    if (stripped && stripped !== key) keys.push(stripped);
+    const withJr = stripped + 'jr';
+    if (stripped && withJr !== key) keys.push(withJr);
+    return keys;
+  }
+
   function sleeperPlayerName(p){
     if (!p) return '';
     if (p.full_name) return p.full_name;
@@ -289,11 +301,11 @@
   }
 
   function rookieNamesFromSnapshot(snapshot){
-    const names = new Set(Object.keys(ESPN_ROOKIE_OUTLOOK));
+    const names = new Set();
+    Object.keys(ESPN_ROOKIE_OUTLOOK).forEach(k => playerNameKeys(k).forEach(x => names.add(x)));
     const pack = snapshot || global.TWO_K_SNAPSHOT || null;
     ((pack && pack.rookies) || []).forEach(r => {
-      const key = normalizePlayerName(r && r.name);
-      if (key) names.add(key);
+      playerNameKeys(r && r.name).forEach(x => names.add(x));
     });
     return names;
   }
@@ -302,17 +314,24 @@
     const map = new Map();
     const pack = snapshot || global.TWO_K_SNAPSHOT || null;
     ((pack && pack.rookies) || []).forEach(r => {
-      const key = normalizePlayerName(r && r.name);
       const rank = Number(r && r.rank);
-      if (!key || !Number.isFinite(rank) || rank <= 0) return;
-      if (!map.has(key) || rank < map.get(key)) map.set(key, rank);
+      if (!Number.isFinite(rank) || rank <= 0) return;
+      playerNameKeys(r && r.name).forEach(key => {
+        if (!map.has(key) || rank < map.get(key)) map.set(key, rank);
+      });
     });
     return map;
   }
 
   function rookieOutlookRow(p, nameKey){
-    const key = nameKey || normalizePlayerName(sleeperPlayerName(p));
-    return ESPN_ROOKIE_OUTLOOK[key] || null;
+    const keys = nameKey
+      ? playerNameKeys(nameKey)
+      : playerNameKeys(sleeperPlayerName(p));
+    for (let i = 0; i < keys.length; i++){
+      const row = ESPN_ROOKIE_OUTLOOK[keys[i]];
+      if (row) return row;
+    }
+    return null;
   }
 
   function rookieEarlyCareerMult(row){
@@ -334,10 +353,16 @@
 
   /* Early-career smash proxy from draft rank when comps are missing. */
   function rookieRankFloor(p, nameKey, snapshot){
-    const key = nameKey || normalizePlayerName(sleeperPlayerName(p));
-    if (!key) return null;
+    const keys = nameKey
+      ? playerNameKeys(nameKey)
+      : playerNameKeys(sleeperPlayerName(p));
+    if (!keys.length) return null;
     const ranks = rookieRankByName(snapshot);
-    const rank = ranks.get(key);
+    let rank = null;
+    for (let i = 0; i < keys.length; i++){
+      const hit = ranks.get(keys[i]);
+      if (Number.isFinite(hit) && (rank == null || hit < rank)) rank = hit;
+    }
     if (!Number.isFinite(rank)) return null;
     for (let i = 0; i < ROOKIE_RANK_BASE.length; i++){
       if (rank <= ROOKIE_RANK_BASE[i].maxRank) return ROOKIE_RANK_BASE[i].base;
@@ -389,27 +414,32 @@
     const yearsExp = Number(p && p.years_exp);
     if (yearsExp === 0) return true;
     if (options.rookieIds && options.rookieIds.has(String(pid))) return true;
-    const key = normalizePlayerName(sleeperPlayerName(p));
-    if (!key) return false;
-    if (ESPN_ROOKIE_OUTLOOK[key]) return true;
-    if (options.rookieNames && options.rookieNames.has(key)) return true;
+    const keys = playerNameKeys(sleeperPlayerName(p));
+    if (!keys.length) return false;
+    for (let i = 0; i < keys.length; i++){
+      const key = keys[i];
+      if (ESPN_ROOKIE_OUTLOOK[key]) return true;
+      if (options.rookieNames && options.rookieNames.has(key)) return true;
+    }
     return false;
   }
 
   /* Map draft-class names → Sleeper ids (prefer active / ranked rows). */
   function matchRookieIdsByName(playerDb, rookieNames){
-    const best = new Map(); /* nameKey → {pid, rank} */
+    const best = new Map(); /* canonical nameKey → {pid, rank} */
     const names = rookieNames || rookieNamesFromSnapshot();
     Object.keys(playerDb || {}).forEach(pid => {
       if (String(pid).indexOf('TEAM_') === 0) return;
       const p = playerDb[pid];
       if (!p) return;
-      const key = normalizePlayerName(sleeperPlayerName(p));
-      if (!key || !names.has(key)) return;
+      const keys = playerNameKeys(sleeperPlayerName(p));
+      const hit = keys.find(k => names.has(k));
+      if (!hit) return;
       const rank = Number(p.search_rank);
       const score = Number.isFinite(rank) ? rank : 999999;
-      const prev = best.get(key);
-      if (!prev || score < prev.rank) best.set(key, {pid: String(pid), rank: score});
+      const canon = keys[0];
+      const prev = best.get(canon);
+      if (!prev || score < prev.rank) best.set(canon, {pid: String(pid), rank: score});
     });
     const ids = new Set();
     best.forEach(row => ids.add(row.pid));
@@ -840,6 +870,7 @@
     smashHitScore,
     smashLockBase,
     normalizePlayerName,
+    playerNameKeys,
     sleeperPlayerName,
     rookieNamesFromSnapshot,
     rookieOutlookRow,
