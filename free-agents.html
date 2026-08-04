@@ -135,8 +135,17 @@
     overflow:hidden;flex:0 0 auto;
   }
   td.trade .trade-stars .star.half{width:.45em}
-  td.fit{font-size:12px;color:#C9CDD8}
-  td.fit .slot{color:var(--green)}
+  td.rec{font-size:12px;color:#C9CDD8;min-width:180px;line-height:1.45}
+  td.rec .verdict{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;
+    letter-spacing:.06em;text-transform:uppercase;
+  }
+  td.rec .verdict.add{color:var(--green)}
+  td.rec .verdict.pass{color:var(--ink-dim)}
+  td.rec .detail{display:block;margin-top:2px}
+  td.rec .detail strong{color:var(--ink);font-weight:600}
+  td.rec .depth{display:block;margin-top:2px;color:var(--ink-dim);font-size:11px}
+  td.rec .depth strong{color:var(--gold);font-weight:600}
   tr.mine td{background:color-mix(in srgb, var(--gold) 7%, transparent)}
   tr:last-child td{border-bottom:none}
   .empty{
@@ -183,12 +192,11 @@
       <div class="field">
         <label for="sortBy">Sort</label>
         <select id="sortBy">
-          <option value="fit">Best fit for team</option>
+          <option value="rec">Recommendation</option>
           <option value="proj">Projected FP/G</option>
           <option value="lock">Lock OVR</option>
           <option value="trade">Trade ★</option>
           <option value="age">Youngest</option>
-          <option value="ovr">2K OVR</option>
         </select>
       </div>
       <div class="field">
@@ -201,7 +209,7 @@
 
     <div class="report-head">
       <h1 id="teamTitle">Targets</h1>
-      <p id="teamSub">Lineup lift vs current roster</p>
+      <p id="teamSub">Top adds · who to drop · depth-chart fit</p>
     </div>
     <div class="fit-grid" id="fitGrid"></div>
 
@@ -215,9 +223,7 @@
             <th data-sort="lockOvr" data-label="Lock">Lock</th>
             <th data-sort="tradeScore" data-label="Trade ★">Trade ★</th>
             <th class="hide-sm" data-sort="age" data-label="Age">Age</th>
-            <th class="hide-sm" data-sort="ovr" data-label="2K">2K</th>
-            <th data-sort="gain" data-label="Lineup lift">Lineup lift</th>
-            <th data-sort="fitLabel" data-label="Fit">Fit</th>
+            <th data-sort="rec" data-label="Recommendation">Recommendation</th>
           </tr>
         </thead>
         <tbody id="faBody"></tbody>
@@ -229,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-smash5';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-fa-rec';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -291,25 +297,102 @@ const state = {
   slots: [],
   selectedTeam: MY_TEAM,
   scoredByTeam: {},
-  tableSort: {key: 'gain', dir: 'desc'}
+  tableSort: {key: 'rec', dir: 'desc'}
 };
 
 const SORT_SELECT_TO_KEY = {
-  fit: 'gain',
+  rec: 'rec',
   proj: 'metric',
   lock: 'lockOvr',
   trade: 'tradeScore',
-  age: 'age',
-  ovr: 'ovr'
+  age: 'age'
 };
 const SORT_KEY_TO_SELECT = {
-  gain: 'fit',
+  rec: 'rec',
   metric: 'proj',
   lockOvr: 'lock',
   tradeScore: 'trade',
-  age: 'age',
-  ovr: 'ovr'
+  age: 'age'
 };
+
+const ADD_GAIN = 0.5;
+const ADD_PROJ_EDGE = 0.5;
+const STRING_LABELS = ['1st string', '2nd string', '3rd string'];
+
+function depthRankValue(rec){
+  if (rec && rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
+  if (rec && rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr) / 10;
+  return -1;
+}
+
+/* Same exclusive 10-slot × 3-string chart as Team Intel, ranked by proj. */
+function buildFaDepthChart(players, slots){
+  if (!window.TeamNeedsModel || !slots || !slots.length) return null;
+  const records = (players || []).filter(Boolean).map(p => Object.assign({}, p, {
+    rankVal: depthRankValue(p)
+  }));
+  const rows = slots.map((slot, index) => {
+    const same = slots.map((s, i) => ({s, i})).filter(x => x.s === slot);
+    const label = same.length > 1
+      ? (slot + ' ' + (same.findIndex(x => x.i === index) + 1))
+      : slot;
+    return {key: slot + '#' + index, slot, label, strings: [null, null, null]};
+  });
+  const used = new Set();
+  for (let stringIdx = 0; stringIdx < 3; stringIdx++){
+    const order = rows.slice().sort((a, b) => {
+      const ca = records.filter(r =>
+        !used.has(String(r.id))
+        && TeamNeedsModel.eligibleForSlot(a.slot, TeamNeedsModel.positions(r.positions))
+      ).length;
+      const cb = records.filter(r =>
+        !used.has(String(r.id))
+        && TeamNeedsModel.eligibleForSlot(b.slot, TeamNeedsModel.positions(r.positions))
+      ).length;
+      return ca - cb || slots.indexOf(a.slot) - slots.indexOf(b.slot) || a.key.localeCompare(b.key);
+    });
+    order.forEach(row => {
+      const pick = records
+        .filter(r =>
+          !used.has(String(r.id))
+          && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
+        )
+        .sort((a, b) => b.rankVal - a.rankVal
+          || String(a.name).localeCompare(String(b.name)))[0];
+      if (!pick) return;
+      row.strings[stringIdx] = pick;
+      used.add(String(pick.id));
+    });
+  }
+  return {rows, slots};
+}
+
+function findDepthFit(chart, playerId){
+  if (!chart || !chart.rows) return null;
+  const pid = String(playerId);
+  for (let stringIdx = 0; stringIdx < 3; stringIdx++){
+    for (const row of chart.rows){
+      const p = row.strings[stringIdx];
+      if (p && String(p.id) === pid){
+        return {
+          stringIdx,
+          stringLabel: STRING_LABELS[stringIdx],
+          slot: row.slot,
+          label: row.label
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function weakestRostered(roster){
+  if (!roster || !roster.length) return null;
+  return roster.slice().sort((a, b) =>
+    depthRankValue(a) - depthRankValue(b)
+    || String(a.name).localeCompare(String(b.name))
+  )[0];
+}
 
 function syncSortSelectFromState(){
   const sel = document.getElementById('sortBy');
@@ -321,7 +404,7 @@ function syncSortSelectFromState(){
 function applySortSelectToState(){
   const sel = document.getElementById('sortBy');
   if (!sel) return;
-  const key = SORT_SELECT_TO_KEY[sel.value] || 'gain';
+  const key = SORT_SELECT_TO_KEY[sel.value] || 'rec';
   const dir = (window.TableSort && TableSort.defaultDirForKey(key)) || (key === 'age' ? 'asc' : 'desc');
   state.tableSort = {key, dir};
 }
@@ -373,26 +456,98 @@ function lockCellHtml(a){
 
 function scoreAgentsForTeam(team){
   if (!window.TeamNeedsModel || !state.slots.length){
-    return state.agents.map(a => ({
-      ...a,
-      gain: Number(a.metric) || 0,
-      slot: null,
-      displaced: null,
-      ageBonus: 0
-    })).sort((a, b) => (b.metric || 0) - (a.metric || 0));
+    return state.agents.map(a => {
+      const weak = weakestRostered(team.players);
+      const edge = depthRankValue(a) - (weak ? depthRankValue(weak) : 0);
+      const shouldAdd = edge >= ADD_PROJ_EDGE;
+      return {
+        ...a,
+        gain: Number(a.metric) || 0,
+        slot: null,
+        displaced: null,
+        ageBonus: 0,
+        shouldAdd,
+        drop: shouldAdd ? weak : null,
+        depthFit: null,
+        depthLabel: '—',
+        verdict: shouldAdd ? 'Add' : 'Pass',
+        detail: shouldAdd && weak
+          ? ('Drop ' + weak.name)
+          : (shouldAdd ? 'Open roster spot' : 'No clear roster upgrade.'),
+        recScore: shouldAdd ? (1000 + edge) : edge
+      };
+    }).sort((a, b) => b.recScore - a.recScore || (b.metric || 0) - (a.metric || 0));
   }
   const roster = team.players.slice();
   const opt = TeamNeedsModel.optimize(roster, state.slots);
+  const weak = weakestRostered(roster);
+  const weakVal = weak ? depthRankValue(weak) : 0;
+
   return state.agents.map(a => {
     const fit = TeamNeedsModel.candidateGain(a, opt);
+    const depthChart = buildFaDepthChart(roster.concat([a]), state.slots);
+    const depthFit = findDepthFit(depthChart, a.id);
+    const faVal = depthRankValue(a);
+    const projEdge = faVal - weakVal;
+    const displacedPlayer = fit.displaced && fit.displaced.player ? fit.displaced.player : null;
+    const beatsWeakest = !weak || projEdge > 0.05;
+    const cracksStarters = fit.gain >= ADD_GAIN && fit.slot;
+    const depthAdd = !!(depthFit && depthFit.stringIdx <= 1 && beatsWeakest);
+    const clearBenchUpgrade = projEdge >= ADD_PROJ_EDGE && !!depthFit;
+
+    const shouldAdd = !!(beatsWeakest && (cracksStarters || depthAdd || clearBenchUpgrade));
+
+    let drop = null;
+    if (shouldAdd){
+      if (weak && projEdge > 0.05) drop = weak;
+      else if (displacedPlayer && depthRankValue(a) > depthRankValue(displacedPlayer)) drop = displacedPlayer;
+      else if (weak) drop = weak;
+    }
+
+    const depthLabel = depthFit
+      ? (depthFit.stringLabel + ' · ' + depthFit.label)
+      : (fit.slot ? ('Starter look · ' + fit.slot) : 'Off the chart');
+
+    let verdict = 'Pass';
+    let detail = 'No clear roster upgrade.';
+    if (shouldAdd){
+      verdict = 'Add';
+      if (drop) detail = 'Drop ' + drop.name;
+      else if (roster.length < state.slots.length) detail = 'Open roster spot';
+      else detail = 'Stream over weakest';
+    } else if (depthFit && depthFit.stringIdx === 2 && projEdge > 0){
+      detail = weak
+        ? ('Only if cutting ' + weak.name)
+        : 'Fringe third-string depth';
+    } else if (fit.slot && fit.gain > 0.05){
+      detail = 'Slight ' + fit.slot + ' edge — not enough to add';
+    }
+
+    const recScore = shouldAdd
+      ? (1000
+        + fit.gain * 10
+        + (depthFit ? (3 - depthFit.stringIdx) * 25 : 0)
+        + Math.max(0, projEdge))
+      : (fit.gain * 5
+        + Math.max(0, projEdge)
+        + (depthFit && depthFit.stringIdx === 2 ? 2 : 0));
+
     return {
       ...a,
       gain: fit.gain,
       slot: fit.slot,
       displaced: fit.displaced,
-      ageBonus: fit.ageBonus || 0
+      ageBonus: fit.ageBonus || 0,
+      shouldAdd,
+      drop,
+      depthFit,
+      depthLabel,
+      verdict,
+      detail,
+      recScore,
+      projEdge
     };
-  }).sort((a, b) => b.gain - a.gain || (b.metric || 0) - (a.metric || 0));
+  }).sort((a, b) => b.recScore - a.recScore || b.gain - a.gain || (b.metric || 0) - (a.metric || 0));
 }
 
 function currentTeam(){
@@ -410,8 +565,8 @@ function filteredList(){
     if (!q) return true;
     return normalizeName(a.name).includes(q) || normalizeName(a.nbaTeam).includes(q);
   });
-  const sort = state.tableSort || {key: 'gain', dir: 'desc'};
-  const key = sort.key || 'gain';
+  const sort = state.tableSort || {key: 'rec', dir: 'desc'};
+  const key = sort.key || 'rec';
   const dir = sort.dir || 'desc';
   const TS = window.TableSort;
   rows = rows.slice().sort((a, b) => {
@@ -423,19 +578,39 @@ function filteredList(){
       if (key === 'age') return Number.isFinite(row.age) ? row.age : null;
       if (key === 'ovr') return row.ovr;
       if (key === 'gain') return row.gain;
-      if (key === 'fitLabel') return row.slot || 'Bench / depth';
-      return row.gain;
+      if (key === 'rec') return row.recScore;
+      if (key === 'fitLabel') return row.depthLabel || row.slot || '—';
+      return row.recScore;
     }
     const c = TS ? TS.cmp(val(a), val(b), dir) : 0;
     if (c) return c;
     if (TS){
-      const tie = TS.cmp(a.gain, b.gain, 'desc');
+      const tie = TS.cmp(a.recScore, b.recScore, 'desc');
       if (tie) return tie;
+      const g = TS.cmp(a.gain, b.gain, 'desc');
+      if (g) return g;
       return TS.cmp(a.name, b.name, 'asc');
     }
-    return (b.gain || 0) - (a.gain || 0) || a.name.localeCompare(b.name);
+    return (b.recScore || 0) - (a.recScore || 0)
+      || (b.gain || 0) - (a.gain || 0)
+      || a.name.localeCompare(b.name);
   });
   return rows;
+}
+
+function recCellHtml(a){
+  const verdictCls = a.shouldAdd ? 'add' : 'pass';
+  const dropBit = a.drop
+    ? ('Drop <strong>' + escapeHtml(a.drop.name) + '</strong>')
+    : escapeHtml(a.detail || '');
+  const depthBit = a.depthLabel
+    ? ('Fits <strong>' + escapeHtml(a.depthLabel) + '</strong>')
+    : '';
+  return '<td class="rec">'
+    + '<span class="verdict ' + verdictCls + '">' + escapeHtml(a.verdict || 'Pass') + '</span>'
+    + '<span class="detail">' + (a.shouldAdd ? dropBit : escapeHtml(a.detail || 'No clear roster upgrade.')) + '</span>'
+    + (depthBit ? '<span class="depth">' + depthBit + '</span>' : '')
+    + '</td>';
 }
 
 function render(){
@@ -444,36 +619,35 @@ function render(){
   const color = TEAM_COLORS[team.team] || 'var(--gold)';
   document.getElementById('teamTitle').textContent = team.team + (team.team === MY_TEAM ? ' (you)' : '');
   document.getElementById('teamSub').textContent =
-    'Top 3 adds · lineup lift vs optimized starters';
+    'Top 3 adds · who to drop · depth-chart fit';
 
   document.querySelectorAll('.team-chip').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.team === team.team);
   });
 
   const rows = filteredList();
-  const top = rows.slice(0, 3);
+  const adds = rows.filter(a => a.shouldAdd);
+  const top = (adds.length ? adds : rows).slice(0, 3);
   const fitGrid = document.getElementById('fitGrid');
   if (!top.length){
     fitGrid.innerHTML = '<div class="fit-card" style="--team-color:' + color + '">'
       + '<p class="rank">No clear upgrades</p>'
       + '<h3 class="name">Thin wire</h3>'
-      + '<p class="why">Nobody left moves the needle much for this roster under current projections.</p></div>';
+      + '<p class="why">Nobody left is worth an add for this roster under current projections.</p></div>';
   } else {
     fitGrid.innerHTML = top.map((a, i) => {
-      const why = a.slot
-        ? ('Would push into <strong>' + escapeHtml(a.slot) + '</strong>'
-          + (a.displaced ? ' over ' + escapeHtml(a.displaced.player.name) : ' (open/upgrade)')
-          + '.')
-        : 'Depth add — does not crack the optimized starters.';
+      const why = (a.shouldAdd ? '<strong>Add</strong>' : '<strong>Pass</strong>')
+        + (a.drop ? ' — drop <strong>' + escapeHtml(a.drop.name) + '</strong>' : '')
+        + (a.depthLabel ? '. Fits <strong>' + escapeHtml(a.depthLabel) + '</strong>.' : '.');
       return '<article class="fit-card" style="--team-color:' + color + '">'
-        + '<p class="rank">Target #' + (i + 1) + '</p>'
+        + '<p class="rank">' + (a.shouldAdd ? 'Add' : 'Watch') + ' #' + (i + 1) + '</p>'
         + '<h3 class="name">' + escapeHtml(a.name) + '</h3>'
         + '<p class="meta">' + escapeHtml(a.pos) + ' \u00b7 ' + escapeHtml(a.nbaTeam || 'FA')
         + (a.lockOvr != null ? ' \u00b7 Lock ' + Math.round(a.lockOvr) : '')
         + (a.tradeStars != null ? ' \u00b7 ' + (window.LockInDist && LockInDist.formatStars
           ? LockInDist.formatStars(a.tradeStars) : (a.tradeStars + '\u2605')) : '')
         + (a.metric != null ? ' \u00b7 ' + a.metric.toFixed(1) + ' proj' : '')
-        + ' \u00b7 lift <span class="gain">+' + a.gain.toFixed(1) + '</span></p>'
+        + '</p>'
         + '<p class="why">' + why + '</p></article>';
     }).join('');
   }
@@ -493,10 +667,6 @@ function render(){
     const ageTag = Number.isFinite(a.age) && a.age < 24
       ? '<span class="tag young">Young</span>' : '';
     const rookTag = a.isRookie ? '<span class="tag">Rookie</span>' : '';
-    const fit = a.slot
-      ? ('<span class="slot">' + escapeHtml(a.slot) + '</span>'
-        + (a.displaced ? ' over ' + escapeHtml(a.displaced.player.name) : ''))
-      : 'Bench / depth';
     return '<tr class="' + (team.team === MY_TEAM ? 'mine' : '') + '">'
       + '<td class="rk">' + (i + 1) + '</td>'
       + '<td class="player">' + escapeHtml(a.name) + ageTag + rookTag
@@ -507,9 +677,7 @@ function render(){
       + lockCellHtml(a)
       + '<td class="trade">' + tradeStarsHtml(a.tradeStars) + '</td>'
       + '<td class="num hide-sm">' + (Number.isFinite(a.age) ? a.age : '\u2014') + '</td>'
-      + '<td class="num hide-sm">' + (a.ovr != null ? a.ovr : '\u2014') + '</td>'
-      + '<td class="num">+' + a.gain.toFixed(1) + '</td>'
-      + '<td class="fit">' + fit + '</td>'
+      + recCellHtml(a)
       + '</tr>';
   }).join('');
   if (window.TableSort){
@@ -710,7 +878,7 @@ async function load(){
     const withLock = state.agents.filter(a => a.lockOvr != null).length;
     tag.textContent = state.agents.length + ' free agents';
     status.classList.remove('error');
-    status.textContent = 'Three best adds for the selected team (same optimizer as Team Intel). '
+    status.textContent = 'Add / pass with drop target and depth-chart fit (same slots as Team Intel). '
       + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR / Trade \u2605'
       + (state.lockStatsSeason ? ' (' + state.lockStatsSeason + ' smash)' : '')
       + '.';
