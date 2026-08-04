@@ -137,6 +137,9 @@
   td.trade .trade-stars .star.half{width:.45em}
   td.fit{font-size:12px;color:#C9CDD8}
   td.fit .slot{color:var(--green)}
+  td.fit .sub-inline{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+  }
   tr.mine td{background:color-mix(in srgb, var(--gold) 7%, transparent)}
   tr:last-child td{border-bottom:none}
   .empty{
@@ -229,7 +232,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-smash5';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-fa-bench-why';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -378,21 +381,119 @@ function scoreAgentsForTeam(team){
       gain: Number(a.metric) || 0,
       slot: null,
       displaced: null,
-      ageBonus: 0
+      ageBonus: 0,
+      benchRank: null,
+      benchOver: null,
+      benchBehind: null,
+      fitKind: 'depth'
     })).sort((a, b) => (b.metric || 0) - (a.metric || 0));
   }
   const roster = team.players.slice();
   const opt = TeamNeedsModel.optimize(roster, state.slots);
+  const starterIds = new Set(
+    (opt.fills || []).filter(Boolean).map(f => String(f.player.id))
+  );
+  const bench = roster
+    .filter(p => !starterIds.has(String(p.id)) && Number.isFinite(Number(p.metric)))
+    .slice()
+    .sort((a, b) => Number(b.metric) - Number(a.metric));
+
   return state.agents.map(a => {
     const fit = TeamNeedsModel.candidateGain(a, opt);
+    const v = Number(a.metric);
+    let benchRank = null;
+    let benchOver = null;
+    let benchBehind = null;
+    let fitKind = 'depth';
+
+    if (fit.slot){
+      fitKind = 'starter';
+    } else if (Number.isFinite(v)){
+      const mixed = bench.concat([a]).sort((x, y) => Number(y.metric) - Number(x.metric));
+      benchRank = mixed.findIndex(p => String(p.id) === String(a.id)) + 1;
+      const beaten = bench.filter(p => v > Number(p.metric));
+      benchOver = beaten.length ? beaten[beaten.length - 1] : null; /* weakest player outranked */
+      const ahead = bench.filter(p => Number(p.metric) >= v);
+      benchBehind = ahead.length ? ahead[ahead.length - 1] : null; /* closest stronger bench mate */
+      fitKind = beaten.length ? 'bench' : 'depth';
+    }
+
     return {
       ...a,
       gain: fit.gain,
       slot: fit.slot,
       displaced: fit.displaced,
-      ageBonus: fit.ageBonus || 0
+      ageBonus: fit.ageBonus || 0,
+      benchRank,
+      benchOver,
+      benchBehind,
+      fitKind,
+      benchSize: bench.length
     };
   }).sort((a, b) => b.gain - a.gain || (b.metric || 0) - (a.metric || 0));
+}
+
+function fitLabelHtml(a){
+  if (a.slot){
+    return '<span class="slot">' + escapeHtml(a.slot) + '</span>'
+      + (a.displaced ? ' over ' + escapeHtml(a.displaced.player.name) : '');
+  }
+  if (a.fitKind === 'bench' && a.benchOver){
+    return '<span class="slot">Bench</span> over ' + escapeHtml(a.benchOver.name)
+      + (a.benchRank ? ' <span class="sub-inline">(B' + a.benchRank + ')</span>' : '');
+  }
+  if (a.benchRank != null){
+    return 'Bench / B' + a.benchRank + ' depth';
+  }
+  return 'Bench / depth';
+}
+
+function fitWhyHtml(a){
+  if (a.slot){
+    return 'Would push into <strong>' + escapeHtml(a.slot) + '</strong>'
+      + (a.displaced
+        ? ' over ' + escapeHtml(a.displaced.player.name)
+          + (Number.isFinite(Number(a.displaced.player.metric))
+            ? ' (' + Number(a.displaced.player.metric).toFixed(1) + ' proj)'
+            : '')
+        : ' (open/upgrade)')
+      + '.';
+  }
+
+  const proj = Number.isFinite(Number(a.metric)) ? Number(a.metric).toFixed(1) + ' proj' : null;
+  if (a.fitKind === 'bench' && a.benchOver){
+    let why = 'Bench upgrade — projects ahead of <strong>' + escapeHtml(a.benchOver.name) + '</strong>'
+      + (Number.isFinite(Number(a.benchOver.metric))
+        ? ' (' + Number(a.benchOver.metric).toFixed(1) + ')'
+        : '')
+      + ' among non-starters';
+    if (a.benchRank != null) why += ', ranking <strong>B' + a.benchRank + '</strong> on your depth chart';
+    if (proj) why += ' at ' + proj;
+    why += '.';
+    if (a.benchBehind && Number.isFinite(Number(a.benchBehind.metric))){
+      why += ' Still behind ' + escapeHtml(a.benchBehind.name)
+        + ' (' + Number(a.benchBehind.metric).toFixed(1) + ').';
+    }
+    return why;
+  }
+
+  if (a.benchBehind && Number.isFinite(Number(a.benchBehind.metric))){
+    return 'Depth add — does not crack the starters and sits behind your current bench'
+      + ' (closest: <strong>' + escapeHtml(a.benchBehind.name) + '</strong> at '
+      + Number(a.benchBehind.metric).toFixed(1) + ' proj)'
+      + (proj ? '; ' + proj + ' for this FA' : '')
+      + '.';
+  }
+
+  if (!a.benchSize){
+    return 'Depth add — roster has no scored bench yet'
+      + (proj ? '; would open the bench at ' + proj : '')
+      + '.';
+  }
+
+  return 'Depth add — does not crack the optimized starters'
+    + (proj ? ' (' + proj + ')' : '')
+    + '.';
 }
 
 function currentTeam(){
@@ -423,7 +524,12 @@ function filteredList(){
       if (key === 'age') return Number.isFinite(row.age) ? row.age : null;
       if (key === 'ovr') return row.ovr;
       if (key === 'gain') return row.gain;
-      if (key === 'fitLabel') return row.slot || 'Bench / depth';
+      if (key === 'fitLabel'){
+        if (row.slot) return String(row.slot);
+        if (row.fitKind === 'bench' && row.benchOver) return 'Bench over ' + row.benchOver.name;
+        if (row.benchRank != null) return 'Bench B' + row.benchRank;
+        return 'Bench / depth';
+      }
       return row.gain;
     }
     const c = TS ? TS.cmp(val(a), val(b), dir) : 0;
@@ -444,7 +550,7 @@ function render(){
   const color = TEAM_COLORS[team.team] || 'var(--gold)';
   document.getElementById('teamTitle').textContent = team.team + (team.team === MY_TEAM ? ' (you)' : '');
   document.getElementById('teamSub').textContent =
-    'Top 3 adds · lineup lift vs optimized starters';
+    'Top 3 adds · starter lift and bench-depth reasoning';
 
   document.querySelectorAll('.team-chip').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.team === team.team);
@@ -460,11 +566,6 @@ function render(){
       + '<p class="why">Nobody left moves the needle much for this roster under current projections.</p></div>';
   } else {
     fitGrid.innerHTML = top.map((a, i) => {
-      const why = a.slot
-        ? ('Would push into <strong>' + escapeHtml(a.slot) + '</strong>'
-          + (a.displaced ? ' over ' + escapeHtml(a.displaced.player.name) : ' (open/upgrade)')
-          + '.')
-        : 'Depth add — does not crack the optimized starters.';
       return '<article class="fit-card" style="--team-color:' + color + '">'
         + '<p class="rank">Target #' + (i + 1) + '</p>'
         + '<h3 class="name">' + escapeHtml(a.name) + '</h3>'
@@ -474,7 +575,7 @@ function render(){
           ? LockInDist.formatStars(a.tradeStars) : (a.tradeStars + '\u2605')) : '')
         + (a.metric != null ? ' \u00b7 ' + a.metric.toFixed(1) + ' proj' : '')
         + ' \u00b7 lift <span class="gain">+' + a.gain.toFixed(1) + '</span></p>'
-        + '<p class="why">' + why + '</p></article>';
+        + '<p class="why">' + fitWhyHtml(a) + '</p></article>';
     }).join('');
   }
 
@@ -493,10 +594,7 @@ function render(){
     const ageTag = Number.isFinite(a.age) && a.age < 24
       ? '<span class="tag young">Young</span>' : '';
     const rookTag = a.isRookie ? '<span class="tag">Rookie</span>' : '';
-    const fit = a.slot
-      ? ('<span class="slot">' + escapeHtml(a.slot) + '</span>'
-        + (a.displaced ? ' over ' + escapeHtml(a.displaced.player.name) : ''))
-      : 'Bench / depth';
+    const fit = fitLabelHtml(a);
     return '<tr class="' + (team.team === MY_TEAM ? 'mine' : '') + '">'
       + '<td class="rk">' + (i + 1) + '</td>'
       + '<td class="player">' + escapeHtml(a.name) + ageTag + rookTag
@@ -509,7 +607,7 @@ function render(){
       + '<td class="num hide-sm">' + (Number.isFinite(a.age) ? a.age : '\u2014') + '</td>'
       + '<td class="num hide-sm">' + (a.ovr != null ? a.ovr : '\u2014') + '</td>'
       + '<td class="num">+' + a.gain.toFixed(1) + '</td>'
-      + '<td class="fit">' + fit + '</td>'
+      + '<td class="fit" title="' + escapeHtml(fitWhyHtml(a).replace(/<[^>]+>/g, '')) + '">' + fit + '</td>'
       + '</tr>';
   }).join('');
   if (window.TableSort){
@@ -710,7 +808,7 @@ async function load(){
     const withLock = state.agents.filter(a => a.lockOvr != null).length;
     tag.textContent = state.agents.length + ' free agents';
     status.classList.remove('error');
-    status.textContent = 'Three best adds for the selected team (same optimizer as Team Intel). '
+    status.textContent = 'Three best adds for the selected team — starter-slot upgrades and bench-depth reasoning. '
       + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR / Trade \u2605'
       + (state.lockStatsSeason ? ' (' + state.lockStatsSeason + ' smash)' : '')
       + '.';
