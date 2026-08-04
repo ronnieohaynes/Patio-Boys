@@ -104,6 +104,10 @@
     font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:var(--ink-dim);
     letter-spacing:.04em;text-transform:uppercase;background:var(--surface-2);
   }
+  th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+  th.sortable:hover{color:var(--ink)}
+  th.sortable[aria-sort="ascending"],
+  th.sortable[aria-sort="descending"]{color:var(--gold)}
   td.rk{font-family:'Anton',sans-serif;font-size:16px;color:var(--ink-dim);width:40px}
   td.player{font-weight:600}
   td.player .sub{
@@ -206,14 +210,14 @@
         <thead>
           <tr>
             <th>#</th>
-            <th>Player</th>
-            <th>Proj</th>
-            <th>Lock</th>
-            <th>Trade ★</th>
-            <th class="hide-sm">Age</th>
-            <th class="hide-sm">2K</th>
-            <th>Lineup lift</th>
-            <th>Fit</th>
+            <th data-sort="name" data-label="Player">Player</th>
+            <th data-sort="metric" data-label="Proj">Proj</th>
+            <th data-sort="lockOvr" data-label="Lock">Lock</th>
+            <th data-sort="tradeScore" data-label="Trade ★">Trade ★</th>
+            <th class="hide-sm" data-sort="age" data-label="Age">Age</th>
+            <th class="hide-sm" data-sort="ovr" data-label="2K">2K</th>
+            <th data-sort="gain" data-label="Lineup lift">Lineup lift</th>
+            <th data-sort="fitLabel" data-label="Fit">Fit</th>
           </tr>
         </thead>
         <tbody id="faBody"></tbody>
@@ -225,8 +229,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-fa-stars-clean';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-th-sort';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -286,8 +290,41 @@ const state = {
   agents: [],
   slots: [],
   selectedTeam: MY_TEAM,
-  scoredByTeam: {}
+  scoredByTeam: {},
+  tableSort: {key: 'gain', dir: 'desc'}
 };
+
+const SORT_SELECT_TO_KEY = {
+  fit: 'gain',
+  proj: 'metric',
+  lock: 'lockOvr',
+  trade: 'tradeScore',
+  age: 'age',
+  ovr: 'ovr'
+};
+const SORT_KEY_TO_SELECT = {
+  gain: 'fit',
+  metric: 'proj',
+  lockOvr: 'lock',
+  tradeScore: 'trade',
+  age: 'age',
+  ovr: 'ovr'
+};
+
+function syncSortSelectFromState(){
+  const sel = document.getElementById('sortBy');
+  if (!sel) return;
+  const mapped = SORT_KEY_TO_SELECT[state.tableSort.key];
+  if (mapped) sel.value = mapped;
+}
+
+function applySortSelectToState(){
+  const sel = document.getElementById('sortBy');
+  if (!sel) return;
+  const key = SORT_SELECT_TO_KEY[sel.value] || 'gain';
+  const dir = (window.TableSort && TableSort.defaultDirForKey(key)) || (key === 'age' ? 'asc' : 'desc');
+  state.tableSort = {key, dir};
+}
 
 function makeRecord(pid, playerDb, projById, lockDist){
   const p = playerDb[pid] || {};
@@ -367,24 +404,36 @@ function filteredList(){
   if (!team) return [];
   const scored = state.scoredByTeam[team.team] || [];
   const pos = document.getElementById('posFilter').value;
-  const sort = document.getElementById('sortBy').value;
   const q = normalizeName(document.getElementById('search').value);
   let rows = scored.filter(a => {
     if (!matchesPosFilter(a.positions, pos)) return false;
     if (!q) return true;
     return normalizeName(a.name).includes(q) || normalizeName(a.nbaTeam).includes(q);
   });
+  const sort = state.tableSort || {key: 'gain', dir: 'desc'};
+  const key = sort.key || 'gain';
+  const dir = sort.dir || 'desc';
+  const TS = window.TableSort;
   rows = rows.slice().sort((a, b) => {
-    if (sort === 'proj') return (b.metric || -1) - (a.metric || -1) || b.gain - a.gain;
-    if (sort === 'lock') return (b.lockOvr || 0) - (a.lockOvr || 0) || b.gain - a.gain;
-    if (sort === 'trade') return (b.tradeScore || 0) - (a.tradeScore || 0) || b.gain - a.gain;
-    if (sort === 'age'){
-      const aa = Number.isFinite(a.age) ? a.age : 99;
-      const bb = Number.isFinite(b.age) ? b.age : 99;
-      return aa - bb || b.gain - a.gain;
+    function val(row){
+      if (key === 'name') return row.name;
+      if (key === 'metric') return row.metric;
+      if (key === 'lockOvr') return row.lockOvr;
+      if (key === 'tradeScore') return row.tradeScore != null ? row.tradeScore : row.tradeStars;
+      if (key === 'age') return Number.isFinite(row.age) ? row.age : null;
+      if (key === 'ovr') return row.ovr;
+      if (key === 'gain') return row.gain;
+      if (key === 'fitLabel') return row.slot || 'Bench / depth';
+      return row.gain;
     }
-    if (sort === 'ovr') return (b.ovr || 0) - (a.ovr || 0) || b.gain - a.gain;
-    return b.gain - a.gain || (b.metric || 0) - (a.metric || 0);
+    const c = TS ? TS.cmp(val(a), val(b), dir) : 0;
+    if (c) return c;
+    if (TS){
+      const tie = TS.cmp(a.gain, b.gain, 'desc');
+      if (tie) return tie;
+      return TS.cmp(a.name, b.name, 'asc');
+    }
+    return (b.gain || 0) - (a.gain || 0) || a.name.localeCompare(b.name);
   });
   return rows;
 }
@@ -434,6 +483,9 @@ function render(){
   if (!rows.length){
     body.innerHTML = '';
     empty.hidden = false;
+    if (window.TableSort){
+      TableSort.decorateThead(document.querySelector('.board thead'), state.tableSort);
+    }
     return;
   }
   empty.hidden = true;
@@ -460,6 +512,9 @@ function render(){
       + '<td class="fit">' + fit + '</td>'
       + '</tr>';
   }).join('');
+  if (window.TableSort){
+    TableSort.decorateThead(document.querySelector('.board thead'), state.tableSort);
+  }
 }
 
 async function load(){
@@ -634,10 +689,22 @@ async function load(){
       });
     });
 
-    ['posFilter','sortBy','search'].forEach(id => {
+    ['posFilter','search'].forEach(id => {
       document.getElementById(id).addEventListener('input', render);
       document.getElementById(id).addEventListener('change', render);
     });
+    document.getElementById('sortBy').addEventListener('change', () => {
+      applySortSelectToState();
+      render();
+    });
+    if (window.TableSort){
+      TableSort.bindThead(document.querySelector('.board'), () => state.tableSort, next => {
+        state.tableSort = next;
+        syncSortSelectFromState();
+        render();
+      });
+    }
+    applySortSelectToState();
 
     document.getElementById('app').hidden = false;
     const withLock = state.agents.filter(a => a.lockOvr != null).length;
