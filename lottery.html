@@ -1163,6 +1163,17 @@ function curveGrades(list, key, gradeKey){
   return sorted;
 }
 
+/* Absolute Max Points grade: 500 = 100% / A+ (not curved vs other teams). */
+function absoluteMaxPointsGrade(score){
+  if (window.LockInDist && typeof LockInDist.maxPointsGrade === 'function'){
+    return LockInDist.maxPointsGrade(score);
+  }
+  const bar = (window.LockInDist && LockInDist.MAX_POINTS_BAROMETER) || 500;
+  const pct = Math.max(0, Math.min(1, Number(score) / bar));
+  return pct >= 0.9 ? 'A+' : pct >= 0.75 ? 'A' : pct >= 0.6 ? 'B+' : pct >= 0.45 ? 'B'
+    : pct >= 0.3 ? 'C+' : pct >= 0.15 ? 'C' : pct >= 0.05 ? 'D' : 'F';
+}
+
 async function loadLeagueStatsCache(){
   leagueTeamStatsCache = {};
   try {
@@ -1248,14 +1259,15 @@ async function loadLeagueStatsCache(){
 
     const ratings = rows.map(row => {
       const ceilingTop = row.players.map(weeklyCeiling).filter(v => v != null).sort((a,b) => b - a).slice(0, 10);
+      const maxPointsRating = ceilingTop.reduce((s,v) => s+v, 0);
       return {
         ownerId: row.ownerId,
         teamName: row.teamName,
         manager: row.manager,
-        maxPointsRating: ceilingTop.reduce((s,v) => s+v, 0)
+        maxPointsRating,
+        maxPointsGrade: absoluteMaxPointsGrade(maxPointsRating)
       };
     });
-    curveGrades(ratings, 'maxPointsRating', 'maxPointsGrade');
     const ratingsByOwner = {};
     ratings.forEach(r => { ratingsByOwner[r.ownerId] = r; });
 
@@ -2348,8 +2360,8 @@ const HQ_NAV = {
     label: 'League',
     defaultTab: 'status',
     tabs: {
-      status: { panel: 'tabStatus', btn: 'tabBtnStatus', frame: 'leagueStatusFrame', src: 'league-status.html?embed=1&v=20260731-medals', loaded: 'statusFrameLoaded' },
-      intel:  { panel: 'tabIntel',  btn: 'tabBtnIntel',  frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260803-stars-clean',     loaded: 'intelFrameLoaded' },
+      status: { panel: 'tabStatus', btn: 'tabBtnStatus', frame: 'leagueStatusFrame', src: 'league-status.html?embed=1&v=20260804-maxpts500', loaded: 'statusFrameLoaded' },
+      intel:  { panel: 'tabIntel',  btn: 'tabBtnIntel',  frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260804-maxpts500',     loaded: 'intelFrameLoaded' },
       goat:   { panel: 'tabGoat',   btn: 'tabBtnGoat',   frame: 'goatTrackerFrame',   src: 'goat-tracker.html?embed=1&v=20260802-eff-wins', loaded: 'goatFrameLoaded' }
     }
   },

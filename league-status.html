@@ -132,7 +132,7 @@
   <section>
     <p class="eyebrow">Weekly Ceiling &middot; Real Game-To-Game Variance &middot; Your Scoring Settings</p>
     <h2>Roster Rating</h2>
-    <p class="caption" style="margin-top:0">Max Points mirrors Sleeper's utilization idea. It pulls every week of last season's stats, finds each player's mean and standard deviation of weekly fantasy output under your real scoring settings, then sums the top 10 players' (mean + 1 standard deviation), a realistic ceiling for a week where the manager starts the right lineup. Graded on a curve against the rest of your league. Says nothing about injuries, role changes, or unproven rookies.</p>
+    <p class="caption" style="margin-top:0">Max Points mirrors Sleeper's utilization idea. It pulls every week of last season's stats, finds each player's mean and standard deviation of weekly fantasy output under your real scoring settings, then sums the top 10 players' (mean + 1 standard deviation), a realistic ceiling for a week where the manager starts the right lineup. Graded on an absolute scale where <strong>500 = 100% / A+</strong> — not curved against the rest of the league. Says nothing about injuries, role changes, or unproven rookies.</p>
     <p class="status" id="ratingStatus">Loading player stats...</p>
     <table id="ratingTable" style="display:none">
       <thead><tr><th>Team</th><th>Manager</th><th>Max Points Grade</th><th>Max Points (Top 10)</th><th>Players Counted</th></tr></thead>
@@ -177,8 +177,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260802';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-maxpts500';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -388,10 +388,17 @@ async function loadRatings(currentData){
       return { teamName:row.teamName, manager:row.manager, maxPts:top10.reduce((s,v)=>s+v,0), found:top10.length };
     });
     const sorted = computed.slice().sort((a,b)=>b.maxPts-a.maxPts);
-    const n = sorted.length;
-    sorted.forEach((r,i)=>{
-      const pct = n<=1?1:(n-1-i)/(n-1);
-      r.grade = pct>=0.9?'A+':pct>=0.75?'A':pct>=0.6?'B+':pct>=0.45?'B':pct>=0.3?'C+':pct>=0.15?'C':pct>=0.05?'D':'F';
+    const barometer = (window.LockInDist && LockInDist.MAX_POINTS_BAROMETER) || 500;
+    sorted.forEach(r=>{
+      r.grade = (window.LockInDist && typeof LockInDist.maxPointsGrade === 'function')
+        ? LockInDist.maxPointsGrade(r.maxPts, barometer)
+        : (function(score){
+            const pct = Math.max(0, Math.min(1, Number(score) / barometer));
+            return pct>=0.9?'A+':pct>=0.75?'A':pct>=0.6?'B+':pct>=0.45?'B':pct>=0.3?'C+':pct>=0.15?'C':pct>=0.05?'D':'F';
+          })(r.maxPts);
+      r.pct = (window.LockInDist && LockInDist.maxPointsPct)
+        ? LockInDist.maxPointsPct(r.maxPts, barometer)
+        : Math.max(0, Math.min(1, r.maxPts / barometer));
     });
     const tbody = document.getElementById('ratingBody');
     sorted.forEach(r=>{
@@ -400,7 +407,7 @@ async function loadRatings(currentData){
       tbody.appendChild(tr);
     });
     document.getElementById('ratingTable').style.display='';
-    statusEl.textContent='Found '+weeksFound+' weeks of '+statsSeason+' data. Max Points sums the top 10 players by (weekly mean + 1 standard deviation). Graded on a curve against the other '+(n-1)+' teams.';
+    statusEl.textContent='Found '+weeksFound+' weeks of '+statsSeason+' data. Max Points sums the top 10 players by (weekly mean + 1 standard deviation). Graded absolutely vs a '+barometer+' barometer (500 = A+), not on a curve against other teams.';
   } catch(e){
     statusEl.classList.add('error'); statusEl.textContent='Could not compute ratings: '+e.message;
   }

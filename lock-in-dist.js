@@ -660,6 +660,30 @@
     };
   }
 
+  /* Absolute Max Points barometer: 500 = 100% / A+. Grades are NOT curved vs the league. */
+  const MAX_POINTS_BAROMETER = 500;
+  function letterFromPct(pct){
+    const p = Number(pct);
+    if (!Number.isFinite(p)) return 'F';
+    if (p >= 0.90) return 'A+';
+    if (p >= 0.75) return 'A';
+    if (p >= 0.60) return 'B+';
+    if (p >= 0.45) return 'B';
+    if (p >= 0.30) return 'C+';
+    if (p >= 0.15) return 'C';
+    if (p >= 0.05) return 'D';
+    return 'F';
+  }
+  function maxPointsPct(score, barometer){
+    const bar = Number(barometer) > 0 ? Number(barometer) : MAX_POINTS_BAROMETER;
+    const s = Number(score);
+    if (!Number.isFinite(s) || !(bar > 0)) return 0;
+    return Math.max(0, Math.min(1, s / bar));
+  }
+  function maxPointsGrade(score, barometer){
+    return letterFromPct(maxPointsPct(score, barometer));
+  }
+
   global.LockInDist = {
     DEFAULT_MARKS,
     LOCK_SLOTS,
@@ -669,10 +693,14 @@
     LOCK_OVR_CEIL,
     LOCK_OVR_ANCHORS,
     TRADE_STAR_BANDS,
+    MAX_POINTS_BAROMETER,
     AGE_MULT,
     ROOKIE_PROJ_W,
     ROOKIE_COMP_W,
     ESPN_ROOKIE_OUTLOOK,
+    letterFromPct,
+    maxPointsPct,
+    maxPointsGrade,
     normalCdf,
     normalHitRate,
     empiricalHitRate,
