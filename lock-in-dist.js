@@ -223,13 +223,12 @@
   /* ---- Smash-hunting Lock OVR (Intel) ----
      Raw smash base = 0.40·Avg + 0.30·Ceil + 0.30·(40·P≥40 + 50·P≥50)
      Rookies: reverse-engineer from next-year proj + ESPN/Woo comps (50/50).
-     Thin samples (N < 15 weekly games) fall back to projected FP/G — blocks
-     end-of-year / garbage-time cups of coffee from owning smash OVR.
+     Thin samples (N < 5 weekly game lines) fall back to projected FP/G.
      Lock OVR maps smash base → 50–99 on an ABSOLUTE curve (not pool
      percentile — percentile vs all NBA stuffed every roster guy into the 90s).
      Age / injury stay off OVR — those belong on Trade stars later. */
   const SMASH_WEIGHTS = { avg: 0.40, ceil: 0.30, hit: 0.30 };
-  const MIN_SAMPLES_FOR_SMASH = 15;
+  const MIN_SAMPLES_FOR_SMASH = 5;
   const LOCK_OVR_FLOOR = 50;
   const LOCK_OVR_CEIL = 99;
   const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
