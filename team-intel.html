@@ -251,6 +251,12 @@
     text-transform:uppercase;color:var(--ink-dim);font-weight:500;
     text-align:left;padding:0 6px 6px 0;border-bottom:1px solid var(--hairline);
   }
+  table.lockin th.sortable{
+    cursor:pointer;user-select:none;white-space:nowrap;
+  }
+  table.lockin th.sortable:hover{color:var(--ink)}
+  table.lockin th.sortable[aria-sort="ascending"],
+  table.lockin th.sortable[aria-sort="descending"]{color:var(--gold)}
   table.lockin th.num, table.lockin td.num{text-align:right}
   table.lockin td{
     padding:6px 6px 6px 0;border-bottom:1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
@@ -367,8 +373,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-maxpts-school';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-th-sort';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -447,7 +453,8 @@ const state = {
   historyByOwner: {},   // ownerId -> [{season, record, pf}]
   awardsByKey: {},      // franchise key -> [{short, yearLabel, name, ...}]
   awardsReady: false,
-  loadError: null
+  loadError: null,
+  lockSort: {key: 'lockOvr', dir: 'desc'}
 };
 
 function setLoadNote(text, isError){
@@ -1017,18 +1024,54 @@ function renderLockIn(t){
   }).join('') + '</div>';
 
   const show = dists.slice().sort((a, b) => {
-    if (!!a.missing !== !!b.missing) return a.missing ? 1 : -1;
-    const as = Number(a.lockOvr != null ? a.lockOvr : a.lockScore);
-    const bs = Number(b.lockOvr != null ? b.lockOvr : b.lockScore);
-    if (Number.isFinite(as) || Number.isFinite(bs)){
-      return (Number.isFinite(bs) ? bs : -1) - (Number.isFinite(as) ? as : -1);
+    const sort = state.lockSort || {key: 'lockOvr', dir: 'desc'};
+    const key = sort.key || 'lockOvr';
+    const dir = sort.dir || 'desc';
+    const TS = window.TableSort;
+    function val(d){
+      if (d.missing) return null;
+      if (key === 'pos') return playerPos(d.pid);
+      if (key === 'name') return playerName(d.pid);
+      if (key === 'lockOvr') return d.lockOvr != null ? d.lockOvr : d.lockScore;
+      if (key === 'tradeScore') return d.tradeScore != null ? d.tradeScore : d.tradeStars;
+      if (key === 'mean') return d.mean;
+      if (key === 'stdev') return d.n ? d.stdev : null;
+      if (key === 'ceiling') return d.ceiling;
+      if (key === 'n') return d.n;
+      if (key.indexOf('hit:') === 0){
+        const m = Number(key.slice(4));
+        return d.hits && d.hits[m] != null ? d.hits[m] : null;
+      }
+      return d.lockOvr != null ? d.lockOvr : d.lockScore;
     }
-    return (Number(b.mean) || 0) - (Number(a.mean) || 0)
+    if (!!a.missing !== !!b.missing) return a.missing ? 1 : -1;
+    const c = TS ? TS.cmp(val(a), val(b), dir) : 0;
+    if (c) return c;
+    const ao = a.lockOvr != null ? a.lockOvr : a.lockScore;
+    const bo = b.lockOvr != null ? b.lockOvr : b.lockScore;
+    if (TS){
+      const tie = TS.cmp(ao, bo, 'desc');
+      if (tie) return tie;
+      return TS.cmp(playerName(a.pid), playerName(b.pid), 'asc');
+    }
+    return (Number(bo) || 0) - (Number(ao) || 0)
       || playerName(a.pid).localeCompare(playerName(b.pid));
   });
-  const head = '<tr><th>Pos</th><th>Name</th><th>OVR</th><th>Trade</th><th class="num">Avg</th><th class="num">σ</th><th class="num">Ceil</th>'
-    + marks.map(m => '<th class="num">≥' + m + '</th>').join('')
-    + '<th class="num">N</th></tr>';
+  const TS = window.TableSort;
+  const sortState = state.lockSort || {key: 'lockOvr', dir: 'desc'};
+  const head = '<tr>'
+    + (TS ? TS.thHtml('Pos', 'pos', sortState) : '<th>Pos</th>')
+    + (TS ? TS.thHtml('Name', 'name', sortState) : '<th>Name</th>')
+    + (TS ? TS.thHtml('OVR', 'lockOvr', sortState) : '<th>OVR</th>')
+    + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
+    + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
+    + (TS ? TS.thHtml('\u03c3', 'stdev', sortState, 'num') : '<th class="num">\u03c3</th>')
+    + (TS ? TS.thHtml('Ceil', 'ceiling', sortState, 'num') : '<th class="num">Ceil</th>')
+    + marks.map(m => TS
+      ? TS.thHtml('\u2265' + m, 'hit:' + m, sortState, 'num')
+      : '<th class="num">\u2265' + m + '</th>').join('')
+    + (TS ? TS.thHtml('N', 'n', sortState, 'num') : '<th class="num">N</th>')
+    + '</tr>';
   const rows = show.map(d => {
     if (d.missing){
       return '<tr><td class="pos">' + escapeHtml(playerPos(d.pid)) + '</td>'
@@ -1130,6 +1173,12 @@ function renderLockIn(t){
   body.innerHTML = fillHtml
     + '<table class="lockin"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table>'
     + note;
+  if (window.TableSort){
+    TableSort.bindThead(body, () => state.lockSort, next => {
+      state.lockSort = next;
+      renderLockIn(state.teamsByKey[state.selected] || t);
+    });
+  }
 }
 
 function needsPlayerRecord(pid){
