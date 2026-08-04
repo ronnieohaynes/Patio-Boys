@@ -233,6 +233,91 @@
   tr.involved td{background:color-mix(in srgb, var(--gold) 7%, transparent)}
   tr.leader td{background:color-mix(in srgb, var(--coral) 10%, transparent)}
   tr:last-child td{border-bottom:none}
+
+  /* mode tabs */
+  .mode-tabs{
+    display:flex;gap:8px;margin:16px 0 4px;flex-wrap:wrap;
+  }
+  .mode-tab{
+    background:var(--surface);border:1px solid var(--hairline);border-radius:6px;
+    color:var(--ink-dim);font-family:'IBM Plex Mono',monospace;font-size:11px;
+    font-weight:600;letter-spacing:.05em;text-transform:uppercase;
+    padding:8px 14px;cursor:pointer;
+  }
+  .mode-tab:hover{color:var(--ink);border-color:var(--ink-dim)}
+  .mode-tab.active{
+    color:var(--ink);border-color:var(--gold);
+    background:color-mix(in srgb, var(--gold) 14%, var(--surface));
+  }
+  .mode-panel[hidden]{display:none}
+
+  /* trade finder */
+  .finder-controls{
+    display:grid;grid-template-columns:1.1fr 1fr 1.4fr;gap:12px;align-items:end;
+    margin:14px 0 12px;
+  }
+  @media(max-width:760px){
+    .finder-controls{grid-template-columns:1fr}
+  }
+  .dir-toggle{display:flex;gap:6px}
+  .dir-toggle button{
+    flex:1;background:var(--surface);border:1px solid var(--hairline);border-radius:6px;
+    color:var(--ink-dim);font-family:'IBM Plex Mono',monospace;font-size:11px;
+    font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:9px 10px;cursor:pointer;
+  }
+  .dir-toggle button.active{
+    color:var(--ink);border-color:var(--gold);
+    background:color-mix(in srgb, var(--gold) 14%, var(--surface));
+  }
+  .finder-pick{
+    border:1px solid var(--hairline);border-radius:8px;background:var(--surface);
+    overflow:hidden;margin-bottom:14px;
+  }
+  .finder-pick .board-head{padding:10px 14px}
+  .finder-results{display:flex;flex-direction:column;gap:10px}
+  .finder-team{
+    border:1px solid var(--hairline);border-radius:8px;background:var(--surface);
+    border-left:4px solid var(--team-color, var(--gold));overflow:hidden;
+  }
+  .finder-team .ft-head{
+    display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+    padding:10px 14px;background:var(--surface-2);border-bottom:1px solid var(--hairline);
+  }
+  .finder-team .ft-head h3{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:16px;margin:0;letter-spacing:.02em;
+  }
+  .finder-team .ft-head .count{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;
+  }
+  .offer-row{
+    display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;
+    padding:12px 14px;cursor:pointer;
+    border-bottom:1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+  }
+  .offer-row:last-child{border-bottom:none}
+  .offer-row:hover{background:color-mix(in srgb, var(--gold) 7%, transparent)}
+  .offer-row .offer-line{font-size:14px;font-weight:600;color:var(--ink);line-height:1.35}
+  .offer-row .offer-line .arrow{color:var(--ink-dim);font-weight:500;margin:0 6px}
+  .offer-row .offer-meta{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    margin-top:4px;line-height:1.4;
+  }
+  .offer-row .offer-side{
+    text-align:right;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--gold);
+    white-space:nowrap;
+  }
+  .offer-row .ruling{
+    display:inline-block;margin-top:4px;padding:2px 7px;border-radius:3px;
+    font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  }
+  .offer-row .ruling.allow{background:color-mix(in srgb, var(--green) 28%, transparent);color:var(--green)}
+  .offer-row .ruling.caution{background:color-mix(in srgb, var(--gold) 28%, transparent);color:var(--gold)}
+  .offer-row .ruling.block{background:color-mix(in srgb, var(--coral) 28%, transparent);color:var(--coral)}
+  .finder-empty{
+    padding:22px;text-align:center;color:var(--ink-dim);
+    font-family:'IBM Plex Mono',monospace;font-size:12px;
+  }
 </style>
 </head>
 <body>
@@ -244,45 +329,85 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR (smash production) × age × injury — same scale as Team Intel. Max Points still checks league balance. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
 
   <div id="app" hidden>
-    <div class="team-pick">
-      <div class="field">
-        <label for="teamA">Team A receives from Team B</label>
-        <select id="teamA"></select>
-      </div>
-      <div class="vs">VS</div>
-      <div class="field">
-        <label for="teamB">Team B receives from Team A</label>
-        <select id="teamB"></select>
-      </div>
+    <div class="mode-tabs" role="tablist">
+      <button type="button" class="mode-tab active" data-mode="analyze" id="tabAnalyze">Analyze</button>
+      <button type="button" class="mode-tab" data-mode="finder" id="tabFinder">Trade Finder</button>
     </div>
 
-    <div class="boards">
-      <div class="board" id="boardA" style="--team-color:var(--gold)">
-        <div class="board-head">
-          <h2 id="boardATitle">Team A</h2>
-          <span class="hint">Sending these</span>
+    <div class="mode-panel" id="modeAnalyze">
+      <div class="team-pick">
+        <div class="field">
+          <label for="teamA">Team A receives from Team B</label>
+          <select id="teamA"></select>
         </div>
-        <div class="player-list" id="listA"></div>
-      </div>
-      <div class="board" id="boardB" style="--team-color:var(--gold)">
-        <div class="board-head">
-          <h2 id="boardBTitle">Team B</h2>
-          <span class="hint">Sending these</span>
+        <div class="vs">VS</div>
+        <div class="field">
+          <label for="teamB">Team B receives from Team A</label>
+          <select id="teamB"></select>
         </div>
-        <div class="player-list" id="listB"></div>
       </div>
+
+      <div class="boards">
+        <div class="board" id="boardA" style="--team-color:var(--gold)">
+          <div class="board-head">
+            <h2 id="boardATitle">Team A</h2>
+            <span class="hint">Sending these</span>
+          </div>
+          <div class="player-list" id="listA"></div>
+        </div>
+        <div class="board" id="boardB" style="--team-color:var(--gold)">
+          <div class="board-head">
+            <h2 id="boardBTitle">Team B</h2>
+            <span class="hint">Sending these</span>
+          </div>
+          <div class="player-list" id="listB"></div>
+        </div>
+      </div>
+
+      <div class="result" id="result" hidden></div>
     </div>
 
-    <div class="result" id="result" hidden></div>
+    <div class="mode-panel" id="modeFinder" hidden>
+      <div class="finder-controls">
+        <div class="field">
+          <label for="finderTeam">Your team</label>
+          <select id="finderTeam"></select>
+        </div>
+        <div class="field">
+          <label>Direction</label>
+          <div class="dir-toggle">
+            <button type="button" class="active" id="dirShop" data-dir="shop">Shop player</button>
+            <button type="button" id="dirWant" data-dir="want">Find player</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="finderSearch">Filter</label>
+          <input id="finderSearch" type="search" placeholder="Name or position" autocomplete="off"
+            style="background:var(--surface);border:1px solid var(--hairline);border-radius:6px;color:var(--ink);font:inherit;font-size:14px;padding:9px 11px;width:100%">
+        </div>
+      </div>
+
+      <div class="finder-pick">
+        <div class="board-head">
+          <h2 id="finderPickTitle">Select a player</h2>
+          <span class="hint" id="finderPickHint">On your roster</span>
+        </div>
+        <div class="player-list" id="finderPlayerList" style="max-height:260px"></div>
+      </div>
+
+      <div id="finderResults" class="finder-results">
+        <div class="finder-empty">Select a player to generate packages.</div>
+      </div>
+    </div>
   </div>
 </div>
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-rookie-bal';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-finder';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -630,12 +755,19 @@ function fairnessGrade(ratio){
   return 'F';
 }
 
+const FINDER_FAIR_SOFT = 0.80;
+const FINDER_FAIR_HARD = 0.62;
+
 const state = {
   teams: [],
   playersById: new Map(),
   sendA: new Set(),
   sendB: new Set(),
-  maxMetricLabel: 'Proj'
+  maxMetricLabel: 'Proj',
+  mode: 'analyze',
+  finderDir: 'shop', /* shop = available on your roster; want = acquire from others */
+  finderPlayerId: null,
+  finderOffers: []
 };
 
 function starsHtml(n){
@@ -992,6 +1124,350 @@ function onTeamChange(){
   analyze();
 }
 
+/* ---------- Trade Finder (2K-style) ---------- */
+
+function setMode(mode){
+  state.mode = mode === 'finder' ? 'finder' : 'analyze';
+  document.getElementById('tabAnalyze').classList.toggle('active', state.mode === 'analyze');
+  document.getElementById('tabFinder').classList.toggle('active', state.mode === 'finder');
+  document.getElementById('modeAnalyze').hidden = state.mode !== 'analyze';
+  document.getElementById('modeFinder').hidden = state.mode !== 'finder';
+  const lede = document.getElementById('ledeText');
+  if (state.mode === 'finder'){
+    lede.innerHTML = 'Trade Finder works like NBA 2K: pick a player, then scan the league for packages. '
+      + '<strong>Shop player</strong> lists offers for someone on your roster; '
+      + '<strong>Find player</strong> shows what you can send to acquire someone else. '
+      + 'Click an offer to load it in Analyze.';
+    renderFinder();
+  } else {
+    lede.innerHTML = 'Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
+  }
+}
+
+function finderTeam(){
+  return teamById(document.getElementById('finderTeam').value);
+}
+
+function teamOwning(pid){
+  const id = String(pid);
+  return state.teams.find(t => (t.playerIds || []).some(x => String(x) === id)) || null;
+}
+
+function finderValue(p){
+  if (!p) return 0;
+  const v = Number(p.dynasty);
+  return Number.isFinite(v) ? v : 0;
+}
+
+function finderRatio(a, b){
+  const x = Math.max(0, Number(a) || 0);
+  const y = Math.max(0, Number(b) || 0);
+  if (x <= 0 && y <= 0) return 1;
+  const hi = Math.max(x, y);
+  const lo = Math.min(x, y);
+  return hi > 0 ? lo / hi : 0;
+}
+
+function finderRuling(ratio, delta){
+  if (ratio < FINDER_FAIR_HARD || delta >= 12) return 'block';
+  if (ratio < FINDER_FAIR_SOFT) return 'caution';
+  return 'allow';
+}
+
+function counterpartPool(team, excludeIds){
+  const skip = new Set((excludeIds || []).map(String));
+  return (team.playerIds || []).map(id => state.playersById.get(String(id))).filter(Boolean)
+    .filter(p => !skip.has(p.id) && finderValue(p) > 0)
+    .sort((a, b) => finderValue(b) - finderValue(a));
+}
+
+/* Best packages from `giver` to match `targetVal` (assets leaving giver). */
+function packagesMatchingValue(giver, targetVal, opts){
+  const options = opts || {};
+  const pool = counterpartPool(giver, options.excludeIds || []);
+  if (!pool.length || !(targetVal > 0)) return [];
+  const out = [];
+
+  pool.forEach(p => {
+    const sendVal = finderValue(p);
+    const ratio = finderRatio(sendVal, targetVal);
+    if (ratio < FINDER_FAIR_HARD) return;
+    const delta = Math.abs(sendVal - targetVal);
+    const ruling = finderRuling(ratio, delta);
+    if (ruling === 'block' && !options.includeBlocked) return;
+    out.push({
+      kind: '1-for-1',
+      players: [p],
+      sendVal,
+      getVal: targetVal,
+      ratio,
+      delta,
+      ruling,
+      grade: fairnessGrade(ratio),
+      score: ratio * 100 - delta * 0.2 + (p.tradeStars || 0)
+    });
+  });
+
+  /* 2-for-1: two smaller pieces ≈ target */
+  for (let i = 0; i < Math.min(pool.length, 12); i++){
+    for (let j = i + 1; j < Math.min(pool.length, 14); j++){
+      const a = pool[i];
+      const b = pool[j];
+      const sendVal = finderValue(a) + finderValue(b);
+      const ratio = finderRatio(sendVal, targetVal);
+      if (ratio < FINDER_FAIR_HARD) continue;
+      const delta = Math.abs(sendVal - targetVal);
+      const ruling = finderRuling(ratio, delta);
+      if (ruling === 'block' && !options.includeBlocked) continue;
+      /* Prefer combos closer than any single piece already kept */
+      out.push({
+        kind: '2-for-1',
+        players: [a, b],
+        sendVal,
+        getVal: targetVal,
+        ratio,
+        delta,
+        ruling,
+        grade: fairnessGrade(ratio),
+        score: ratio * 100 - delta * 0.15 + ((a.tradeStars || 0) + (b.tradeStars || 0)) * 0.5
+      });
+    }
+  }
+
+  /* Keep top few unique lineups per team */
+  out.sort((a, b) => b.score - a.score || a.delta - b.delta);
+  const seen = new Set();
+  const uniq = [];
+  for (const pack of out){
+    const key = pack.players.map(p => p.id).sort().join('+');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniq.push(pack);
+    if (uniq.length >= 3) break;
+  }
+  return uniq;
+}
+
+function buildFinderOffers(){
+  const mine = finderTeam();
+  const anchor = state.finderPlayerId ? state.playersById.get(String(state.finderPlayerId)) : null;
+  if (!mine || !anchor) return [];
+
+  const groups = [];
+
+  if (state.finderDir === 'shop'){
+    /* Shopping a player on MY roster — other teams offer pieces for him. */
+    const mineIds = new Set((mine.playerIds || []).map(String));
+    if (!mineIds.has(String(anchor.id))) return [];
+    const targetVal = finderValue(anchor);
+    state.teams.forEach(other => {
+      if (String(other.rosterId) === String(mine.rosterId)) return;
+      const packs = packagesMatchingValue(other, targetVal, {excludeIds: [anchor.id]});
+      if (!packs.length) return;
+      groups.push({
+        team: other,
+        offers: packs.map(pack => ({
+          counterparty: other,
+          youSend: [anchor],
+          youGet: pack.players,
+          sendVal: targetVal,
+          getVal: pack.sendVal,
+          ratio: pack.ratio,
+          delta: Math.abs(pack.sendVal - targetVal),
+          ruling: pack.ruling,
+          grade: pack.grade,
+          kind: pack.kind,
+          score: pack.score
+        }))
+      });
+    });
+  } else {
+    /* Want a player on SOMEONE ELSE's roster — packages I can send to get him. */
+    const owner = teamOwning(anchor.id);
+    if (!owner || String(owner.rosterId) === String(mine.rosterId)) return [];
+    const targetVal = finderValue(anchor);
+    const packs = packagesMatchingValue(mine, targetVal, {excludeIds: [anchor.id]});
+    if (!packs.length) return [];
+    groups.push({
+      team: owner,
+      offers: packs.map(pack => ({
+        counterparty: owner,
+        youSend: pack.players,
+        youGet: [anchor],
+        sendVal: pack.sendVal,
+        getVal: targetVal,
+        ratio: pack.ratio,
+        delta: Math.abs(pack.sendVal - targetVal),
+        ruling: pack.ruling,
+        grade: pack.grade,
+        kind: pack.kind,
+        score: pack.score
+      }))
+    });
+  }
+
+  groups.forEach(g => g.offers.sort((a, b) => b.score - a.score));
+  groups.sort((a, b) => (b.offers[0] ? b.offers[0].score : 0) - (a.offers[0] ? a.offers[0].score : 0));
+  return groups;
+}
+
+function namesJoin(players){
+  return players.map(p => p.name).join(' + ');
+}
+
+function renderFinderPlayerList(){
+  const mine = finderTeam();
+  const list = document.getElementById('finderPlayerList');
+  const title = document.getElementById('finderPickTitle');
+  const hint = document.getElementById('finderPickHint');
+  const q = normalizeName(document.getElementById('finderSearch').value || '');
+
+  let players = [];
+  if (state.finderDir === 'shop'){
+    title.textContent = 'Your players';
+    hint.textContent = 'Shop these';
+    players = mine
+      ? mine.playerIds.map(id => state.playersById.get(String(id))).filter(Boolean)
+      : [];
+  } else {
+    title.textContent = 'League players';
+    hint.textContent = 'Find these';
+    const mineIds = new Set((mine && mine.playerIds || []).map(String));
+    state.teams.forEach(t => {
+      if (mine && String(t.rosterId) === String(mine.rosterId)) return;
+      t.playerIds.forEach(id => {
+        const p = state.playersById.get(String(id));
+        if (p && !mineIds.has(String(id))) players.push(p);
+      });
+    });
+  }
+
+  players = players.filter(p => {
+    if (!q) return true;
+    return normalizeName(p.name).includes(q) || normalizeName(p.pos).includes(q);
+  }).sort((a, b) => finderValue(b) - finderValue(a));
+
+  if (!players.length){
+    list.innerHTML = '<p class="empty-note" style="padding:14px">No players match.</p>';
+    return;
+  }
+
+  list.innerHTML = players.map(p => {
+    const owner = teamOwning(p.id);
+    const sel = String(state.finderPlayerId) === String(p.id) ? ' selected' : '';
+    return '<label class="player-row' + sel + '">'
+      + '<input type="radio" name="finderPlayer" value="' + escapeHtml(p.id) + '"'
+      + (sel ? ' checked' : '') + '>'
+      + '<span><span class="name">' + escapeHtml(p.name) + '</span>'
+      + '<div class="meta">' + escapeHtml(p.pos)
+      + (Number.isFinite(p.age) ? ' · ' + p.age + 'y' : '')
+      + (p.lockOvr != null ? ' · Lock ' + p.lockOvr : '')
+      + (state.finderDir === 'want' && owner ? ' · ' + escapeHtml(owner.displayName) : '')
+      + '</div></span>'
+      + '<span class="val">' + tradeValHtml(p) + '</span></label>';
+  }).join('');
+
+  list.querySelectorAll('input[name="finderPlayer"]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      state.finderPlayerId = inp.value;
+      renderFinder();
+    });
+  });
+}
+
+function renderFinderResults(){
+  const root = document.getElementById('finderResults');
+  const groups = buildFinderOffers();
+  state.finderOffers = groups;
+  if (!state.finderPlayerId){
+    root.innerHTML = '<div class="finder-empty">Select a player to generate packages.</div>';
+    return;
+  }
+  if (!groups.length){
+    root.innerHTML = '<div class="finder-empty">No packages within fairness bands (ratio ≥ '
+      + FINDER_FAIR_HARD + '). Try another player.</div>';
+    return;
+  }
+
+  root.innerHTML = groups.map((g, gi) => {
+    const color = teamColor(g.team);
+    return '<div class="finder-team" style="--team-color:' + color + '">'
+      + '<div class="ft-head"><h3>' + escapeHtml(g.team.displayName) + '</h3>'
+      + '<span class="count">' + g.offers.length + ' package' + (g.offers.length === 1 ? '' : 's') + '</span></div>'
+      + g.offers.map((o, oi) => {
+        const sendTxt = namesJoin(o.youSend);
+        const getTxt = namesJoin(o.youGet);
+        return '<div class="offer-row" data-group="' + gi + '" data-offer="' + oi + '" role="button" tabindex="0">'
+          + '<div><div class="offer-line">Send ' + escapeHtml(sendTxt)
+          + '<span class="arrow">→</span>Get ' + escapeHtml(getTxt) + '</div>'
+          + '<div class="offer-meta">' + escapeHtml(o.kind)
+          + ' · grade ' + escapeHtml(o.grade)
+          + ' · ' + o.sendVal.toFixed(0) + ' vs ' + o.getVal.toFixed(0) + ' trade score'
+          + ' · click to open in Analyze</div></div>'
+          + '<div class="offer-side">'
+          + '<div>' + Math.round(o.ratio * 100) + '% match</div>'
+          + '<span class="ruling ' + o.ruling + '">' + o.ruling + '</span>'
+          + '</div></div>';
+      }).join('')
+      + '</div>';
+  }).join('');
+
+  root.querySelectorAll('.offer-row').forEach(row => {
+    function open(){
+      const g = state.finderOffers[Number(row.dataset.group)];
+      const o = g && g.offers[Number(row.dataset.offer)];
+      if (!o) return;
+      applyOfferToAnalyze(o);
+    }
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open(); }
+    });
+  });
+}
+
+function applyOfferToAnalyze(offer){
+  const mine = finderTeam();
+  if (!mine || !offer) return;
+  const other = offer.counterparty;
+  document.getElementById('teamA').value = String(mine.rosterId);
+  document.getElementById('teamB').value = String(other.rosterId);
+  state.sendA = new Set(offer.youSend.map(p => String(p.id)));
+  state.sendB = new Set(offer.youGet.map(p => String(p.id)));
+  setMode('analyze');
+  renderLists();
+  analyze();
+  const result = document.getElementById('result');
+  if (result) result.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function renderFinder(){
+  document.getElementById('dirShop').classList.toggle('active', state.finderDir === 'shop');
+  document.getElementById('dirWant').classList.toggle('active', state.finderDir === 'want');
+  renderFinderPlayerList();
+  renderFinderResults();
+}
+
+function bindFinderUi(){
+  document.getElementById('tabAnalyze').addEventListener('click', () => setMode('analyze'));
+  document.getElementById('tabFinder').addEventListener('click', () => setMode('finder'));
+  document.getElementById('dirShop').addEventListener('click', () => {
+    state.finderDir = 'shop';
+    state.finderPlayerId = null;
+    renderFinder();
+  });
+  document.getElementById('dirWant').addEventListener('click', () => {
+    state.finderDir = 'want';
+    state.finderPlayerId = null;
+    renderFinder();
+  });
+  document.getElementById('finderTeam').addEventListener('change', () => {
+    state.finderPlayerId = null;
+    renderFinder();
+  });
+  document.getElementById('finderSearch').addEventListener('input', () => renderFinderPlayerList());
+}
+
 async function loadCeilings(league, scoring){
   const ceilings = new Map();
   let statsSeason = league.season;
@@ -1144,12 +1620,18 @@ async function load(){
     ).join('');
     selA.innerHTML = opts;
     selB.innerHTML = opts;
+    const finderSel = document.getElementById('finderTeam');
+    finderSel.innerHTML = opts;
     const mine = state.teams.find(t => t.key === MY_TEAM || t.displayName === MY_TEAM) || state.teams[0];
     const other = state.teams.find(t => t !== mine) || state.teams[1];
-    if (mine) selA.value = String(mine.rosterId);
+    if (mine){
+      selA.value = String(mine.rosterId);
+      finderSel.value = String(mine.rosterId);
+    }
     if (other) selB.value = String(other.rosterId);
     selA.addEventListener('change', onTeamChange);
     selB.addEventListener('change', onTeamChange);
+    bindFinderUi();
 
     document.getElementById('app').hidden = false;
     tag.textContent = state.teams.length + ' teams ready';
@@ -1159,12 +1641,12 @@ async function load(){
       status.textContent = 'Consensus projections unavailable (' + projError
         + '). Rookie Lock OVR may fall back to Sleeper/comps; smash samples still drive most Trade stars.';
     } else {
-      status.textContent = 'Trade value = Lock OVR (smash) × age × injury, same as Team Intel'
-        + ' · ' + (lockPack.scored || 0) + ' players scored from ' + lockPack.statsSeason
-        + ' (' + lockPack.weeksFound + ' weeks). Max Points = top '
-        + MAX_TOP_N + ' by ' + state.maxMetricLabel + '.';
+      status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
+        + 'Trade value = Lock OVR × age × injury · ' + (lockPack.scored || 0)
+        + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' weeks).';
     }
     onTeamChange();
+    setMode('analyze');
   } catch (e){
     status.classList.add('error');
     status.textContent = 'Could not load trade analyzer: ' + (e.message || e);
