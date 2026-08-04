@@ -295,6 +295,42 @@
   }
   table.lockin .trade-stars .star.half{width:.45em}
 
+  #depthPanel{margin-top:16px}
+  table.depth{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.depth th{
+    font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.07em;
+    text-transform:uppercase;color:var(--ink-dim);font-weight:500;
+    text-align:left;padding:0 8px 6px 0;border-bottom:1px solid var(--hairline);
+  }
+  table.depth td{
+    padding:8px 8px 8px 0;border-bottom:1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
+    color:#C9CDD8;vertical-align:top;
+  }
+  table.depth tr:last-child td{border-bottom:none}
+  table.depth .pos{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);
+    font-weight:600;width:42px;padding-top:10px;
+  }
+  table.depth .slot-empty{color:var(--ink-dim)}
+  table.depth .slot-name{color:var(--ink);font-weight:500;display:block}
+  table.depth .slot-meta{
+    display:flex;align-items:center;gap:6px;margin-top:3px;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+  }
+  table.depth .slot-ovr{
+    font-family:'Anton',sans-serif;font-size:14px;color:var(--gold);line-height:1;
+  }
+  table.depth .trade-stars{
+    display:inline-flex;align-items:center;gap:1px;
+    font-size:11px;letter-spacing:0;color:var(--gold);white-space:nowrap;
+    line-height:1;height:1em;
+  }
+  table.depth .trade-stars .star{
+    display:inline-flex;align-items:center;justify-content:flex-start;
+    width:.82em;height:1em;line-height:1;overflow:hidden;flex:0 0 auto;
+  }
+  table.depth .trade-stars .star.half{width:.41em}
+
   /* trade intel */
   .trade-row{
     padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--hairline) 55%, transparent);
@@ -348,6 +384,11 @@
       <div class="panel-body" id="lockInBody"><p class="pending">Building dynasty value curves&hellip;</p></div>
     </div>
 
+    <div class="panel" id="depthPanel">
+      <div class="panel-head"><h2>Depth Chart</h2><span class="tag" id="depthTag"></span></div>
+      <div class="panel-body" id="depthBody"><p class="pending">Building depth chart&hellip;</p></div>
+    </div>
+
     <!-- Lineup / Bench kept in DOM for data hooks but hidden from the UI. -->
     <div hidden>
       <div id="lineupBody"></div><span id="lineupTag"></span>
@@ -373,7 +414,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-smash5';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-depth';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1181,6 +1222,121 @@ function renderLockIn(t){
   }
 }
 
+function depthRankValue(rec){
+  if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr);
+  if (rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
+  return -1;
+}
+
+function depthCellHtml(player){
+  if (!player) return '<td class="slot-empty">—</td>';
+  const stars = (window.LockInDist && LockInDist.formatStarsHtml && player.tradeStars != null)
+    ? LockInDist.formatStarsHtml(player.tradeStars, {className: 'trade-stars'})
+    : '';
+  const ovr = player.lockOvr != null
+    ? '<span class="slot-ovr">' + Math.round(player.lockOvr) + '</span>' + stars
+    : '';
+  const proj = player.metric != null && Number.isFinite(Number(player.metric))
+    ? '<span>' + Number(player.metric).toFixed(1) + ' proj</span>'
+    : '';
+  const meta = [ovr, proj].filter(Boolean).join('<span style="opacity:.35"> · </span>');
+  return '<td><span class="slot-name">' + escapeHtml(player.name) + '</span>'
+    + (meta ? '<span class="slot-meta">' + meta + '</span>' : '')
+    + '</td>';
+}
+
+function buildDepthChart(team){
+  if (!window.TeamNeedsModel) return null;
+  refreshLockValues();
+  const core = TeamNeedsModel.CORE || ['PG','SG','SF','PF','C'];
+  const records = (team.players || []).map(pid => {
+    const rec = needsPlayerRecord(pid);
+    const lock = state.lockInByPid
+      ? (state.lockInByPid[pid] || state.lockInByPid[String(pid)])
+      : null;
+    return Object.assign({}, rec, {
+      lockOvr: lock && lock.lockOvr != null ? lock.lockOvr : null,
+      tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null,
+      rankVal: depthRankValue({
+        lockOvr: lock && lock.lockOvr,
+        metric: rec.metric
+      })
+    });
+  });
+
+  const chart = {};
+  core.forEach(pos => { chart[pos] = [null, null, null]; });
+  const used = new Set();
+
+  for (let stringIdx = 0; stringIdx < 3; stringIdx++){
+    const order = core.slice().sort((a, b) => {
+      const ca = records.filter(r =>
+        !used.has(String(r.id))
+        && TeamNeedsModel.eligibleForSlot(a, TeamNeedsModel.positions(r.positions))
+      ).length;
+      const cb = records.filter(r =>
+        !used.has(String(r.id))
+        && TeamNeedsModel.eligibleForSlot(b, TeamNeedsModel.positions(r.positions))
+      ).length;
+      return ca - cb || core.indexOf(a) - core.indexOf(b);
+    });
+    order.forEach(pos => {
+      const pick = records
+        .filter(r =>
+          !used.has(String(r.id))
+          && TeamNeedsModel.eligibleForSlot(pos, TeamNeedsModel.positions(r.positions))
+        )
+        .sort((a, b) => b.rankVal - a.rankVal
+          || String(a.name).localeCompare(String(b.name)))[0];
+      if (!pick) return;
+      chart[pos][stringIdx] = pick;
+      used.add(String(pick.id));
+    });
+  }
+
+  return {core, chart, filled: used.size, roster: records.length};
+}
+
+function renderDepthChart(t){
+  const body = document.getElementById('depthBody');
+  const tag = document.getElementById('depthTag');
+  if (!body) return;
+
+  if (!state.playerDb){
+    tag.textContent = '';
+    body.innerHTML = '<p class="pending">Waiting on player database&hellip;</p>';
+    return;
+  }
+  if (!window.TeamNeedsModel){
+    tag.textContent = '';
+    body.innerHTML = '<p class="pending">Depth model unavailable.</p>';
+    return;
+  }
+
+  const pack = buildDepthChart(t);
+  if (!pack || !pack.roster){
+    tag.textContent = '';
+    body.innerHTML = '<p class="pending">No players on this roster.</p>';
+    return;
+  }
+
+  tag.textContent = '1st–3rd string · Lock OVR';
+  const head = '<tr><th>Pos</th><th>1st string</th><th>2nd string</th><th>3rd string</th></tr>';
+  const rows = pack.core.map(pos => {
+    const slots = pack.chart[pos] || [null, null, null];
+    return '<tr><td class="pos">' + escapeHtml(pos) + '</td>'
+      + depthCellHtml(slots[0])
+      + depthCellHtml(slots[1])
+      + depthCellHtml(slots[2])
+      + '</tr>';
+  }).join('');
+
+  body.innerHTML = '<table class="depth"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table>'
+    + '<p class="lineup-foot">Exclusive depth by position (PG–C). Players are placed scarcest-position-first '
+    + 'using <strong>Lock OVR</strong> (projection fallback). Each player appears once across the chart, '
+    + 'up to 3rd string. Flex slots (G / F / UTIL) are not separate rows.</p>';
+}
+
 function needsPlayerRecord(pid){
   const p = (state.playerDb || {})[pid] || {};
   const proj = state.projById ? state.projById.get(String(pid)) : null;
@@ -1444,6 +1600,7 @@ function renderTeam(){
   renderLineup(t);
   renderBench(t);
   renderLockIn(t);
+  renderDepthChart(t);
   renderObservations(t);
   renderNeeds(t);
   renderTrades(t);
