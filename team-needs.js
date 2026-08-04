@@ -7,8 +7,11 @@
 
   const CORE = ['PG','SG','SF','PF','C'];
   const NON_STARTING = new Set(['BN','IR','TAXI','RES','RESERVE','IL']);
+  /* IR / taxi sit outside the active 18 (starters + bench). */
+  const NON_REGULAR = new Set(['IR','TAXI','RES','RESERVE','IL']);
   const EPS = 1e-7;
   const AGE_BAND_ORDER = { young: 0, prime: 1, unknown: 2, decline: 3 };
+  const DEFAULT_TAXI_YEARS = 2; /* Sleeper taxi_years=2 → years_exp 0–2 (< 3 seasons) */
 
   /* <24 young · 25–32 prime · 33+ decline. Rookies without age count as young. */
   function ageBand(playerOrAge, source){
@@ -35,6 +38,74 @@
     return (rosterPositions || [])
       .map(s => String(s || '').toUpperCase())
       .filter(s => s && !NON_STARTING.has(s));
+  }
+
+  /* Active roster cap = starters + BN (18 here). Taxi/IR are extra stash slots. */
+  function regularCap(rosterPositions){
+    return (rosterPositions || [])
+      .map(s => String(s || '').toUpperCase())
+      .filter(s => s && !NON_REGULAR.has(s)).length;
+  }
+
+  /* Sleeper taxi_years is max years_exp allowed on taxi (2 → played < 3 seasons). */
+  function taxiEligible(playerOrYears, taxiYears){
+    const limit = Number(taxiYears);
+    const maxY = Number.isFinite(limit) ? limit : DEFAULT_TAXI_YEARS;
+    const raw = (playerOrYears && typeof playerOrYears === 'object')
+      ? (playerOrYears.yearsExp != null ? playerOrYears.yearsExp : playerOrYears.years_exp)
+      : playerOrYears;
+    const y = Number(raw);
+    if (!Number.isFinite(y) || y < 0) return false;
+    return y <= maxY;
+  }
+
+  /* Partition a Sleeper roster. Note: taxi/IR ids are also listed in `players`. */
+  function splitRoster(roster, opts){
+    const options = opts || {};
+    const settings = options.settings || {};
+    const positions = options.rosterPositions || [];
+    const taxiSlots = Math.max(0, Number(settings.taxi_slots) || 0);
+    const reserveSlots = Math.max(0, Number(settings.reserve_slots) || 0);
+    const taxiYears = settings.taxi_years != null && Number.isFinite(Number(settings.taxi_years))
+      ? Number(settings.taxi_years)
+      : DEFAULT_TAXI_YEARS;
+    const cap = regularCap(positions);
+
+    const taxiSet = new Set((roster && roster.taxi || []).map(String));
+    const reserveSet = new Set((roster && roster.reserve || []).map(String));
+    const all = [];
+    const seen = new Set();
+    [].concat(
+      (roster && roster.players) || [],
+      (roster && roster.taxi) || [],
+      (roster && roster.reserve) || []
+    ).forEach(pid => {
+      const id = String(pid);
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      all.push(id);
+    });
+    const regularIds = all.filter(id => !taxiSet.has(id) && !reserveSet.has(id));
+    const taxiIds = all.filter(id => taxiSet.has(id));
+    const reserveIds = all.filter(id => reserveSet.has(id));
+
+    return {
+      allIds: all,
+      regularIds,
+      taxiIds,
+      reserveIds,
+      regularCap: cap,
+      regularUsed: regularIds.length,
+      regularOpen: Math.max(0, cap - regularIds.length),
+      taxiSlots,
+      taxiUsed: taxiIds.length,
+      taxiOpen: Math.max(0, taxiSlots - taxiIds.length),
+      reserveSlots,
+      reserveUsed: reserveIds.length,
+      reserveOpen: Math.max(0, reserveSlots - reserveIds.length),
+      taxiYears,
+      taxiEligible: function(p){ return taxiEligible(p, taxiYears); }
+    };
   }
 
   function positions(value){
@@ -298,7 +369,9 @@
   }
 
   global.TeamNeedsModel = {
-    CORE, parseSlots, positions, eligibleForSlot, slotTier, optimize, candidateGain,
+    CORE, NON_STARTING, NON_REGULAR, DEFAULT_TAXI_YEARS,
+    parseSlots, regularCap, taxiEligible, splitRoster,
+    positions, eligibleForSlot, slotTier, optimize, candidateGain,
     ageBand, agePressure, youthUpgradeBonus, AGE_BAND_ORDER
   };
 })(window);

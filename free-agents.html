@@ -209,7 +209,7 @@
 
     <div class="report-head">
       <h1 id="teamTitle">Targets</h1>
-      <p id="teamSub">Top adds · who to drop · depth-chart fit</p>
+      <p id="teamSub">Top 3 by Lock · taxi stash / drop · depth fit</p>
     </div>
     <div class="fit-grid" id="fitGrid"></div>
 
@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-fa-toplock';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-taxi';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -394,6 +394,15 @@ function weakestRostered(roster){
   )[0];
 }
 
+function taxiEligibleFa(player, taxiYears){
+  if (window.TeamNeedsModel && typeof TeamNeedsModel.taxiEligible === 'function'){
+    return TeamNeedsModel.taxiEligible(player, taxiYears);
+  }
+  const y = Number(player && player.yearsExp);
+  const limit = Number.isFinite(Number(taxiYears)) ? Number(taxiYears) : 2;
+  return Number.isFinite(y) && y >= 0 && y <= limit;
+}
+
 function syncSortSelectFromState(){
   const sel = document.getElementById('sortBy');
   if (!sel) return;
@@ -455,11 +464,43 @@ function lockCellHtml(a){
 }
 
 function scoreAgentsForTeam(team){
+  const taxiYears = team.taxiYears != null ? team.taxiYears : 2;
+  const taxiOpen = Math.max(0, Number(team.taxiOpen) || 0);
+  const regularOpen = Math.max(0, Number(team.regularOpen) || 0);
+  const regularPlayers = (team.regularPlayers && team.regularPlayers.length)
+    ? team.regularPlayers
+    : team.players;
+  const roster = team.players.slice();
+
   if (!window.TeamNeedsModel || !state.slots.length){
     return state.agents.map(a => {
-      const weak = weakestRostered(team.players);
+      const weak = weakestRostered(regularPlayers);
       const edge = depthRankValue(a) - (weak ? depthRankValue(weak) : 0);
-      const shouldAdd = edge >= ADD_PROJ_EDGE;
+      const canTaxi = taxiEligibleFa(a, taxiYears) && taxiOpen > 0;
+      const stashWorthy = canTaxi && (
+        a.lockOvr != null || a.isRookie
+        || (a.metric != null && a.metric >= 6)
+        || edge >= 0
+      );
+      const upgrade = edge >= ADD_PROJ_EDGE;
+      const shouldAdd = !!(upgrade || stashWorthy);
+      let drop = null;
+      let detail = 'No clear roster upgrade.';
+      let verdict = 'Pass';
+      if (shouldAdd){
+        verdict = 'Add';
+        if (canTaxi && (stashWorthy || upgrade)){
+          drop = null;
+          detail = 'Stash on taxi (' + taxiOpen + ' open · <' + (taxiYears + 1) + ' seasons)';
+        } else if (regularOpen > 0){
+          detail = 'Open roster spot';
+        } else if (weak){
+          drop = weak;
+          detail = 'Drop ' + weak.name;
+        } else {
+          detail = 'Open roster spot';
+        }
+      }
       return {
         ...a,
         gain: Number(a.metric) || 0,
@@ -467,20 +508,21 @@ function scoreAgentsForTeam(team){
         displaced: null,
         ageBonus: 0,
         shouldAdd,
-        drop: shouldAdd ? weak : null,
+        drop,
+        taxiStash: !!(shouldAdd && canTaxi && !drop),
+        taxiOpenLeft: taxiOpen,
+        taxiYears,
         depthFit: null,
         depthLabel: '—',
-        verdict: shouldAdd ? 'Add' : 'Pass',
-        detail: shouldAdd && weak
-          ? ('Drop ' + weak.name)
-          : (shouldAdd ? 'Open roster spot' : 'No clear roster upgrade.'),
-        recScore: shouldAdd ? (1000 + edge) : edge
+        verdict,
+        detail,
+        recScore: shouldAdd ? (1000 + edge + (canTaxi ? 40 : 0)) : edge
       };
     }).sort((a, b) => b.recScore - a.recScore || (b.metric || 0) - (a.metric || 0));
   }
-  const roster = team.players.slice();
+
   const opt = TeamNeedsModel.optimize(roster, state.slots);
-  const weak = weakestRostered(roster);
+  const weak = weakestRostered(regularPlayers);
   const weakVal = weak ? depthRankValue(weak) : 0;
 
   return state.agents.map(a => {
@@ -494,14 +536,32 @@ function scoreAgentsForTeam(team){
     const cracksStarters = fit.gain >= ADD_GAIN && fit.slot;
     const depthAdd = !!(depthFit && depthFit.stringIdx <= 1 && beatsWeakest);
     const clearBenchUpgrade = projEdge >= ADD_PROJ_EDGE && !!depthFit;
+    const upgrade = !!(beatsWeakest && (cracksStarters || depthAdd || clearBenchUpgrade));
 
-    const shouldAdd = !!(beatsWeakest && (cracksStarters || depthAdd || clearBenchUpgrade));
+    const canTaxi = taxiEligibleFa(a, taxiYears) && taxiOpen > 0;
+    const stashWorthy = canTaxi && (
+      a.lockOvr != null
+      || a.isRookie
+      || (a.metric != null && a.metric >= 6)
+      || !!(depthFit)
+      || upgrade
+    );
 
+    let shouldAdd = !!(upgrade || stashWorthy);
     let drop = null;
-    if (shouldAdd){
+    let taxiStash = false;
+
+    if (shouldAdd && canTaxi && (stashWorthy || upgrade)){
+      taxiStash = true;
+      drop = null;
+    } else if (shouldAdd && regularOpen > 0){
+      drop = null;
+    } else if (shouldAdd){
       if (weak && projEdge > 0.05) drop = weak;
-      else if (displacedPlayer && depthRankValue(a) > depthRankValue(displacedPlayer)) drop = displacedPlayer;
-      else if (weak) drop = weak;
+      else if (displacedPlayer && depthRankValue(a) > depthRankValue(displacedPlayer)
+        && regularPlayers.some(p => String(p.id) === String(displacedPlayer.id))){
+        drop = displacedPlayer;
+      } else if (weak) drop = weak;
     }
 
     const depthLabel = depthFit
@@ -512,9 +572,18 @@ function scoreAgentsForTeam(team){
     let detail = 'No clear roster upgrade.';
     if (shouldAdd){
       verdict = 'Add';
-      if (drop) detail = 'Drop ' + drop.name;
-      else if (roster.length < state.slots.length) detail = 'Open roster spot';
-      else detail = 'Stream over weakest';
+      if (taxiStash){
+        detail = 'Stash on taxi (' + taxiOpen + ' open · <' + (taxiYears + 1) + ' seasons)';
+      } else if (drop){
+        detail = 'Drop ' + drop.name;
+      } else if (regularOpen > 0){
+        detail = 'Open roster spot';
+      } else {
+        detail = 'Stream over weakest';
+      }
+    } else if (canTaxi === false && taxiEligibleFa(a, taxiYears) && taxiOpen <= 0
+      && (a.isRookie || a.lockOvr != null)){
+      detail = 'Taxi full — only if cutting a taxi/regular spot';
     } else if (depthFit && depthFit.stringIdx === 2 && projEdge > 0){
       detail = weak
         ? ('Only if cutting ' + weak.name)
@@ -527,7 +596,8 @@ function scoreAgentsForTeam(team){
       ? (1000
         + fit.gain * 10
         + (depthFit ? (3 - depthFit.stringIdx) * 25 : 0)
-        + Math.max(0, projEdge))
+        + Math.max(0, projEdge)
+        + (taxiStash ? 40 : 0))
       : (fit.gain * 5
         + Math.max(0, projEdge)
         + (depthFit && depthFit.stringIdx === 2 ? 2 : 0));
@@ -540,6 +610,9 @@ function scoreAgentsForTeam(team){
       ageBonus: fit.ageBonus || 0,
       shouldAdd,
       drop,
+      taxiStash,
+      taxiOpenLeft: taxiOpen,
+      taxiYears,
       depthFit,
       depthLabel,
       verdict,
@@ -629,15 +702,26 @@ function topLockTargets(limit){
 
 function recCellHtml(a){
   const verdictCls = a.shouldAdd ? 'add' : 'pass';
-  const dropBit = a.drop
-    ? ('Drop <strong>' + escapeHtml(a.drop.name) + '</strong>')
-    : escapeHtml(a.detail || '');
+  let detailHtml;
+  if (a.shouldAdd && a.taxiStash){
+    detailHtml = 'Stash on <strong>taxi</strong> — no drop'
+      + (Number(a.taxiOpenLeft) > 0
+        ? ' <span style="color:var(--ink-dim)">(' + a.taxiOpenLeft + ' open · &lt;'
+          + ((a.taxiYears != null ? a.taxiYears : 2) + 1) + ' seasons)</span>'
+        : '');
+  } else if (a.shouldAdd && a.drop){
+    detailHtml = 'Drop <strong>' + escapeHtml(a.drop.name) + '</strong>';
+  } else if (a.shouldAdd){
+    detailHtml = escapeHtml(a.detail || 'Open roster spot');
+  } else {
+    detailHtml = escapeHtml(a.detail || 'No clear roster upgrade.');
+  }
   const depthBit = a.depthLabel
     ? ('Fits <strong>' + escapeHtml(a.depthLabel) + '</strong>')
     : '';
   return '<td class="rec">'
     + '<span class="verdict ' + verdictCls + '">' + escapeHtml(a.verdict || 'Pass') + '</span>'
-    + '<span class="detail">' + (a.shouldAdd ? dropBit : escapeHtml(a.detail || 'No clear roster upgrade.')) + '</span>'
+    + '<span class="detail">' + detailHtml + '</span>'
     + (depthBit ? '<span class="depth">' + depthBit + '</span>' : '')
     + '</td>';
 }
@@ -664,9 +748,14 @@ function render(){
       + '<p class="why">Nobody left is worth an add for this roster under current projections.</p></div>';
   } else {
     fitGrid.innerHTML = top.map((a, i) => {
-      const why = (a.shouldAdd ? '<strong>Add</strong>' : '<strong>Pass</strong>')
-        + (a.drop ? ' — drop <strong>' + escapeHtml(a.drop.name) + '</strong>' : '')
-        + (a.depthLabel ? '. Fits <strong>' + escapeHtml(a.depthLabel) + '</strong>.' : '.');
+      let why = a.shouldAdd ? '<strong>Add</strong>' : '<strong>Pass</strong>';
+      if (a.shouldAdd && a.taxiStash){
+        why += ' — stash on <strong>taxi</strong> (no drop)';
+      } else if (a.drop){
+        why += ' — drop <strong>' + escapeHtml(a.drop.name) + '</strong>';
+      }
+      if (a.depthLabel) why += '. Fits <strong>' + escapeHtml(a.depthLabel) + '</strong>.';
+      else why += '.';
       return '<article class="fit-card" style="--team-color:' + color + '">'
         + '<p class="rank">Lock target #' + (i + 1) + '</p>'
         + '<h3 class="name">' + escapeHtml(a.name) + '</h3>'
@@ -829,20 +918,46 @@ async function load(){
       }
     }
 
+    const leagueSettings = league.settings || {};
+    state.taxiSlots = Number(leagueSettings.taxi_slots) || 0;
+    state.taxiYears = leagueSettings.taxi_years != null ? Number(leagueSettings.taxi_years) : 2;
+    state.regularCap = window.TeamNeedsModel && TeamNeedsModel.regularCap
+      ? TeamNeedsModel.regularCap(league.roster_positions || [])
+      : 18;
+
     state.teams = rosters.map(r => {
       const u = userById[r.owner_id] || {};
       const raw = (u.metadata && u.metadata.team_name) || u.display_name || ('Roster ' + r.roster_id);
       const team = canonicalTeam(raw);
-      const ids = []
-        .concat(r.players || [])
-        .concat(r.reserve || [])
-        .concat(r.taxi || [])
-        .map(String);
+      const split = window.TeamNeedsModel && TeamNeedsModel.splitRoster
+        ? TeamNeedsModel.splitRoster(r, {
+          settings: leagueSettings,
+          rosterPositions: league.roster_positions || []
+        })
+        : null;
+      const ids = split
+        ? split.allIds
+        : [...new Set([].concat(r.players || [], r.reserve || [], r.taxi || []).map(String))];
+      const byId = {};
+      ids.forEach(pid => {
+        byId[pid] = makeRecord(pid, playerDb, projById, lockDist);
+      });
+      const players = ids.map(pid => byId[pid]);
+      const taxiIdSet = new Set(split ? split.taxiIds : (r.taxi || []).map(String));
+      const reserveIdSet = new Set(split ? split.reserveIds : (r.reserve || []).map(String));
+      const regularPlayers = players.filter(p => !taxiIdSet.has(String(p.id)) && !reserveIdSet.has(String(p.id)));
       return {
         rosterId: r.roster_id,
         team,
         manager: u.display_name || '',
-        players: ids.map(pid => makeRecord(pid, playerDb, projById, lockDist))
+        players,
+        regularPlayers,
+        taxiPlayers: players.filter(p => taxiIdSet.has(String(p.id))),
+        taxiOpen: split ? split.taxiOpen : Math.max(0, (Number(leagueSettings.taxi_slots) || 0) - taxiIdSet.size),
+        regularOpen: split ? split.regularOpen : Math.max(0, state.regularCap - regularPlayers.length),
+        taxiYears: split ? split.taxiYears : state.taxiYears,
+        taxiSlots: split ? split.taxiSlots : state.taxiSlots,
+        regularCap: split ? split.regularCap : state.regularCap
       };
     }).sort((a, b) => {
       if (a.team === MY_TEAM) return -1;
@@ -906,7 +1021,9 @@ async function load(){
     const withLock = state.agents.filter(a => a.lockOvr != null).length;
     tag.textContent = state.agents.length + ' free agents';
     status.classList.remove('error');
-    status.textContent = 'Add / pass with drop target and depth-chart fit (same slots as Team Intel). '
+    status.textContent = 'Add / pass with taxi stash (players with <'
+      + ((state.taxiYears != null ? state.taxiYears : 2) + 1)
+      + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots) or drop target + depth-chart fit. '
       + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR / Trade \u2605'
       + (state.lockStatsSeason ? ' (' + state.lockStatsSeason + ' smash)' : '')
       + '.';
