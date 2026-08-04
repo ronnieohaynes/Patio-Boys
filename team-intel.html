@@ -308,8 +308,8 @@
   }
   table.depth tr:last-child td{border-bottom:none}
   table.depth .pos{
-    font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);
-    font-weight:600;width:42px;padding-top:10px;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    font-weight:600;width:56px;padding-top:10px;white-space:nowrap;
   }
   table.depth .slot-empty{color:var(--ink-dim)}
   table.depth .slot-name{color:var(--ink);font-weight:500;display:block}
@@ -414,7 +414,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-depth';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-depth10';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1246,9 +1246,11 @@ function depthCellHtml(player){
 }
 
 function buildDepthChart(team){
-  if (!window.TeamNeedsModel) return null;
+  if (!window.TeamNeedsModel || !state.league) return null;
   refreshLockValues();
-  const core = TeamNeedsModel.CORE || ['PG','SG','SF','PF','C'];
+  const slots = TeamNeedsModel.parseSlots(state.league.roster_positions || []);
+  if (!slots.length) return null;
+
   const records = (team.players || []).map(pid => {
     const rec = needsPlayerRecord(pid);
     const lock = state.lockInByPid
@@ -1264,37 +1266,45 @@ function buildDepthChart(team){
     });
   });
 
-  const chart = {};
-  core.forEach(pos => { chart[pos] = [null, null, null]; });
-  const used = new Set();
+  /* Same starting slots as Team Needs (e.g. PG SG G SF PF F C UTIL×3). */
+  const rows = slots.map((slot, index) => {
+    const same = slots
+      .map((s, i) => ({s, i}))
+      .filter(x => x.s === slot);
+    const label = same.length > 1
+      ? (slot + ' ' + (same.findIndex(x => x.i === index) + 1))
+      : slot;
+    return {key: slot + '#' + index, slot, label, strings: [null, null, null]};
+  });
 
+  const used = new Set();
   for (let stringIdx = 0; stringIdx < 3; stringIdx++){
-    const order = core.slice().sort((a, b) => {
+    const order = rows.slice().sort((a, b) => {
       const ca = records.filter(r =>
         !used.has(String(r.id))
-        && TeamNeedsModel.eligibleForSlot(a, TeamNeedsModel.positions(r.positions))
+        && TeamNeedsModel.eligibleForSlot(a.slot, TeamNeedsModel.positions(r.positions))
       ).length;
       const cb = records.filter(r =>
         !used.has(String(r.id))
-        && TeamNeedsModel.eligibleForSlot(b, TeamNeedsModel.positions(r.positions))
+        && TeamNeedsModel.eligibleForSlot(b.slot, TeamNeedsModel.positions(r.positions))
       ).length;
-      return ca - cb || core.indexOf(a) - core.indexOf(b);
+      return ca - cb || slots.indexOf(a.slot) - slots.indexOf(b.slot) || a.key.localeCompare(b.key);
     });
-    order.forEach(pos => {
+    order.forEach(row => {
       const pick = records
         .filter(r =>
           !used.has(String(r.id))
-          && TeamNeedsModel.eligibleForSlot(pos, TeamNeedsModel.positions(r.positions))
+          && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
         )
         .sort((a, b) => b.rankVal - a.rankVal
           || String(a.name).localeCompare(String(b.name)))[0];
       if (!pick) return;
-      chart[pos][stringIdx] = pick;
+      row.strings[stringIdx] = pick;
       used.add(String(pick.id));
     });
   }
 
-  return {core, chart, filled: used.size, roster: records.length};
+  return {rows, slots, filled: used.size, roster: records.length};
 }
 
 function renderDepthChart(t){
@@ -1307,7 +1317,7 @@ function renderDepthChart(t){
     body.innerHTML = '<p class="pending">Waiting on player database&hellip;</p>';
     return;
   }
-  if (!window.TeamNeedsModel){
+  if (!window.TeamNeedsModel || !state.league){
     tag.textContent = '';
     body.innerHTML = '<p class="pending">Depth model unavailable.</p>';
     return;
@@ -1319,22 +1329,27 @@ function renderDepthChart(t){
     body.innerHTML = '<p class="pending">No players on this roster.</p>';
     return;
   }
+  if (!pack.rows || !pack.rows.length){
+    tag.textContent = '';
+    body.innerHTML = '<p class="pending">No starting slots found for this league.</p>';
+    return;
+  }
 
-  tag.textContent = '1st–3rd string · Lock OVR';
+  tag.textContent = pack.slots.length + ' slots · 1st–3rd string · Lock OVR';
   const head = '<tr><th>Pos</th><th>1st string</th><th>2nd string</th><th>3rd string</th></tr>';
-  const rows = pack.core.map(pos => {
-    const slots = pack.chart[pos] || [null, null, null];
-    return '<tr><td class="pos">' + escapeHtml(pos) + '</td>'
-      + depthCellHtml(slots[0])
-      + depthCellHtml(slots[1])
-      + depthCellHtml(slots[2])
+  const rowHtml = pack.rows.map(row => {
+    return '<tr><td class="pos">' + escapeHtml(row.label) + '</td>'
+      + depthCellHtml(row.strings[0])
+      + depthCellHtml(row.strings[1])
+      + depthCellHtml(row.strings[2])
       + '</tr>';
   }).join('');
 
-  body.innerHTML = '<table class="depth"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table>'
-    + '<p class="lineup-foot">Exclusive depth by position (PG–C). Players are placed scarcest-position-first '
-    + 'using <strong>Lock OVR</strong> (projection fallback). Each player appears once across the chart, '
-    + 'up to 3rd string. Flex slots (G / F / UTIL) are not separate rows.</p>';
+  body.innerHTML = '<table class="depth"><thead>' + head + '</thead><tbody>' + rowHtml + '</tbody></table>'
+    + '<p class="lineup-foot">Same ' + pack.slots.length + ' starting slots as Team Needs ('
+    + escapeHtml(pack.slots.join(', '))
+    + '). Exclusive depth — scarcest slot first — ranked by <strong>Lock OVR</strong> '
+    + '(projection fallback). Each player appears once, up to 3rd string.</p>';
 }
 
 function needsPlayerRecord(pid){
