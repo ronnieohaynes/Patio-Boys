@@ -414,7 +414,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-depth-proj';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-rookie-bal';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1203,8 +1203,11 @@ function renderLockIn(t){
     + ' (young 1.12 +1 · prime 1.04 · decline 0.80), then '
     + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
     + 'Same OVR can be a haul or a discount depending on age. '
-    + 'Rookies / thin samples (N&lt;' + ((window.LockInDist && LockInDist.MIN_SAMPLES_FOR_SMASH) || 5)
-    + ') use projected FP/G for OVR base. '
+    + 'Rookies use Y1 proj + early-career comps (peak ESPN floors haircut) or draft-rank bands, '
+    + 'capped at Lock ' + ((window.LockInDist && LockInDist.ROOKIE_LOCK_OVR_CAP) || 82)
+    + ' until they have smash samples. Thin vets (N&lt;'
+    + ((window.LockInDist && LockInDist.MIN_SAMPLES_FOR_SMASH) || 5)
+    + ') fall back to projected FP/G. '
     + '<strong>Avg</strong> is full-season FP/G from ' + escapeHtml(String(state.statsSeason)) + '. '
     + 'Hover OVR or Trade for the math. '
     + 'Showing all ' + show.length + ' rostered players'
