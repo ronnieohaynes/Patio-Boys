@@ -1163,15 +1163,18 @@ function curveGrades(list, key, gradeKey){
   return sorted;
 }
 
-/* Absolute Max Points grade: 500 = 100% / A+ (not curved vs other teams). */
+/* Absolute Max Points grade: maxPts/500 on a traditional school scale. */
 function absoluteMaxPointsGrade(score){
   if (window.LockInDist && typeof LockInDist.maxPointsGrade === 'function'){
     return LockInDist.maxPointsGrade(score);
   }
   const bar = (window.LockInDist && LockInDist.MAX_POINTS_BAROMETER) || 500;
-  const pct = Math.max(0, Math.min(1, Number(score) / bar));
-  return pct >= 0.9 ? 'A+' : pct >= 0.75 ? 'A' : pct >= 0.6 ? 'B+' : pct >= 0.45 ? 'B'
-    : pct >= 0.3 ? 'C+' : pct >= 0.15 ? 'C' : pct >= 0.05 ? 'D' : 'F';
+  const pct = Math.max(0, Math.min(1, Number(score) / bar)) * 100;
+  if (pct >= 97) return 'A+'; if (pct >= 93) return 'A'; if (pct >= 90) return 'A-';
+  if (pct >= 87) return 'B+'; if (pct >= 83) return 'B'; if (pct >= 80) return 'B-';
+  if (pct >= 77) return 'C+'; if (pct >= 73) return 'C'; if (pct >= 70) return 'C-';
+  if (pct >= 67) return 'D+'; if (pct >= 63) return 'D'; if (pct >= 60) return 'D-';
+  return 'F';
 }
 
 async function loadLeagueStatsCache(){
@@ -2360,8 +2363,8 @@ const HQ_NAV = {
     label: 'League',
     defaultTab: 'status',
     tabs: {
-      status: { panel: 'tabStatus', btn: 'tabBtnStatus', frame: 'leagueStatusFrame', src: 'league-status.html?embed=1&v=20260804-maxpts500', loaded: 'statusFrameLoaded' },
-      intel:  { panel: 'tabIntel',  btn: 'tabBtnIntel',  frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260804-maxpts500',     loaded: 'intelFrameLoaded' },
+      status: { panel: 'tabStatus', btn: 'tabBtnStatus', frame: 'leagueStatusFrame', src: 'league-status.html?embed=1&v=20260804-maxpts-school', loaded: 'statusFrameLoaded' },
+      intel:  { panel: 'tabIntel',  btn: 'tabBtnIntel',  frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260804-maxpts-school',     loaded: 'intelFrameLoaded' },
       goat:   { panel: 'tabGoat',   btn: 'tabBtnGoat',   frame: 'goatTrackerFrame',   src: 'goat-tracker.html?embed=1&v=20260802-eff-wins', loaded: 'goatFrameLoaded' }
     }
   },

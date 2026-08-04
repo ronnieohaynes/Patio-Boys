@@ -660,18 +660,26 @@
     };
   }
 
-  /* Absolute Max Points barometer: 500 = 100% / A+. Grades are NOT curved vs the league. */
+  /* Absolute Max Points barometer: score/500 → traditional school letter.
+     100% = A+ territory · 90% = A- · 80% = B- · 70% = C- · 60% = D- · below = F.
+     Grades are NOT curved vs the league. */
   const MAX_POINTS_BAROMETER = 500;
   function letterFromPct(pct){
     const p = Number(pct);
     if (!Number.isFinite(p)) return 'F';
-    if (p >= 0.90) return 'A+';
-    if (p >= 0.75) return 'A';
-    if (p >= 0.60) return 'B+';
-    if (p >= 0.45) return 'B';
-    if (p >= 0.30) return 'C+';
-    if (p >= 0.15) return 'C';
-    if (p >= 0.05) return 'D';
+    const x = p <= 1 ? p * 100 : p; /* accept 0–1 or 0–100 */
+    if (x >= 97) return 'A+';
+    if (x >= 93) return 'A';
+    if (x >= 90) return 'A-';
+    if (x >= 87) return 'B+';
+    if (x >= 83) return 'B';
+    if (x >= 80) return 'B-';
+    if (x >= 77) return 'C+';
+    if (x >= 73) return 'C';
+    if (x >= 70) return 'C-';
+    if (x >= 67) return 'D+';
+    if (x >= 63) return 'D';
+    if (x >= 60) return 'D-';
     return 'F';
   }
   function maxPointsPct(score, barometer){
