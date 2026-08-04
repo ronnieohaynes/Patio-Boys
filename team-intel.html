@@ -367,7 +367,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260803-stars-clean';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-maxpts500';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -614,20 +614,26 @@ async function loadCeilings(){
   Object.keys(distMap).forEach(pid => { ceilings[pid] = distMap[pid].ceiling; });
   state.ceilings = ceilings;
 
-  // Max Points = sum of top 10 lock-in ceilings (μ + 1σ), graded on a curve.
+  // Max Points = sum of top 10 lock-in ceilings (μ + 1σ).
+  // Grade is absolute vs 500 barometer (500 = 100% / A+), not curved vs the league.
   const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
+  const barometer = (window.LockInDist && LockInDist.MAX_POINTS_BAROMETER) || 500;
   state.teams.forEach(t => {
     const top = t.players.map(pid => ceilings[pid]).filter(v => v != null).sort((a, b) => b - a).slice(0, slots);
     t.maxPts = top.reduce((s, v) => s + v, 0);
     t.maxPtsCounted = top.length;
+    t.maxPtsPct = window.LockInDist && LockInDist.maxPointsPct
+      ? LockInDist.maxPointsPct(t.maxPts, barometer)
+      : Math.max(0, Math.min(1, t.maxPts / barometer));
+    t.maxPtsGrade = window.LockInDist && LockInDist.maxPointsGrade
+      ? LockInDist.maxPointsGrade(t.maxPts, barometer)
+      : (t.maxPtsPct >= 0.9 ? 'A+' : t.maxPtsPct >= 0.75 ? 'A' : t.maxPtsPct >= 0.6 ? 'B+'
+        : t.maxPtsPct >= 0.45 ? 'B' : t.maxPtsPct >= 0.3 ? 'C+' : t.maxPtsPct >= 0.15 ? 'C'
+        : t.maxPtsPct >= 0.05 ? 'D' : 'F');
   });
   const byMax = state.teams.slice().sort((a, b) => b.maxPts - a.maxPts);
-  const n = byMax.length;
-  byMax.forEach((t, i) => {
-    const pct = n <= 1 ? 1 : (n - 1 - i) / (n - 1);
-    t.maxPtsGrade = pct >= 0.9 ? 'A+' : pct >= 0.75 ? 'A' : pct >= 0.6 ? 'B+' : pct >= 0.45 ? 'B' : pct >= 0.3 ? 'C+' : pct >= 0.15 ? 'C' : pct >= 0.05 ? 'D' : 'F';
-    t.maxPtsRank = i + 1;
-  });
+  byMax.forEach((t, i) => { t.maxPtsRank = i + 1; });
+  state.maxPtsBarometer = barometer;
   state.maxPtsReady = true;
 }
 
@@ -891,10 +897,14 @@ function renderObservations(t){
   }
 
   if (state.maxPtsReady){
-    items.push('Max Points / lock-in grade: <span class="hl">' + t.maxPtsGrade + '</span> &mdash; ranked <strong>#' + t.maxPtsRank + ' of ' + n + '</strong> with a ' + t.maxPts.toFixed(1) + ' ceiling across the top ' + t.maxPtsCounted + ' lock-in spots (game mean + 1σ).');
+    const bar = state.maxPtsBarometer || 500;
+    const pctTxt = t.maxPtsPct != null ? Math.round(t.maxPtsPct * 100) + '%' : '—';
+    items.push('Max Points / lock-in grade: <span class="hl">' + t.maxPtsGrade + '</span> &mdash; <strong>'
+      + t.maxPts.toFixed(1) + '</strong> of ' + bar + ' barometer (' + pctTxt
+      + ') across the top ' + t.maxPtsCounted + ' lock-in spots (game mean + 1σ). Absolute scale, not curved vs the league.');
     const best = t.players.map(pid => ({pid, ceil: state.ceilings[pid]})).filter(e => e.ceil != null).sort((a, b) => b.ceil - a.ceil)[0];
     if (best) items.push('Highest lock-in ceiling on the roster: <strong>' + escapeHtml(playerName(best.pid)) + '</strong> at ' + best.ceil.toFixed(1) + ' per game.');
-    statusTag.textContent = 'Ceiling rank #' + t.maxPtsRank + ' of ' + n;
+    statusTag.textContent = t.maxPts.toFixed(0) + ' / ' + bar + ' · ' + t.maxPtsGrade;
   } else {
     items.push('Max Points grade is still computing from Sleeper game samples&hellip;');
     statusTag.textContent = '';
@@ -970,25 +980,26 @@ function renderLockIn(t){
   const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
   const dists = t.players
     .map(pid => {
-      const d = state.lockInByPid[pid] || state.lockInByPid[String(pid)];
-      if (!d) return null;
-      return Object.assign({pid: String(pid)}, d);
-    })
-    .filter(Boolean);
+      const id = String(pid);
+      const d = state.lockInByPid[pid] || state.lockInByPid[id];
+      if (!d) return {pid: id, missing: true, n: 0, mean: null, stdev: null, ceiling: null, hits: {}};
+      return Object.assign({pid: id}, d);
+    });
 
+  const scored = dists.filter(d => !d.missing);
   if (!dists.length){
     tag.textContent = '';
-    body.innerHTML = '<p class="pending">No ' + escapeHtml(String(state.statsSeason)) + ' game samples on this roster yet.</p>';
+    body.innerHTML = '<p class="pending">No players on this roster.</p>';
     return;
   }
 
-  const summary = window.LockInDist
-    ? LockInDist.teamLockInSummary(dists, {marks, slots, sims: 500})
+  const summary = window.LockInDist && scored.length
+    ? LockInDist.teamLockInSummary(scored, {marks, slots, sims: 500})
     : null;
   const avgFill = summary ? summary.sim.avgFill : {};
   const expected = summary ? summary.sim.expected : {};
 
-  tag.textContent = state.statsSeason + ' · Dynasty OVR 50–99';
+  tag.textContent = state.statsSeason + ' · Dynasty OVR 50–99 · ' + dists.length + ' players';
 
   const fillHtml = '<div class="lock-fill">' + marks.map(m => {
     const fill = avgFill[m];
@@ -1000,19 +1011,28 @@ function renderLockIn(t){
       + '<div class="lf-sub">Simulated top-' + slots + ' nights<br>Roster hit sum ' + expTxt + '</div></div>';
   }).join('') + '</div>';
 
-  const ranked = dists.slice().sort((a, b) => {
+  const show = dists.slice().sort((a, b) => {
+    if (!!a.missing !== !!b.missing) return a.missing ? 1 : -1;
     const as = Number(a.lockOvr != null ? a.lockOvr : a.lockScore);
     const bs = Number(b.lockOvr != null ? b.lockOvr : b.lockScore);
     if (Number.isFinite(as) || Number.isFinite(bs)){
       return (Number.isFinite(bs) ? bs : -1) - (Number.isFinite(as) ? as : -1);
     }
-    return b.mean - a.mean;
+    return (Number(b.mean) || 0) - (Number(a.mean) || 0)
+      || playerName(a.pid).localeCompare(playerName(b.pid));
   });
-  const show = ranked.slice(0, 14);
   const head = '<tr><th>Pos</th><th>Name</th><th>OVR</th><th>Trade</th><th class="num">Avg</th><th class="num">σ</th><th class="num">Ceil</th>'
     + marks.map(m => '<th class="num">≥' + m + '</th>').join('')
     + '<th class="num">N</th></tr>';
   const rows = show.map(d => {
+    if (d.missing){
+      return '<tr><td class="pos">' + escapeHtml(playerPos(d.pid)) + '</td>'
+        + '<td class="name">' + escapeHtml(playerName(d.pid)) + '</td>'
+        + '<td class="num">—</td><td class="num">—</td>'
+        + '<td class="num">—</td><td class="num">—</td><td class="num">—</td>'
+        + marks.map(() => '<td class="num">—</td>').join('')
+        + '<td class="num">0</td></tr>';
+    }
     const hitCells = marks.map(m => {
       const emp = (d.hits && d.hits[m]) || 0;
       const bell = d.normalHits ? d.normalHits[m] : null;
@@ -1097,9 +1117,10 @@ function renderLockIn(t){
     + 'Rookies / thin samples (N&lt;' + ((window.LockInDist && LockInDist.MIN_SAMPLES_FOR_SMASH) || 5)
     + ') use projected FP/G for OVR base. '
     + '<strong>Avg</strong> is full-season FP/G from ' + escapeHtml(String(state.statsSeason)) + '. '
-    + 'Hover OVR or Trade for the math.'
-    + (ranked.length > show.length ? ' Showing top ' + show.length + ' of ' + ranked.length + ' by Lock OVR.' : '')
-    + '</p>';
+    + 'Hover OVR or Trade for the math. '
+    + 'Showing all ' + show.length + ' rostered players'
+    + (scored.length < show.length ? ' (' + (show.length - scored.length) + ' without dynasty samples yet)' : '')
+    + '.</p>';
 
   body.innerHTML = fillHtml
     + '<table class="lockin"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table>'
