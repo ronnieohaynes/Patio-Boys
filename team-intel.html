@@ -414,7 +414,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-rookie-bal';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-intel-rook';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -989,28 +989,54 @@ function pct1(rate){
 }
 
 /* Attach smash Lock OVR (50–99) once dist map exists. Recalculates when
-   player DB / projections arrive so rookies can fall back to proj. */
+   player DB / projections arrive. Rookies with no smash + no Sleeper proj
+   still seed from early-career comps / draft-rank bands. */
 function refreshLockValues(){
   if (!state.lockInByPid || !window.LockInDist) return false;
-  if (state.projById && state.teams){
+  const L = LockInDist;
+  const snap = window.TWO_K_SNAPSHOT || null;
+  const rookieNames = L.rookieNamesFromSnapshot(snap);
+  const rookieIds = L.matchRookieIdsByName(state.playerDb || {}, rookieNames);
+  const marks = state.lockInMarks || ((L.DEFAULT_MARKS && L.DEFAULT_MARKS.slice()) || [30, 40, 50]);
+
+  if (state.teams){
     state.teams.forEach(team => {
       (team.players || []).forEach(pid => {
         const id = String(pid);
         if (state.lockInByPid[id] || state.lockInByPid[pid]) return;
-        const proj = state.projById.get(id);
-        if (proj == null || !Number.isFinite(proj)) return;
+        const p = (state.playerDb || {})[id] || (state.playerDb || {})[pid] || {};
+        const proj = state.projById && state.projById.get(id);
+        const isRookie = L.isRookiePlayer(p, id, {rookieNames, rookieIds});
+        let seed = null;
+        let source = 'proj';
+        if (isRookie && typeof L.rookieValueFloor === 'function'){
+          const floor = L.rookieValueFloor(p, null, snap);
+          seed = L.blendRookieBase(proj, floor);
+          if (seed != null){
+            if (proj != null && floor != null) source = 'rookie-proj-early';
+            else if (floor != null) source = 'rookie-comp-rank';
+            else source = 'rookie-proj';
+          }
+        } else if (proj != null && Number.isFinite(proj)){
+          seed = proj;
+        }
+        if (seed == null || !Number.isFinite(Number(seed))) return;
+        const v = Number(seed);
         state.lockInByPid[id] = {
-          n: 0, mean: proj, sampleMean: proj, stdev: 0, ceiling: proj,
-          hits: {}, normalHits: {}, marks: state.lockInMarks || [30, 40, 50],
-          samples: [], seasonAvg: null, seasonGp: null, avgSource: 'proj',
+          n: 0, mean: v, sampleMean: v, stdev: 0, ceiling: v,
+          hits: {}, normalHits: {}, marks: marks.slice(),
+          samples: [], seasonAvg: null, seasonGp: null, avgSource: source,
           projOnly: true
         };
       });
     });
   }
-  LockInDist.attachLockValues(state.lockInByPid, {
+  L.attachLockValues(state.lockInByPid, {
     playerDb: state.playerDb || {},
-    projById: state.projById
+    projById: state.projById,
+    rookieNames,
+    rookieIds,
+    twoKSnapshot: snap
   });
   return true;
 }
