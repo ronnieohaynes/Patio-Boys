@@ -367,7 +367,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-maxpts500';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260804-maxpts-school';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -627,9 +627,14 @@ async function loadCeilings(){
       : Math.max(0, Math.min(1, t.maxPts / barometer));
     t.maxPtsGrade = window.LockInDist && LockInDist.maxPointsGrade
       ? LockInDist.maxPointsGrade(t.maxPts, barometer)
-      : (t.maxPtsPct >= 0.9 ? 'A+' : t.maxPtsPct >= 0.75 ? 'A' : t.maxPtsPct >= 0.6 ? 'B+'
-        : t.maxPtsPct >= 0.45 ? 'B' : t.maxPtsPct >= 0.3 ? 'C+' : t.maxPtsPct >= 0.15 ? 'C'
-        : t.maxPtsPct >= 0.05 ? 'D' : 'F');
+      : (function(pct){
+          const x = pct * 100;
+          if (x >= 97) return 'A+'; if (x >= 93) return 'A'; if (x >= 90) return 'A-';
+          if (x >= 87) return 'B+'; if (x >= 83) return 'B'; if (x >= 80) return 'B-';
+          if (x >= 77) return 'C+'; if (x >= 73) return 'C'; if (x >= 70) return 'C-';
+          if (x >= 67) return 'D+'; if (x >= 63) return 'D'; if (x >= 60) return 'D-';
+          return 'F';
+        })(t.maxPtsPct);
   });
   const byMax = state.teams.slice().sort((a, b) => b.maxPts - a.maxPts);
   byMax.forEach((t, i) => { t.maxPtsRank = i + 1; });
@@ -900,8 +905,8 @@ function renderObservations(t){
     const bar = state.maxPtsBarometer || 500;
     const pctTxt = t.maxPtsPct != null ? Math.round(t.maxPtsPct * 100) + '%' : '—';
     items.push('Max Points / lock-in grade: <span class="hl">' + t.maxPtsGrade + '</span> &mdash; <strong>'
-      + t.maxPts.toFixed(1) + '</strong> of ' + bar + ' barometer (' + pctTxt
-      + ') across the top ' + t.maxPtsCounted + ' lock-in spots (game mean + 1σ). Absolute scale, not curved vs the league.');
+      + t.maxPts.toFixed(1) + '</strong> / ' + bar + ' (' + pctTxt
+      + '). Traditional school scale on maxPts/' + bar + ' (90%=A- · 80%=B- · 70%=C- · 60%=D-).');
     const best = t.players.map(pid => ({pid, ceil: state.ceilings[pid]})).filter(e => e.ceil != null).sort((a, b) => b.ceil - a.ceil)[0];
     if (best) items.push('Highest lock-in ceiling on the roster: <strong>' + escapeHtml(playerName(best.pid)) + '</strong> at ' + best.ceil.toFixed(1) + ' per game.');
     statusTag.textContent = t.maxPts.toFixed(0) + ' / ' + bar + ' · ' + t.maxPtsGrade;
