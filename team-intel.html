@@ -480,7 +480,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-naji-contract';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-top8-lock';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1845,10 +1845,15 @@ function buildDepthChart(team){
     claimed.add(String(pick.id));
   });
 
-  /* Top 8: next best remaining by Lock OVR (not position-tied). */
+  /* Top 8: next best remaining by Lock OVR only (overall, not position-tied). */
+  function top8Rank(rec){
+    if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr);
+    if (rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
+    return -1;
+  }
   const top8 = records
     .filter(r => !claimed.has(String(r.id)))
-    .sort((a, b) => b.rankVal - a.rankVal
+    .sort((a, b) => top8Rank(b) - top8Rank(a)
       || String(a.name).localeCompare(String(b.name)))
     .slice(0, DEPTH_TOP8);
   top8.forEach(p => claimed.add(String(p.id)));
@@ -1963,7 +1968,7 @@ function renderDepthChart(t){
     + escapeHtml(pack.slots.join(', '))
     + '). <strong>1st string</strong> = legal starters by hold value (Lock OVR × situation path). '
     + '<strong>Top 8</strong> = the next ' + (pack.top8Spots || DEPTH_TOP8)
-    + ' best remaining (overall, not tied to Pos). '
+    + ' best remaining by <strong>Lock OVR</strong> (overall, not tied to Pos). '
     + '<strong>Taxi</strong> holds up to ' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
     + ' developmental stashes with a real path to rosterable Lock — blocked NBA situations are not stashes. '
     + (offN
