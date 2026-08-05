@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-situation';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-nopath-drop';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -485,7 +485,9 @@ function makeRecord(pid, playerDb, projById, lockDist){
     tradeScore: lock && lock.tradeScore != null ? lock.tradeScore : null,
     tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null,
     tradeContractMult: lock && lock.tradeContractMult != null ? lock.tradeContractMult : null,
-    tradeContractNote: lock && lock.tradeContractNote ? lock.tradeContractNote : null
+    tradeContractNote: lock && lock.tradeContractNote ? lock.tradeContractNote : null,
+    situationMult: lock && lock.tradeSituationMult != null ? lock.tradeSituationMult : null,
+    situationKind: lock && lock.tradeSituationKind ? lock.tradeSituationKind : null
   };
 }
 

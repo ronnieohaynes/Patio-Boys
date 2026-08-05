@@ -1635,12 +1635,47 @@ function contractCellHtml(pid){
 
 const DEPTH_TOP8 = 8;
 const DEPTH_TAXI_SPOTS = 2;
+/* Situation below this ⇒ no clear path — demote off chart / don't stash. */
+const SIT_PATH_BLOCKED = 0.90;
+const SIT_PATH_DEAD = 0.82;
+
+function situationFields(lock){
+  if (!lock) return {situationMult: null, situationKind: null, situationNote: null};
+  return {
+    situationMult: lock.tradeSituationMult != null ? Number(lock.tradeSituationMult) : null,
+    situationKind: lock.tradeSituationKind || null,
+    situationNote: lock.tradeSituationNote || null
+  };
+}
+
+function isPathBlocked(rec){
+  if (!rec) return false;
+  if (rec.situationKind === 'fa' || rec.situationKind === 'crowded') return true;
+  const sit = Number(rec.situationMult);
+  return Number.isFinite(sit) && sit < SIT_PATH_BLOCKED;
+}
+
+function isPathDead(rec){
+  if (!rec) return false;
+  if (rec.situationKind === 'fa') return true;
+  const sit = Number(rec.situationMult);
+  return Number.isFinite(sit) && sit <= SIT_PATH_DEAD;
+}
 
 function depthRankValue(rec){
-  /* Depth chart ranks by Lock OVR so off-chart / drop fodder stands out. */
-  if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr);
-  if (rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
-  return -1;
+  /* Depth chart ranks by hold value: Lock OVR, then situation path. */
+  let base = -1;
+  if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) base = Number(rec.lockOvr);
+  else if (rec.metric != null && Number.isFinite(Number(rec.metric))) base = Number(rec.metric);
+  if (base < 0) return -1;
+  const sit = Number(rec.situationMult);
+  if (!Number.isFinite(sit) || sit >= 0.98) return base;
+  /* Lock already blends ~45% of situation; apply the rest so blocked paths
+     don't keep Top 8 / taxi spots when there's no route to value. */
+  let hold = base * (0.50 + 0.50 * Math.max(0.55, sit));
+  if (isPathDead(rec)) hold = Math.min(hold, 54);
+  else if (isPathBlocked(rec)) hold = Math.min(hold, 62);
+  return hold;
 }
 
 function depthCellHtml(player, opts){
@@ -1694,6 +1729,7 @@ function buildDepthChart(team){
     const yearsExp = p.years_exp != null ? Number(p.years_exp) : null;
     const lockOvr = lock && lock.lockOvr != null ? lock.lockOvr : null;
     const tradeStars = lock && lock.tradeStars != null ? lock.tradeStars : null;
+    const sit = situationFields(lock);
     const devPlayer = {
       id,
       name: rec.name,
@@ -1704,23 +1740,27 @@ function buildDepthChart(team){
       years_exp: yearsExp,
       isRookie: yearsExp === 0,
       lockOvr,
-      tradeStars
+      tradeStars,
+      situationMult: sit.situationMult,
+      situationKind: sit.situationKind
     };
     const dev = typeof TeamNeedsModel.taxiDevEval === 'function'
       ? TeamNeedsModel.taxiDevEval(devPlayer, {taxiYears})
-      : {eligible: false, stashWorthy: false, readyNow: false, score: 0, why: ''};
+      : {eligible: false, stashWorthy: false, readyNow: false, pathBlocked: false, score: 0, why: ''};
     const canTaxi = typeof TeamNeedsModel.taxiEligible === 'function'
       ? TeamNeedsModel.taxiEligible(devPlayer, taxiYears)
       : !!dev.eligible;
-    records.push(Object.assign({}, rec, {
+    const pathBlocked = !!(dev.pathBlocked || isPathBlocked(sit));
+    records.push(Object.assign({}, rec, sit, {
       id,
       lockOvr,
       tradeStars,
       yearsExp,
       canTaxi,
       taxiDev: dev,
+      pathBlocked,
       onTaxi: alreadyTaxi.has(id),
-      rankVal: depthRankValue({lockOvr, metric: rec.metric})
+      rankVal: depthRankValue(Object.assign({}, {lockOvr, metric: rec.metric}, sit))
     }));
   });
 
@@ -1772,26 +1812,31 @@ function buildDepthChart(team){
     .slice(0, DEPTH_TOP8);
   top8.forEach(p => claimed.add(String(p.id)));
 
-  /* Taxi column: 2 league spots — developmental / taxi-eligible leftovers. */
+  /* Taxi column: 2 league spots — developmental stashes with a real path. */
   const remaining = records.filter(r => !claimed.has(String(r.id)));
   const taxiRanked = remaining.slice().filter(r =>
-    r.onTaxi || (r.canTaxi && r.taxiDev && (r.taxiDev.stashWorthy || !r.taxiDev.readyNow))
+    r.onTaxi || (r.canTaxi && r.taxiDev && r.taxiDev.stashWorthy)
   ).sort((a, b) => {
     const ao = a.onTaxi ? 1 : 0;
     const bo = b.onTaxi ? 1 : 0;
     if (bo !== ao) return bo - ao;
+    const ab = a.pathBlocked ? 0 : 1;
+    const bb = b.pathBlocked ? 0 : 1;
+    if (bb !== ab) return bb - ab;
     const as = (a.taxiDev && a.taxiDev.stashWorthy) ? 1 : 0;
     const bs = (b.taxiDev && b.taxiDev.stashWorthy) ? 1 : 0;
     if (bs !== as) return bs - as;
     return (b.taxiDev && b.taxiDev.score || 0) - (a.taxiDev && a.taxiDev.score || 0)
-      || (b.lockOvr || 0) - (a.lockOvr || 0)
+      || (b.rankVal || 0) - (a.rankVal || 0)
       || String(a.name).localeCompare(String(b.name));
   });
   const taxiPool = taxiRanked.slice();
   if (taxiPool.length < taxiSpotCap){
     remaining.filter(r =>
-      r.canTaxi && !taxiPool.some(t => String(t.id) === String(r.id))
-    ).sort((a, b) => (b.lockOvr || 0) - (a.lockOvr || 0)
+      r.canTaxi
+      && !r.pathBlocked
+      && !taxiPool.some(t => String(t.id) === String(r.id))
+    ).sort((a, b) => (b.rankVal || 0) - (a.rankVal || 0)
       || String(a.name).localeCompare(String(b.name))
     ).forEach(r => {
       if (taxiPool.length >= taxiSpotCap) return;
@@ -1875,11 +1920,11 @@ function renderDepthChart(t){
   body.innerHTML = '<table class="depth"><thead>' + head + '</thead><tbody>' + rowHtml + '</tbody></table>'
     + '<p class="lineup-foot">Same ' + pack.slots.length + ' starting slots as Team Needs ('
     + escapeHtml(pack.slots.join(', '))
-    + '). <strong>1st string</strong> = legal starters by Lock OVR. '
+    + '). <strong>1st string</strong> = legal starters by hold value (Lock OVR × situation path). '
     + '<strong>Top 8</strong> = the next ' + (pack.top8Spots || DEPTH_TOP8)
     + ' best remaining (overall, not tied to Pos). '
     + '<strong>Taxi</strong> holds up to ' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
-    + ' developmental / taxi-eligible stashes. '
+    + ' developmental stashes with a real path to rosterable Lock — blocked NBA situations are not stashes. '
     + (offN
       ? (offN + ' player' + (offN === 1 ? '' : 's') + ' off the chart → ranked drop candidates in Roster Moves. ')
       : 'Full chart coverage — no off-chart drops. ')
@@ -2182,6 +2227,11 @@ function scoreCutsForTeam(t, slots, opt){
       : null;
     const hitN = d && d.n != null ? Number(d.n) : 0;
     const hit30Soft = hit30 != null && hitN >= DROP_HIT30_MIN_N && hit30 < DROP_HIT30_FLOOR;
+    const sitMult = d && d.tradeSituationMult != null ? Number(d.tradeSituationMult) : null;
+    const sitKind = d && d.tradeSituationKind ? d.tradeSituationKind : null;
+    const sitNote = d && d.tradeSituationNote ? d.tradeSituationNote : null;
+    const pathBlocked = isPathBlocked({situationMult: sitMult, situationKind: sitKind});
+    const pathDead = isPathDead({situationMult: sitMult, situationKind: sitKind});
     let cutScore = Math.max(0, 95 - tradeValue);
     if (!isStarter) cutScore += 45;
     else cutScore -= 55;
@@ -2189,7 +2239,8 @@ function scoreCutsForTeam(t, slots, opt){
     if (seriousInjuryStatus(p.injury_status) && !starKeep) cutScore += 8;
     if (lockOvr == null && rec.metric == null) cutScore += 20;
     if (starKeep) cutScore -= 120;
-    if (dev.stashWorthy) cutScore -= 25;
+    /* Blocked paths are not taxi stashes — don't protect them. */
+    if (dev.stashWorthy && !pathBlocked) cutScore -= 25;
     if (nbaDeal) cutScore -= 60;
     /* Off the depth chart is the drop pool — bump vs anyone still charted. */
     if (!chartIds.has(id)) cutScore += 30;
@@ -2198,6 +2249,9 @@ function scoreCutsForTeam(t, slots, opt){
     else if (hit30 != null && hitN >= DROP_HIT30_MIN_N && hit30 >= DROP_HIT30_FLOOR){
       cutScore -= Math.min(18, (hit30 - DROP_HIT30_FLOOR) * 35);
     }
+    /* No NBA path to value ⇒ why roster them? */
+    if (pathBlocked && !starKeep) cutScore += 48;
+    if (pathDead && !starKeep) cutScore += 18;
     return {
       id,
       name,
@@ -2217,6 +2271,11 @@ function scoreCutsForTeam(t, slots, opt){
       hit30,
       hitN,
       hit30Soft,
+      situationMult: sitMult,
+      situationKind: sitKind,
+      situationNote: sitNote,
+      pathBlocked,
+      pathDead,
       cutScore,
       onChart: chartIds.has(id)
     };
@@ -2247,6 +2306,10 @@ function scoreCutsForTeam(t, slots, opt){
     const as = a.starKeep ? 1 : 0;
     const bs = b.starKeep ? 1 : 0;
     if (as !== bs) return as - bs;
+    /* No path to value ahead of ordinary fodder. */
+    const ab = a.pathBlocked ? 0 : 1;
+    const bb = b.pathBlocked ? 0 : 1;
+    if (ab !== bb) return ab - bb;
     /* Soft ≥30 rate first among unprotected fodder. */
     const ah = a.hit30Soft ? 0 : 1;
     const bh = b.hit30Soft ? 0 : 1;
@@ -2267,6 +2330,10 @@ function scoreCutsForTeam(t, slots, opt){
     detail: (over > 0 && i < over
       ? ('Need ' + over + ' cut' + (over === 1 ? '' : 's') + ' · drop #' + (i + 1) + ' first')
       : ('Off depth chart · drop #' + (i + 1)))
+      + (c.pathBlocked
+        ? (' · no clear path to value'
+          + (c.situationNote ? (' (' + c.situationNote + ')') : ''))
+        : '')
       + (c.hit30Soft
         ? (' · hits ≥' + DROP_HIT30_MARK + ' only '
           + Math.round((c.hit30 || 0) * 100) + '% of weeks — soft floor')
@@ -2512,11 +2579,13 @@ function renderRosterMoves(t){
     + '<p class="moves-foot">Drop candidates are everyone <strong>off the depth chart</strong> '
     + '(not 1st string, Top 8, or the ' + DEPTH_TAXI_SPOTS + ' taxi spots), ranked by dynasty value — '
     + '<strong>#1</strong> should be dropped first. '
+    + 'Players with a <strong>blocked NBA path</strong> (crowded role / free agent — no route to minutes or rising value) '
+    + 'rise toward the top: if they can\'t get better, don\'t roster them. '
     + 'Players who hit <strong>≥30 FP in under '
     + Math.round(DROP_HIT30_FLOOR * 100)
-    + '% of weeks</strong> rise as prime cuts (you can\'t start them most nights). '
+    + '% of weeks</strong> also rise as prime cuts (you can\'t start them most nights). '
     + 'Taxi on the chart is for under-' + targetOvr
-    + ' Lock developmental stashes (soft cap ~'
+    + ' Lock developmental stashes with a real path (soft cap ~'
     + ((window.TeamNeedsModel && TeamNeedsModel.TAXI_DEV_IDEAL) || 3) + '–'
     + ((window.TeamNeedsModel && TeamNeedsModel.TAXI_DEV_SOFT_CAP) || 4)
     + '). Lock 80+ stars and recent good NBA deals sink to the bottom of the drop list. '

@@ -92,6 +92,7 @@
   /*
    * Taxi stash quality: not rosterable yet (< 75 Lock), but projected to clear
    * 75 within the next ~2 years. Already-ready players belong on the active roster.
+   * Blocked NBA situations (crowded wings / FA) are not stashes — no path to value.
    */
   function taxiDevEval(player, opts){
     const options = opts || {};
@@ -105,12 +106,18 @@
     const tradeStars = player && player.tradeStars != null ? Number(player.tradeStars) : null;
     const metric = player && player.metric != null ? Number(player.metric) : null;
     const isRookie = !!(player && (player.isRookie || player.source === 'rookie' || y === 0));
+    const sitMult = player && player.situationMult != null ? Number(player.situationMult) : null;
+    const sitKind = player && player.situationKind ? String(player.situationKind) : '';
+    const pathBlocked = sitKind === 'fa'
+      || sitKind === 'crowded'
+      || (Number.isFinite(sitMult) && sitMult < 0.90);
 
     if (!eligible){
       return {
         eligible: false,
         readyNow: ovr != null && ovr >= target,
         stashWorthy: false,
+        pathBlocked: false,
         currentOvr: ovr,
         projectedOvr: ovr,
         targetOvr: target,
@@ -133,6 +140,12 @@
         else if (tradeStars >= 2.5) projected += 6;
         else if (tradeStars <= 1) projected -= 4;
       }
+      /* Crowded / FA situations don't grow into rosterable Lock. */
+      if (pathBlocked && Number.isFinite(sitMult)){
+        projected -= Math.max(6, (0.95 - sitMult) * 55);
+      } else if (pathBlocked){
+        projected -= 12;
+      }
     }
 
     /* No Lock yet — only stash if early-career signals point at a rosterable path. */
@@ -143,16 +156,28 @@
     );
     if (ovr == null && speculative){
       projected = target + (Number.isFinite(tradeStars) ? tradeStars * 2 : 2);
+      if (pathBlocked) projected -= 14;
     }
 
-    const pathToRoster = !readyNow && projected != null && projected >= target;
-    const stashWorthy = !readyNow && (pathToRoster || speculative);
+    let pathToRoster = !readyNow && projected != null && projected >= target;
+    let stashWorthy = !readyNow && (pathToRoster || speculative);
+    if (pathBlocked){
+      pathToRoster = false;
+      stashWorthy = false;
+    }
 
     let score = 0;
     let why = 'No clear path to ' + target + ' Lock in ' + horizon + 'y';
     if (readyNow){
       why = 'Already rosterable (Lock ' + Math.round(ovr) + ') — keep active';
       score = -50;
+    } else if (pathBlocked){
+      why = sitKind === 'fa'
+        ? 'No NBA roster — not a stash'
+        : ('Blocked NBA path'
+          + (Number.isFinite(sitMult) ? (' · situation ×' + sitMult.toFixed(2)) : '')
+          + ' — no route to minutes/value');
+      score = Math.max(0, (projected != null ? projected : 40) - 55);
     } else if (stashWorthy){
       const cur = ovr != null ? Math.round(ovr) : null;
       const proj = projected != null ? Math.round(projected) : null;
@@ -176,6 +201,7 @@
       eligible: true,
       readyNow,
       stashWorthy,
+      pathBlocked,
       currentOvr: ovr,
       projectedOvr: projected,
       targetOvr: target,
