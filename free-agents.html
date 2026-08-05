@@ -235,8 +235,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-taxidev';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-contracts';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -386,12 +386,21 @@ function findDepthFit(chart, playerId){
   return null;
 }
 
+function recentNbaDeal(player){
+  if (!window.TeamNeedsModel || typeof TeamNeedsModel.recentGoodContract !== 'function') return null;
+  return TeamNeedsModel.recentGoodContract(player && player.name ? player.name : player);
+}
+
 function weakestRostered(roster){
   if (!roster || !roster.length) return null;
-  return roster.slice().sort((a, b) =>
-    depthRankValue(a) - depthRankValue(b)
-    || String(a.name).localeCompare(String(b.name))
-  )[0];
+  /* Prefer dropping low-value players who were not just paid by an NBA team. */
+  return roster.slice().sort((a, b) => {
+    const ap = recentNbaDeal(a) ? 1 : 0;
+    const bp = recentNbaDeal(b) ? 1 : 0;
+    if (ap !== bp) return ap - bp;
+    return depthRankValue(a) - depthRankValue(b)
+      || String(a.name).localeCompare(String(b.name));
+  })[0];
 }
 
 function taxiEligibleFa(player, taxiYears){
@@ -587,6 +596,13 @@ function scoreAgentsForTeam(team){
       } else if (weak) drop = weak;
     }
 
+    const dropDeal = drop ? recentNbaDeal(drop) : null;
+    if (shouldAdd && dropDeal && !cracksStarters){
+      /* Don't recommend dumping a recently paid NBA deal for a fringe FA. */
+      shouldAdd = false;
+      drop = null;
+    }
+
     const depthLabel = depthFit
       ? (depthFit.stringLabel + ' · ' + depthFit.label)
       : (fit.slot ? ('Starter look · ' + fit.slot) : 'Off the chart');
@@ -600,12 +616,16 @@ function scoreAgentsForTeam(team){
           + ' · taxi (' + taxiOpen + ' open)';
         if (devCap.atIdeal || devCap.overCap) detail += ' · ' + devCap.note;
       } else if (drop){
-        detail = 'Drop ' + drop.name;
+        detail = 'Drop ' + drop.name
+          + (dropDeal ? ' (last resort — ' + dropDeal.why + ')' : '');
       } else if (regularOpen > 0){
         detail = 'Open roster spot';
       } else {
         detail = 'Stream over weakest';
       }
+    } else if (dropDeal){
+      detail = 'Skip — ' + dropDeal.note + ' on ' + (weak && weak.name ? weak.name : 'roster')
+        + ' (' + dropDeal.why + ')';
     } else if (taxiOpen <= 0 && gate.dev && gate.dev.stashWorthy){
       detail = 'Taxi full — only if cutting a taxi/regular spot';
     } else if (gate.dev && gate.dev.readyNow && taxiEligibleFa(a, taxiYears)){

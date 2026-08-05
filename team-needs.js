@@ -524,12 +524,89 @@
     };
   }
 
+  /* ---- Recent good NBA contracts (Spotrac FA snapshot) ---- */
+  function normContractName(name){
+    return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+  }
+
+  function contractsSnapshot(){
+    return global.NBA_CONTRACTS_SNAPSHOT || null;
+  }
+
+  function contractsByKey(){
+    const snap = contractsSnapshot();
+    if (!snap) return null;
+    if (snap._byKey) return snap._byKey;
+    const map = Object.create(null);
+    (snap.deals || []).forEach(d => {
+      if (!d) return;
+      const key = d.key || normContractName(d.name);
+      if (!key) return;
+      const prev = map[key];
+      if (!prev || Number(d.faYear) > Number(prev.faYear)
+        || (Number(d.faYear) === Number(prev.faYear) && Number(d.aav) > Number(prev.aav))){
+        map[key] = d;
+      }
+    });
+    snap._byKey = map;
+    return map;
+  }
+
+  function fmtMoneyShort(n){
+    const v = Number(n);
+    if (!Number.isFinite(v)) return '';
+    if (v >= 1e6) return '$' + (v / 1e6).toFixed(v >= 10e6 ? 0 : 1) + 'M';
+    if (v >= 1e3) return '$' + Math.round(v / 1e3) + 'K';
+    return '$' + Math.round(v);
+  }
+
+  /*
+   * Protect players an NBA team just paid — usually a bad fantasy cut/drop
+   * even when Lock/Trade looks soft. Window defaults to 2 FA-class years.
+   */
+  function recentGoodContract(playerOrName, opts){
+    const options = opts || {};
+    const map = contractsByKey();
+    if (!map) return null;
+    const name = (playerOrName && typeof playerOrName === 'object')
+      ? (playerOrName.name || playerOrName.full_name || '')
+      : playerOrName;
+    const key = normContractName(name);
+    if (!key) return null;
+    const deal = map[key];
+    if (!deal) return null;
+    const snap = contractsSnapshot() || {};
+    const asOf = options.asOfYear != null ? Number(options.asOfYear)
+      : (snap.asOfYear != null ? Number(snap.asOfYear) : new Date().getUTCFullYear());
+    const protectYears = options.protectYears != null ? Number(options.protectYears)
+      : (snap.protectYears != null ? Number(snap.protectYears) : 2);
+    const faYear = Number(deal.faYear);
+    if (!Number.isFinite(faYear) || !Number.isFinite(asOf)) return null;
+    const age = asOf - faYear;
+    if (age < 0 || age > protectYears) return null;
+    const aavTxt = fmtMoneyShort(deal.aav);
+    const why = (aavTxt ? aavTxt + '/yr' : 'Paid deal')
+      + (deal.years ? ' · ' + deal.years + 'y' : '')
+      + ' (' + faYear + ' FA)';
+    return {
+      deal,
+      faYear,
+      yearsAgo: age,
+      aav: deal.aav,
+      years: deal.years,
+      why,
+      note: 'Recent good NBA deal — usually keep'
+    };
+  }
+
   global.TeamNeedsModel = {
     CORE, NON_STARTING, NON_REGULAR, DEFAULT_TAXI_YEARS,
     TAXI_ROSTER_OVR, TAXI_DEV_SOFT_CAP, TAXI_DEV_IDEAL, TAXI_DEV_HORIZON,
     parseSlots, regularCap, taxiEligible, splitRoster,
     inferLockOvr, taxiGrowthPerSeason, taxiDevEval,
     countTaxiDevStashes, taxiDevCapacity,
+    recentGoodContract, contractsSnapshot,
     positions, eligibleForSlot, slotTier, optimize, candidateGain,
     ageBand, agePressure, youthUpgradeBonus, AGE_BAND_ORDER
   };
