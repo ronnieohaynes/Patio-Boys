@@ -1655,7 +1655,8 @@
   ];
   const FPM_ELITE = 1.00;
   const FPM_SOLID = 0.85;
-  const FPM_POOR = 0.70;
+  /* Soft drop floor: below C-rate (~0.75) when already off-chart / otherwise aligned. */
+  const FPM_POOR = 0.75;
   const FPM_DEAD = 0.55;
   const FPM_EDGE = 0.08;
   const FPM_MIN_SAMPLES = 10;
