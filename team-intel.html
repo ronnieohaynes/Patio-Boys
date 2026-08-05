@@ -383,6 +383,9 @@
     width:.82em;height:1em;line-height:1;overflow:hidden;flex:0 0 auto;
   }
   table.depth .trade-stars .star.half{width:.41em}
+  table.depth td.slot-taxi{
+    background:color-mix(in srgb, var(--green) 8%, transparent);
+  }
 
   /* trade intel */
   .trade-row{
@@ -474,7 +477,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-depth-contract';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-taxi-drops';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -560,7 +563,8 @@ const state = {
   freeAgents: null,     // [{id,name,positions,metric,age,yearsExp,lockOvr,tradeScore,tradeStars,...}]
   freeAgentsSettled: false,
   freeAgentsError: null,
-  movesByKey: {}        // franchise key -> {fa:[], targets:[], packages:[]}
+  movesByKey: {},       // franchise key -> {fa:[], cuts:...}
+  depthByKey: {}        // franchise key -> depth chart pack
 };
 
 function setLoadNote(text, isError){
@@ -1586,15 +1590,21 @@ function contractCellHtml(pid){
     + escapeHtml(c.label) + '</td>';
 }
 
+const DEPTH_STRINGS = 2;
+const DEPTH_TAXI_SPOTS = 2;
+
 function depthRankValue(rec){
-  /* Depth chart ranks by Lock OVR so 3rd-string / drop fodder stands out. */
+  /* Depth chart ranks by Lock OVR so off-chart / drop fodder stands out. */
   if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr);
   if (rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
   return -1;
 }
 
-function depthCellHtml(player){
-  if (!player) return '<td class="slot-empty">—</td>';
+function depthCellHtml(player, opts){
+  const options = opts || {};
+  if (!player){
+    return '<td class="slot-empty' + (options.taxi ? ' slot-taxi' : '') + '">—</td>';
+  }
   const stars = (window.LockInDist && LockInDist.formatStarsHtml && player.tradeStars != null)
     ? LockInDist.formatStarsHtml(player.tradeStars, {className: 'trade-stars'})
     : '';
@@ -1605,7 +1615,8 @@ function depthCellHtml(player){
     ? '<span>' + Number(player.metric).toFixed(1) + ' proj</span>'
     : '';
   const meta = [ovr, proj].filter(Boolean).join('<span style="opacity:.35"> · </span>');
-  return '<td><span class="slot-name">' + escapeHtml(player.name) + '</span>'
+  return '<td class="' + (options.taxi ? 'slot-taxi' : '') + '">'
+    + '<span class="slot-name">' + escapeHtml(player.name) + '</span>'
     + (meta ? '<span class="slot-meta">' + meta + '</span>' : '')
     + '</td>';
 }
@@ -1615,6 +1626,13 @@ function buildDepthChart(team){
   refreshLockValues();
   const slots = TeamNeedsModel.parseSlots(state.league.roster_positions || []);
   if (!slots.length) return null;
+
+  const taxiYears = team.taxiYears != null ? team.taxiYears : 2;
+  const taxiSpotCap = Math.min(
+    DEPTH_TAXI_SPOTS,
+    Math.max(0, Number(team.taxiSlots != null ? team.taxiSlots : DEPTH_TAXI_SPOTS) || DEPTH_TAXI_SPOTS)
+  );
+  const alreadyTaxi = new Set((team.taxiIds || team.taxi || []).map(String));
 
   /* One row per player id — Sleeper can list taxi/IR ids in players[] already. */
   const seenPid = new Set();
@@ -1627,18 +1645,41 @@ function buildDepthChart(team){
     const lock = state.lockInByPid
       ? (state.lockInByPid[id] || state.lockInByPid[pid])
       : null;
+    const p = (state.playerDb || {})[id] || {};
+    const yearsExp = p.years_exp != null ? Number(p.years_exp) : null;
+    const lockOvr = lock && lock.lockOvr != null ? lock.lockOvr : null;
+    const tradeStars = lock && lock.tradeStars != null ? lock.tradeStars : null;
+    const devPlayer = {
+      id,
+      name: rec.name,
+      positions: rec.positions,
+      metric: rec.metric,
+      age: rec.age,
+      yearsExp,
+      years_exp: yearsExp,
+      isRookie: yearsExp === 0,
+      lockOvr,
+      tradeStars
+    };
+    const dev = typeof TeamNeedsModel.taxiDevEval === 'function'
+      ? TeamNeedsModel.taxiDevEval(devPlayer, {taxiYears})
+      : {eligible: false, stashWorthy: false, readyNow: false, score: 0, why: ''};
+    const canTaxi = typeof TeamNeedsModel.taxiEligible === 'function'
+      ? TeamNeedsModel.taxiEligible(devPlayer, taxiYears)
+      : !!dev.eligible;
     records.push(Object.assign({}, rec, {
       id,
-      lockOvr: lock && lock.lockOvr != null ? lock.lockOvr : null,
-      tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null,
-      rankVal: depthRankValue({
-        lockOvr: lock && lock.lockOvr,
-        metric: rec.metric
-      })
+      lockOvr,
+      tradeStars,
+      yearsExp,
+      canTaxi,
+      taxiDev: dev,
+      onTaxi: alreadyTaxi.has(id),
+      rankVal: depthRankValue({lockOvr, metric: rec.metric})
     }));
   });
 
-  /* Same starting slots as Team Needs (e.g. PG SG G SF PF F C UTIL×3). */
+  /* Position rows: 1st + 2nd string only. */
   const rows = slots.map((slot, index) => {
     const same = slots
       .map((s, i) => ({s, i}))
@@ -1646,11 +1687,11 @@ function buildDepthChart(team){
     const label = same.length > 1
       ? (slot + ' ' + (same.findIndex(x => x.i === index) + 1))
       : slot;
-    return {key: slot + '#' + index, slot, label, strings: [null, null, null]};
+    return {key: slot + '#' + index, slot, label, strings: [null, null]};
   });
 
   const used = new Set();
-  for (let stringIdx = 0; stringIdx < 3; stringIdx++){
+  for (let stringIdx = 0; stringIdx < DEPTH_STRINGS; stringIdx++){
     const order = rows.slice().sort((a, b) => {
       const ca = records.filter(r =>
         !used.has(String(r.id))
@@ -1660,8 +1701,6 @@ function buildDepthChart(team){
         !used.has(String(r.id))
         && TeamNeedsModel.eligibleForSlot(b.slot, TeamNeedsModel.positions(r.positions))
       ).length;
-      /* Prefer scarce CORE slots before broad G/F/UTIL so two players
-         do not both look like the "same" primary spot. */
       const ta = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(a.slot) : 0;
       const tb = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(b.slot) : 0;
       return ca - cb || tb - ta
@@ -1683,7 +1722,7 @@ function buildDepthChart(team){
     });
   }
 
-  /* Safety: never leave the same player in two cells. */
+  /* Safety: never leave the same player in two string cells. */
   const claimed = new Set();
   rows.forEach(row => {
     for (let i = 0; i < row.strings.length; i++){
@@ -1695,7 +1734,49 @@ function buildDepthChart(team){
     }
   });
 
-  return {rows, slots, filled: claimed.size, roster: records.length};
+  /* Taxi column: 2 league spots — developmental / taxi-eligible leftovers. */
+  const remaining = records.filter(r => !claimed.has(String(r.id)));
+  const taxiRanked = remaining.slice().filter(r =>
+    r.onTaxi || (r.canTaxi && r.taxiDev && (r.taxiDev.stashWorthy || !r.taxiDev.readyNow))
+  ).sort((a, b) => {
+    const ao = a.onTaxi ? 1 : 0;
+    const bo = b.onTaxi ? 1 : 0;
+    if (bo !== ao) return bo - ao;
+    const as = (a.taxiDev && a.taxiDev.stashWorthy) ? 1 : 0;
+    const bs = (b.taxiDev && b.taxiDev.stashWorthy) ? 1 : 0;
+    if (bs !== as) return bs - as;
+    return (b.taxiDev && b.taxiDev.score || 0) - (a.taxiDev && a.taxiDev.score || 0)
+      || (b.lockOvr || 0) - (a.lockOvr || 0)
+      || String(a.name).localeCompare(String(b.name));
+  });
+  /* If still short of 2 and taxi-eligible kids remain, fill from them. */
+  const taxiPool = taxiRanked.slice();
+  if (taxiPool.length < taxiSpotCap){
+    remaining.filter(r =>
+      r.canTaxi && !taxiPool.some(t => String(t.id) === String(r.id))
+    ).sort((a, b) => (b.lockOvr || 0) - (a.lockOvr || 0)
+      || String(a.name).localeCompare(String(b.name))
+    ).forEach(r => {
+      if (taxiPool.length >= taxiSpotCap) return;
+      taxiPool.push(r);
+    });
+  }
+  const taxi = taxiPool.slice(0, taxiSpotCap);
+  taxi.forEach(p => claimed.add(String(p.id)));
+
+  const offChart = records.filter(r => !claimed.has(String(r.id)));
+
+  return {
+    rows,
+    taxi,
+    taxiSpots: taxiSpotCap,
+    chartIds: claimed,
+    offChart,
+    records,
+    slots,
+    filled: claimed.size,
+    roster: records.length
+  };
 }
 
 function renderDepthChart(t){
@@ -1715,6 +1796,8 @@ function renderDepthChart(t){
   }
 
   const pack = buildDepthChart(t);
+  state.depthByKey = state.depthByKey || {};
+  if (t && t.key) state.depthByKey[t.key] = pack;
   if (!pack || !pack.roster){
     tag.textContent = '';
     body.innerHTML = '<p class="pending">No players on this roster.</p>';
@@ -1726,21 +1809,35 @@ function renderDepthChart(t){
     return;
   }
 
-  tag.textContent = pack.slots.length + ' slots · 1st–3rd string · Lock OVR';
-  const head = '<tr><th>Pos</th><th>1st string</th><th>2nd string</th><th>3rd string</th></tr>';
-  const rowHtml = pack.rows.map(row => {
+  const taxiFilled = (pack.taxi || []).length;
+  tag.textContent = pack.slots.length + ' slots · 1st–2nd · Taxi '
+    + taxiFilled + '/' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
+    + ' · Lock OVR';
+  const head = '<tr><th>Pos</th><th>1st string</th><th>2nd string</th><th>Taxi</th></tr>';
+  const rowHtml = pack.rows.map((row, i) => {
+    const taxiPlayer = (pack.taxi || [])[i] || null;
+    /* Only the first taxiSpots rows host a taxi cell; rest stay empty. */
+    const taxiCell = i < (pack.taxiSpots || DEPTH_TAXI_SPOTS)
+      ? depthCellHtml(taxiPlayer, {taxi: true})
+      : '<td class="slot-empty slot-taxi">—</td>';
     return '<tr><td class="pos">' + escapeHtml(row.label) + '</td>'
       + depthCellHtml(row.strings[0])
       + depthCellHtml(row.strings[1])
-      + depthCellHtml(row.strings[2])
+      + taxiCell
       + '</tr>';
   }).join('');
 
+  const offN = (pack.offChart || []).length;
   body.innerHTML = '<table class="depth"><thead>' + head + '</thead><tbody>' + rowHtml + '</tbody></table>'
     + '<p class="lineup-foot">Same ' + pack.slots.length + ' starting slots as Team Needs ('
     + escapeHtml(pack.slots.join(', '))
-    + '). Exclusive depth — scarcest slot first — ranked by <strong>Lock OVR</strong> '
-    + '(projection fallback). 3rd string is the usual drop pool. Each player appears once.</p>';
+    + '). <strong>1st–2nd string</strong> by Lock OVR (exclusive). '
+    + '<strong>Taxi</strong> holds up to ' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
+    + ' developmental / taxi-eligible stashes (not tied to the Pos label). '
+    + (offN
+      ? (offN + ' player' + (offN === 1 ? '' : 's') + ' off the chart → ranked drop candidates in Roster Moves. ')
+      : 'Full chart coverage — no off-chart drops. ')
+    + 'Each player appears once.</p>';
 }
 
 function needsPlayerRecord(pid){
@@ -1983,20 +2080,17 @@ function seriousInjuryStatus(status){
     || s.indexOf('OUT') === 0 || s === 'INJURY_RESERVE';
 }
 
-/* When over the active 18, prefer taxi for real developmental stashes, then cuts. */
+/* Off-chart players (not 1st/2nd/taxi) → ranked drop candidates (#1 = drop first). */
 function scoreCutsForTeam(t, slots, opt){
   const cap = t.regularCap || 18;
   const regularIds = (t.regularIds || t.players || []).map(String);
   const used = t.regularUsed != null ? t.regularUsed : regularIds.length;
   const over = Math.max(0, used - cap);
   const devCap = teamTaxiDevCapacity(t);
-  if (over <= 0){
-    return {over: 0, cap, used, taxiMoves: [], cuts: [], moves: [], devCap};
-  }
+  const depth = buildDepthChart(t) || {};
+  const chartIds = depth.chartIds || new Set();
+  const offChart = (depth.offChart || []).slice();
 
-  const taxiOpen = Math.max(0, Number(t.taxiOpen) || 0);
-  const taxiYears = t.taxiYears != null ? t.taxiYears : 2;
-  const targetOvr = window.TeamNeedsModel ? TeamNeedsModel.TAXI_ROSTER_OVR : 75;
   /* Protect lineup with Lock OVR — season proj benches injured stars (e.g. Tatum DTD). */
   let starterOpt = opt;
   if (window.TeamNeedsModel && slots && slots.length){
@@ -2012,23 +2106,22 @@ function scoreCutsForTeam(t, slots, opt){
     (starterOpt && starterOpt.fills || []).filter(f => f && f.player).map(f => String(f.player.id))
   );
 
-  const candidates = regularIds.map(pid => {
-    const id = String(pid);
-    const rec = needsPlayerRecord(id);
+  function scoreDropCandidate(rec){
+    const id = String(rec.id);
     const p = (state.playerDb || {})[id] || {};
     const d = lockRow(id);
-    const lockOvr = d && d.lockOvr != null ? d.lockOvr : null;
-    const tradeStars = d && d.tradeStars != null ? d.tradeStars : null;
+    const lockOvr = rec.lockOvr != null ? rec.lockOvr
+      : (d && d.lockOvr != null ? d.lockOvr : null);
+    const tradeStars = rec.tradeStars != null ? rec.tradeStars
+      : (d && d.tradeStars != null ? d.tradeStars : null);
     const tradeValue = playerTradeValue(id);
     const isStarter = starterIds.has(id);
     const starKeep = lockOvr != null && Number(lockOvr) >= CUT_STAR_LOCK;
-    const yearsExp = p.years_exp ?? null;
-    const devPlayer = taxiDevPlayerFromId(id);
-    const dev = window.TeamNeedsModel && typeof TeamNeedsModel.taxiDevEval === 'function'
-      ? TeamNeedsModel.taxiDevEval(devPlayer, {taxiYears})
-      : {eligible: false, stashWorthy: false, readyNow: false, score: 0, why: ''};
-    const canTaxi = !!dev.eligible;
-    const band = window.TeamNeedsModel ? TeamNeedsModel.ageBand(rec) : 'unknown';
+    const yearsExp = rec.yearsExp != null ? rec.yearsExp : (p.years_exp ?? null);
+    const dev = rec.taxiDev || {eligible: false, stashWorthy: false, readyNow: false, score: 0, why: ''};
+    const band = window.TeamNeedsModel ? TeamNeedsModel.ageBand({
+      age: rec.age, source: yearsExp === 0 ? 'rookie' : null
+    }) : 'unknown';
     const name = rec.name || playerName(id);
     const nbaDeal = window.TeamNeedsModel && typeof TeamNeedsModel.recentGoodContract === 'function'
       ? TeamNeedsModel.recentGoodContract(name)
@@ -2037,15 +2130,13 @@ function scoreCutsForTeam(t, slots, opt){
     if (!isStarter) cutScore += 45;
     else cutScore -= 55;
     if (band === 'decline') cutScore += 12;
-    /* Only serious injuries bump cut priority, and never on Lock stars. */
     if (seriousInjuryStatus(p.injury_status) && !starKeep) cutScore += 8;
     if (lockOvr == null && rec.metric == null) cutScore += 20;
-    /* Hard-protect Strong+ Lock — injured proj can't make Tatum look like fodder. */
     if (starKeep) cutScore -= 120;
-    /* Don't cut true developmental stashes first if a taxi spot can hold them. */
     if (dev.stashWorthy) cutScore -= 25;
-    /* NBA teams don't hand out real money by accident — avoid cutting recent paid deals. */
     if (nbaDeal) cutScore -= 60;
+    /* Off the depth chart is the drop pool — bump vs anyone still charted. */
+    if (!chartIds.has(id)) cutScore += 30;
     return {
       id,
       name,
@@ -2058,44 +2149,34 @@ function scoreCutsForTeam(t, slots, opt){
       yearsExp,
       isStarter,
       starKeep,
-      canTaxi,
+      canTaxi: !!rec.canTaxi,
       taxiDev: dev,
       nbaDeal,
       ageBand: band,
-      cutScore
+      cutScore,
+      onChart: chartIds.has(id)
     };
-  }).sort((a, b) => b.cutScore - a.cutScore
-    || a.tradeValue - b.tradeValue
-    || String(a.name).localeCompare(String(b.name)));
-
-  const taxiMoves = [];
-  const cuts = [];
-  const claimed = new Set();
-  let left = over;
-  let taxiLeft = taxiOpen;
-  /* Soft-cap how many developmental stashes you park — over ~4 thins the roster. */
-  let devRoom = Math.max(0, (devCap.softCap || 4) - (devCap.count || 0));
-
-  const taxiRanked = candidates.slice().filter(c =>
-    c.canTaxi && !c.isStarter && !c.starKeep && c.taxiDev && c.taxiDev.stashWorthy && !c.taxiDev.readyNow
-  ).sort((a, b) => (b.taxiDev.score || 0) - (a.taxiDev.score || 0)
-    || (b.lockOvr || 0) - (a.lockOvr || 0));
-
-  for (const c of taxiRanked){
-    if (left <= 0 || taxiLeft <= 0 || devRoom <= 0) break;
-    taxiMoves.push(Object.assign({}, c, {
-      action: 'Taxi',
-      detail: (c.taxiDev.why || ('Path toward ' + targetOvr + ' Lock'))
-        + ' · frees an active spot'
-    }));
-    claimed.add(c.id);
-    left--;
-    taxiLeft--;
-    devRoom--;
   }
 
-  /* Prefer cutting players without a recent good NBA deal; paid deals are last resort. */
-  const cutOrder = candidates.slice().sort((a, b) => {
+  const dropPool = (offChart.length ? offChart : []).map(scoreDropCandidate);
+  /* If chart somehow covered everyone but we're over, fall back to non-star regulars. */
+  let pool = dropPool;
+  if (!pool.length && over > 0){
+    pool = regularIds
+      .filter(id => !starterIds.has(String(id)))
+      .map(id => {
+        const rec = needsPlayerRecord(id);
+        const d = lockRow(id);
+        return scoreDropCandidate(Object.assign({}, rec, {
+          lockOvr: d && d.lockOvr,
+          tradeStars: d && d.tradeStars,
+          canTaxi: false,
+          taxiDev: null
+        }));
+      });
+  }
+
+  pool.sort((a, b) => {
     const ap = a.nbaDeal ? 1 : 0;
     const bp = b.nbaDeal ? 1 : 0;
     if (ap !== bp) return ap - bp;
@@ -2107,25 +2188,35 @@ function scoreCutsForTeam(t, slots, opt){
       || String(a.name).localeCompare(String(b.name));
   });
 
-  for (const c of cutOrder){
-    if (left <= 0) break;
-    if (claimed.has(c.id)) continue;
-    /* Never cut Lock 80+ while any non-star active player remains. */
-    if (isCutStar(c)){
-      const fodderLeft = cutOrder.some(x => !claimed.has(x.id) && !isCutStar(x));
-      if (fodderLeft) continue;
-    }
-    cuts.push(Object.assign({}, c, {
-      action: 'Cut',
-      detail: (used + '/' + cap + ' active')
-        + (c.starKeep ? ' · Lock star — last resort only'
-          : (c.isStarter ? ' · currently in opt. lineup — last resort' : ' · lowest dynasty value among extras'))
-        + (c.taxiDev && c.taxiDev.readyNow ? ' · already rosterable — not a taxi stash' : '')
-        + (c.nbaDeal ? ' · last resort — ' + c.nbaDeal.why : '')
-    }));
-    claimed.add(c.id);
-    left--;
-  }
+  /* Never rank Lock 80+ ahead of fodder. */
+  const fodder = pool.filter(c => !isCutStar(c));
+  const stars = pool.filter(c => isCutStar(c));
+  const ranked = fodder.concat(stars);
+
+  const drops = ranked.map((c, i) => Object.assign({}, c, {
+    dropRank: i + 1,
+    action: 'Drop',
+    detail: (over > 0 && i < over
+      ? ('Need ' + over + ' cut' + (over === 1 ? '' : 's') + ' · drop #' + (i + 1) + ' first')
+      : ('Off depth chart · drop #' + (i + 1)))
+      + (c.starKeep ? ' · Lock star — last resort only' : '')
+      + (c.nbaDeal ? ' · protected deal — ' + c.nbaDeal.why : '')
+      + (c.lockOvr != null ? '' : '')
+  }));
+
+  /* Required cuts when over = top `over` from the ranked drop list. */
+  const cuts = over > 0 ? drops.slice(0, over) : [];
+  const taxiMoves = (depth.taxi || []).filter(p => {
+    /* Suggest moving active taxi-eligible kids already picked for the taxi column
+       only when they're still on the active roster (not already taxi'd). */
+    return p && !p.onTaxi && over > 0;
+  }).map(p => {
+    const c = scoreDropCandidate(p);
+    return Object.assign({}, c, {
+      action: 'Taxi',
+      detail: (p.taxiDev && p.taxiDev.why) || ('Park on taxi · frees an active spot')
+    });
+  });
 
   return {
     over,
@@ -2133,7 +2224,9 @@ function scoreCutsForTeam(t, slots, opt){
     used,
     taxiMoves,
     cuts,
-    moves: taxiMoves.concat(cuts),
+    drops,
+    depth,
+    moves: (over > 0 ? taxiMoves.concat(cuts) : drops.slice(0, Math.max(drops.length, 0))),
     devCap
   };
 }
@@ -2274,19 +2367,25 @@ function renderRosterMoves(t){
     return;
   }
 
-  const cutPack = pack.cuts || {over: 0, moves: [], cap: t.regularCap || 18, used: t.regularUsed || 0};
-  const cutMoves = cutPack.moves || [];
+  const cutPack = pack.cuts || {over: 0, moves: [], drops: [], cap: t.regularCap || 18, used: t.regularUsed || 0};
+  const drops = cutPack.drops || [];
   const over = Number(cutPack.over || 0);
   const devCap = cutPack.devCap || teamTaxiDevCapacity(t);
   const tagBits = [];
   if (over > 0) tagBits.push(over + ' over');
+  if (drops.length) tagBits.push(drops.length + ' drop' + (drops.length === 1 ? '' : 's'));
   if (devCap && devCap.count) tagBits.push(devCap.count + ' taxi-dev');
   if (pack.fa.length) tagBits.push(pack.fa.length + ' FA adds');
   tag.textContent = tagBits.join(' · ') || 'Set';
 
   function moveLi(a, kind){
-    const tagCls = kind === 'taxi' ? 'taxi' : (kind === 'cut' ? 'cut' : (a.taxiStash ? 'taxi' : ''));
-    const tagLabel = kind === 'taxi' ? 'Taxi' : (kind === 'cut' ? 'Cut' : (a.taxiStash ? 'Taxi' : 'FA'));
+    const isDrop = kind === 'drop' || a.action === 'Drop' || a.dropRank != null;
+    const tagCls = kind === 'taxi' ? 'taxi'
+      : (isDrop || kind === 'cut' ? 'cut' : (a.taxiStash ? 'taxi' : ''));
+    const tagLabel = kind === 'taxi' ? 'Taxi'
+      : (isDrop
+        ? ('#' + (a.dropRank != null ? a.dropRank : ''))
+        : (kind === 'cut' ? 'Cut' : (a.taxiStash ? 'Taxi' : 'FA')));
     return '<li><span class="mv-name">'
       + '<span class="mv-tag' + (tagCls ? ' ' + tagCls : '') + '">' + tagLabel + '</span>'
       + escapeHtml(a.name) + '</span>'
@@ -2307,7 +2406,7 @@ function renderRosterMoves(t){
   if (over > 0){
     banners.push('<div class="moves-over">Over active roster by <strong>' + over + '</strong> ('
       + cutPack.used + '/' + cutPack.cap
-      + ' starters+bench). Cut or taxi developmental stashes before claiming active FAs.</div>');
+      + ' starters+bench). Drop candidates below are ranked — <strong>#1 first</strong>.</div>');
   }
   if (devCap && (devCap.overCap || (devCap.atIdeal && over <= 0))){
     banners.push('<div class="moves-over">' + escapeHtml(devCap.note)
@@ -2316,39 +2415,31 @@ function renderRosterMoves(t){
   }
   const banner = banners.join('');
 
-  const cutsHtml = cutMoves.length
-    ? '<ul class="moves">' + cutMoves.map(c =>
-        moveLi(c, c.action === 'Taxi' ? 'taxi' : 'cut')
-      ).join('') + '</ul>'
-    : (over > 0
-      ? '<p class="pending" style="margin:0">Could not rank cut candidates.</p>'
-      : '');
+  const dropsHtml = drops.length
+    ? '<ul class="moves">' + drops.map(c => moveLi(c, 'drop')).join('') + '</ul>'
+    : '<p class="pending" style="margin:0">Everyone fits on the depth chart (1st / 2nd / taxi) — no drop fodder.</p>';
 
   const faHtml = pack.fa.length
     ? '<ul class="moves">' + pack.fa.map(a => moveLi(a, a.taxiStash ? 'taxi' : 'fa')).join('') + '</ul>'
     : '<p class="pending" style="margin:0">'
       + (over > 0
-        ? 'Clear cuts first — FA adds paused until you\'re at ' + cutPack.cap + '.'
+        ? 'Clear drops first — FA adds paused until you\'re at ' + cutPack.cap + '.'
         : 'No clear waiver adds right now.')
       + '</p>';
 
-  const showCuts = over > 0;
   body.innerHTML = banner
-    + '<div class="moves-grid' + (showCuts ? '' : ' single') + '">'
-    + (showCuts
-      ? '<div class="moves-col"><h3>Who to cut / move</h3>' + cutsHtml + '</div>'
-      : '')
+    + '<div class="moves-grid">'
+    + '<div class="moves-col"><h3>Drop candidates</h3>' + dropsHtml + '</div>'
     + '<div class="moves-col"><h3>Free agents to add</h3>' + faHtml + '</div>'
     + '</div>'
-    + '<p class="moves-foot">Taxi spots prioritize players under ' + targetOvr
-    + ' Lock who project past it within ~2 years. Soft cap ~'
+    + '<p class="moves-foot">Drop candidates are everyone <strong>off the depth chart</strong> '
+    + '(not 1st string, 2nd string, or the ' + DEPTH_TAXI_SPOTS + ' taxi spots), ranked by dynasty value — '
+    + '<strong>#1</strong> should be dropped first. '
+    + 'Taxi on the chart is for under-' + targetOvr
+    + ' Lock developmental stashes (soft cap ~'
     + ((window.TeamNeedsModel && TeamNeedsModel.TAXI_DEV_IDEAL) || 3) + '–'
     + ((window.TeamNeedsModel && TeamNeedsModel.TAXI_DEV_SOFT_CAP) || 4)
-    + ' of those developmental stashes — more than that thins roster potential. '
-    + 'Already-rosterable talent (&ge;' + targetOvr + ') stays on the active roster. '
-    + 'Players with a good NBA deal signed in the last ~2 FA classes are protected from cut suggestions. '
-    + 'When over the active ' + cutPack.cap
-    + ', those taxi moves come first; then lowest dynasty value among extras. '
+    + '). Lock 80+ stars and recent good NBA deals sink to the bottom of the drop list. '
     + 'Adds use the lineup optimizer (marginal FP/G). '
     + 'For trade packages, use <strong>Trade Finder</strong> in the Trade Analyzer.</p>';
 }

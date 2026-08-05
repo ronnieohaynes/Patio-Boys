@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-depth-contract';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-taxi-drops';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -317,16 +317,17 @@ const SORT_KEY_TO_SELECT = {
 
 const ADD_GAIN = 0.5;
 const ADD_PROJ_EDGE = 0.5;
-const STRING_LABELS = ['1st string', '2nd string', '3rd string'];
+const STRING_LABELS = ['1st string', '2nd string'];
+const FA_DEPTH_STRINGS = 2;
 
 function depthRankValue(rec){
-  /* Depth / drop ranking by Lock OVR — 3rd-string fodder surfaces as drop targets. */
+  /* Depth / drop ranking by Lock OVR — off-chart fodder surfaces as drop targets. */
   if (rec && rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr);
   if (rec && rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
   return -1;
 }
 
-/* Same exclusive 10-slot × 3-string chart as Team Intel, ranked by Lock OVR. */
+/* Same exclusive chart as Team Intel: 1st–2nd string only (taxi is Intel-side). */
 function buildFaDepthChart(players, slots){
   if (!window.TeamNeedsModel || !slots || !slots.length) return null;
   const seenPid = new Set();
@@ -343,10 +344,10 @@ function buildFaDepthChart(players, slots){
     const label = same.length > 1
       ? (slot + ' ' + (same.findIndex(x => x.i === index) + 1))
       : slot;
-    return {key: slot + '#' + index, slot, label, strings: [null, null, null]};
+    return {key: slot + '#' + index, slot, label, strings: [null, null]};
   });
   const used = new Set();
-  for (let stringIdx = 0; stringIdx < 3; stringIdx++){
+  for (let stringIdx = 0; stringIdx < FA_DEPTH_STRINGS; stringIdx++){
     const order = rows.slice().sort((a, b) => {
       const ca = records.filter(r =>
         !used.has(String(r.id))
@@ -392,7 +393,7 @@ function buildFaDepthChart(players, slots){
 function findDepthFit(chart, playerId){
   if (!chart || !chart.rows) return null;
   const pid = String(playerId);
-  for (let stringIdx = 0; stringIdx < 3; stringIdx++){
+  for (let stringIdx = 0; stringIdx < FA_DEPTH_STRINGS; stringIdx++){
     for (const row of chart.rows){
       const p = row.strings[stringIdx];
       if (p && String(p.id) === pid){
@@ -1116,7 +1117,7 @@ async function load(){
     status.classList.remove('error');
     status.textContent = 'Add / pass with taxi stash (players with <'
       + ((state.taxiYears != null ? state.taxiYears : 2) + 1)
-      + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots) or Lock-ranked drop target (usually 3rd string). '
+      + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots) or Lock-ranked drop target (off depth chart). '
       + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR / Trade \u2605'
       + (state.lockStatsSeason ? ' (' + state.lockStatsSeason + ' smash)' : '')
       + '.';
