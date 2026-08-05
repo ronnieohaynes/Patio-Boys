@@ -214,7 +214,11 @@
 
   /* roster moves */
   .moves-grid{
-    display:grid;grid-template-columns:1fr;gap:14px;max-width:520px;
+    display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;
+  }
+  .moves-grid.single{grid-template-columns:1fr;max-width:520px}
+  @media(max-width:760px){
+    .moves-grid{grid-template-columns:1fr}
   }
   .moves-col h3{
     font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
@@ -241,8 +245,16 @@
     vertical-align:1px;
   }
   ul.moves .mv-tag.taxi{background:var(--green);color:#fff}
+  ul.moves .mv-tag.cut{background:var(--coral);color:#fff}
   ul.moves .mv-tag.trade{background:color-mix(in srgb, var(--coral) 85%, #fff);color:#fff}
   ul.moves .mv-tag.ship{background:var(--surface-2);color:var(--gold);border:1px solid var(--hairline)}
+  .moves-over{
+    margin:0 0 12px;padding:8px 12px;border-radius:6px;
+    background:color-mix(in srgb, var(--coral) 14%, var(--surface));
+    border:1px solid color-mix(in srgb, var(--coral) 40%, var(--hairline));
+    font-size:13px;color:#C9CDD8;line-height:1.4;
+  }
+  .moves-over strong{color:var(--ink)}
   ul.moves .hl{color:var(--gold);font-weight:600}
   .moves-foot{
     margin:12px 0 0;font-size:11px;color:var(--ink-dim);line-height:1.45;
@@ -433,7 +445,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-finder';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-cuts';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -565,6 +577,7 @@ function buildTeams(users, rosters){
       regularIds: split ? split.regularIds : allPlayers,
       regularCap: split ? split.regularCap : 18,
       regularUsed: split ? split.regularUsed : allPlayers.length,
+      regularOpen: split ? split.regularOpen : 0,
       taxiSlots: split ? split.taxiSlots : (Number(leagueSettings.taxi_slots) || 0),
       taxiUsed: split ? split.taxiUsed : (r.taxi || []).length,
       taxiOpen: split ? split.taxiOpen : 0,
@@ -1625,12 +1638,123 @@ async function loadFreeAgents(){
   state.freeAgents = shortlist;
 }
 
+function playerTradeValue(pid){
+  const d = lockRow(pid);
+  if (d && d.tradeScore != null && Number.isFinite(Number(d.tradeScore))) return Number(d.tradeScore);
+  if (d && d.lockOvr != null && Number.isFinite(Number(d.lockOvr))) return Number(d.lockOvr);
+  const rec = needsPlayerRecord(pid);
+  if (rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric) * 3.2;
+  return 0;
+}
+
+/* When over the active 18, prefer taxi moves for eligible young players, then cuts. */
+function scoreCutsForTeam(t, slots, opt){
+  const cap = t.regularCap || 18;
+  const regularIds = (t.regularIds || t.players || []).map(String);
+  const used = t.regularUsed != null ? t.regularUsed : regularIds.length;
+  const over = Math.max(0, used - cap);
+  if (over <= 0){
+    return {over: 0, cap, used, taxiMoves: [], cuts: [], moves: []};
+  }
+
+  const taxiOpen = Math.max(0, Number(t.taxiOpen) || 0);
+  const taxiYears = t.taxiYears != null ? t.taxiYears : 2;
+  // Protect opt. starters among the active roster only (ignore taxi/IR for cut ranking)
+  let starterOpt = opt;
+  if (window.TeamNeedsModel && slots && slots.length){
+    starterOpt = TeamNeedsModel.optimize(regularIds.map(needsPlayerRecord), slots);
+  }
+  const starterIds = new Set(
+    (starterOpt && starterOpt.fills || []).filter(f => f && f.player).map(f => String(f.player.id))
+  );
+
+  const candidates = regularIds.map(pid => {
+    const id = String(pid);
+    const rec = needsPlayerRecord(id);
+    const p = (state.playerDb || {})[id] || {};
+    const d = lockRow(id);
+    const lockOvr = d && d.lockOvr != null ? d.lockOvr : null;
+    const tradeStars = d && d.tradeStars != null ? d.tradeStars : null;
+    const tradeValue = playerTradeValue(id);
+    const isStarter = starterIds.has(id);
+    const yearsExp = p.years_exp ?? null;
+    const canTaxi = !!(window.TeamNeedsModel
+      && TeamNeedsModel.taxiEligible({yearsExp, years_exp: yearsExp}, taxiYears));
+    const band = window.TeamNeedsModel ? TeamNeedsModel.ageBand(rec) : 'unknown';
+    let cutScore = Math.max(0, 95 - tradeValue);
+    if (!isStarter) cutScore += 45;
+    else cutScore -= 55;
+    if (band === 'decline') cutScore += 12;
+    if (p.injury_status) cutScore += 8;
+    if (lockOvr == null && rec.metric == null) cutScore += 20;
+    return {
+      id,
+      name: rec.name || playerName(id),
+      pos: (rec.positions || []).join('/') || playerPos(id),
+      lockOvr,
+      tradeStars,
+      tradeValue,
+      metric: rec.metric,
+      age: rec.age,
+      yearsExp,
+      isStarter,
+      canTaxi,
+      ageBand: band,
+      cutScore
+    };
+  }).sort((a, b) => b.cutScore - a.cutScore
+    || a.tradeValue - b.tradeValue
+    || String(a.name).localeCompare(String(b.name)));
+
+  const taxiMoves = [];
+  const cuts = [];
+  const claimed = new Set();
+  let left = over;
+  let taxiLeft = taxiOpen;
+
+  for (const c of candidates){
+    if (left <= 0 || taxiLeft <= 0) break;
+    if (!c.canTaxi || c.isStarter) continue;
+    taxiMoves.push(Object.assign({}, c, {
+      action: 'Taxi',
+      detail: 'Move to taxi · frees an active spot (<' + (taxiYears + 1) + ' seasons)'
+    }));
+    claimed.add(c.id);
+    left--;
+    taxiLeft--;
+  }
+
+  for (const c of candidates){
+    if (left <= 0) break;
+    if (claimed.has(c.id)) continue;
+    cuts.push(Object.assign({}, c, {
+      action: 'Cut',
+      detail: (used + '/' + cap + ' active')
+        + (c.isStarter ? ' · currently in opt. lineup — last resort' : ' · lowest dynasty value among extras')
+    }));
+    claimed.add(c.id);
+    left--;
+  }
+
+  return {
+    over,
+    cap,
+    used,
+    taxiMoves,
+    cuts,
+    moves: taxiMoves.concat(cuts)
+  };
+}
+
 function scoreFaAddsForTeam(t, slots, opt){
   const agents = state.freeAgents || [];
   if (!agents.length || !opt) return [];
   const taxiOpen = Math.max(0, Number(t.taxiOpen) || 0);
   const taxiYears = t.taxiYears != null ? t.taxiYears : 2;
-  const regularOpen = Math.max(0, Number(t.regularOpen != null ? t.regularOpen : (t.regularCap || 18) - (t.regularUsed || 0)) || 0);
+  const used = t.regularUsed != null ? t.regularUsed : (t.regularIds || t.players || []).length;
+  const cap = t.regularCap || 18;
+  const regularOpen = Math.max(0, Number(t.regularOpen != null ? t.regularOpen : (cap - used)) || 0);
+  const overCap = used > cap;
 
   return agents.map(a => {
     const cand = {
@@ -1651,12 +1775,19 @@ function scoreFaAddsForTeam(t, slots, opt){
     );
     const shouldAdd = !!(upgrade || stashWorthy);
     if (!shouldAdd) return null;
+    // Over active limit: only taxi stashes are free; other adds need a cut first
+    if (overCap && !(canTaxi && (stashWorthy || upgrade))){
+      if (!(upgrade && fit.gain >= MOVES_ADD_GAIN * 1.5)) return null;
+    }
     const displaced = fit.displaced && fit.displaced.player ? fit.displaced.player : null;
     let action = 'Add';
     let detail = '';
     if (canTaxi && (stashWorthy || upgrade)){
       action = 'Taxi stash';
       detail = 'No drop · ' + taxiOpen + ' taxi open';
+    } else if (overCap){
+      detail = 'Over roster — cut someone first'
+        + (displaced ? ' (or drop ' + displaced.name + ')' : '');
     } else if (regularOpen > 0){
       detail = 'Open active roster spot';
     } else if (displaced){
@@ -1667,7 +1798,8 @@ function scoreFaAddsForTeam(t, slots, opt){
     const score = (upgrade ? 1000 : 500)
       + fit.gain * 20
       + (a.lockOvr || 0)
-      + (canTaxi ? 30 : 0);
+      + (canTaxi ? 30 : 0)
+      - (overCap && action !== 'Taxi stash' ? 400 : 0);
     return {
       id: a.id,
       name: a.name,
@@ -1693,8 +1825,10 @@ function buildRosterMoves(t){
   if (!slots.length) return null;
   const ourPlayers = (t.players || []).map(needsPlayerRecord);
   const opt = TeamNeedsModel.optimize(ourPlayers, slots);
+  const cuts = scoreCutsForTeam(t, slots, opt);
   return {
     fa: scoreFaAddsForTeam(t, slots, opt),
+    cuts,
     lineupTotal: opt.total,
     slots
   };
@@ -1738,29 +1872,65 @@ function renderRosterMoves(t){
     return;
   }
 
-  tag.textContent = pack.fa.length + ' FA adds';
+  const cutPack = pack.cuts || {over: 0, moves: [], cap: t.regularCap || 18, used: t.regularUsed || 0};
+  const cutMoves = cutPack.moves || [];
+  const over = Number(cutPack.over || 0);
+  const tagBits = [];
+  if (over > 0) tagBits.push(over + ' over');
+  if (pack.fa.length) tagBits.push(pack.fa.length + ' FA adds');
+  tag.textContent = tagBits.join(' · ') || 'Set';
+
+  function moveLi(a, kind){
+    const tagCls = kind === 'taxi' ? 'taxi' : (kind === 'cut' ? 'cut' : (a.taxiStash ? 'taxi' : ''));
+    const tagLabel = kind === 'taxi' ? 'Taxi' : (kind === 'cut' ? 'Cut' : (a.taxiStash ? 'Taxi' : 'FA'));
+    return '<li><span class="mv-name">'
+      + '<span class="mv-tag' + (tagCls ? ' ' + tagCls : '') + '">' + tagLabel + '</span>'
+      + escapeHtml(a.name) + '</span>'
+      + '<div class="mv-meta">' + escapeHtml(a.pos || '—')
+      + (a.lockOvr != null ? ' · Lock ' + Math.round(a.lockOvr) : '')
+      + (a.tradeStars != null ? ' · ' + moveStarsTxt(a.tradeStars) : '')
+      + (a.metric != null ? ' · ' + Number(a.metric).toFixed(1) + ' proj' : '')
+      + (a.slot ? ' · ' + escapeHtml(a.slot) : '')
+      + '</div>'
+      + '<div class="mv-why">' + escapeHtml(a.action || '')
+      + (a.detail ? ' — ' + escapeHtml(a.detail) : '')
+      + (a.gain > 0.05 ? ' · <span class="hl">+' + a.gain.toFixed(1) + ' lineup</span>' : '')
+      + '</div></li>';
+  }
+
+  const banner = over > 0
+    ? '<div class="moves-over">Over active roster by <strong>' + over + '</strong> ('
+      + cutPack.used + '/' + cutPack.cap
+      + ' starters+bench). Cut or move to taxi before claiming active FAs.</div>'
+    : '';
+
+  const cutsHtml = cutMoves.length
+    ? '<ul class="moves">' + cutMoves.map(c =>
+        moveLi(c, c.action === 'Taxi' ? 'taxi' : 'cut')
+      ).join('') + '</ul>'
+    : (over > 0
+      ? '<p class="pending" style="margin:0">Could not rank cut candidates.</p>'
+      : '');
 
   const faHtml = pack.fa.length
-    ? '<ul class="moves">' + pack.fa.map(a => {
-      return '<li><span class="mv-name">'
-        + (a.taxiStash ? '<span class="mv-tag taxi">Taxi</span>' : '<span class="mv-tag">FA</span>')
-        + escapeHtml(a.name) + '</span>'
-        + '<div class="mv-meta">' + escapeHtml(a.pos)
-        + (a.lockOvr != null ? ' · Lock ' + Math.round(a.lockOvr) : '')
-        + (a.tradeStars != null ? ' · ' + moveStarsTxt(a.tradeStars) : '')
-        + (a.metric != null ? ' · ' + a.metric.toFixed(1) + ' proj' : '')
-        + (a.slot ? ' · ' + escapeHtml(a.slot) : '')
-        + '</div>'
-        + '<div class="mv-why">' + escapeHtml(a.action) + (a.detail ? ' — ' + escapeHtml(a.detail) : '')
-        + (a.gain > 0.05 ? ' · <span class="hl">+' + a.gain.toFixed(1) + ' lineup</span>' : '')
-        + '</div></li>';
-    }).join('') + '</ul>'
-    : '<p class="pending" style="margin:0">No clear waiver adds right now.</p>';
+    ? '<ul class="moves">' + pack.fa.map(a => moveLi(a, a.taxiStash ? 'taxi' : 'fa')).join('') + '</ul>'
+    : '<p class="pending" style="margin:0">'
+      + (over > 0
+        ? 'Clear cuts first — FA adds paused until you\'re at ' + cutPack.cap + '.'
+        : 'No clear waiver adds right now.')
+      + '</p>';
 
-  body.innerHTML = '<div class="moves-grid">'
+  const showCuts = over > 0;
+  body.innerHTML = banner
+    + '<div class="moves-grid' + (showCuts ? '' : ' single') + '">'
+    + (showCuts
+      ? '<div class="moves-col"><h3>Who to cut / move</h3>' + cutsHtml + '</div>'
+      : '')
     + '<div class="moves-col"><h3>Free agents to add</h3>' + faHtml + '</div>'
     + '</div>'
-    + '<p class="moves-foot">Adds use the lineup optimizer (marginal FP/G). '
+    + '<p class="moves-foot">When over the active ' + cutPack.cap
+    + ', taxi-eligible young players move first; then lowest dynasty value among non-starters. '
+    + 'Adds use the lineup optimizer (marginal FP/G). '
     + 'Taxi-eligible players (&lt;' + ((t.taxiYears != null ? t.taxiYears : 2) + 1)
     + ' seasons) stash without a drop when a taxi spot is open. '
     + 'For trade packages, use <strong>Trade Finder</strong> in the Trade Analyzer.</p>';
