@@ -12,6 +12,11 @@
   const EPS = 1e-7;
   const AGE_BAND_ORDER = { young: 0, prime: 1, unknown: 2, decline: 3 };
   const DEFAULT_TAXI_YEARS = 2; /* Sleeper taxi_years=2 → years_exp 0–2 (< 3 seasons) */
+  /* Taxi is for near-term upside: path to rosterable Lock OVR within ~2 years. */
+  const TAXI_ROSTER_OVR = 75;
+  const TAXI_DEV_SOFT_CAP = 4; /* more than ~3–4 dilutes roster potential */
+  const TAXI_DEV_IDEAL = 3;
+  const TAXI_DEV_HORIZON = 2;
 
   /* <24 young · 25–32 prime · 33+ decline. Rookies without age count as young. */
   function ageBand(playerOrAge, source){
@@ -57,6 +62,157 @@
     const y = Number(raw);
     if (!Number.isFinite(y) || y < 0) return false;
     return y <= maxY;
+  }
+
+  function yearsExpOf(player){
+    if (player == null || typeof player !== 'object') return null;
+    const y = player.yearsExp != null ? player.yearsExp : player.years_exp;
+    const n = Number(y);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  /* Prefer real Lock OVR; tradeScore is on a similar smash scale when Lock is missing. */
+  function inferLockOvr(player){
+    if (!player || typeof player !== 'object') return null;
+    if (player.lockOvr != null && Number.isFinite(Number(player.lockOvr))) return Number(player.lockOvr);
+    if (player.tradeScore != null && Number.isFinite(Number(player.tradeScore))) return Number(player.tradeScore);
+    return null;
+  }
+
+  /* Expected Lock climb over the next season — higher early, flattens by year 3. */
+  function taxiGrowthPerSeason(player){
+    const y = yearsExpOf(player);
+    const isRookie = !!(player && (player.isRookie || player.source === 'rookie' || y === 0));
+    if (isRookie || y == null || y <= 0) return 10;
+    if (y === 1) return 7;
+    if (y === 2) return 4;
+    return 2;
+  }
+
+  /*
+   * Taxi stash quality: not rosterable yet (< 75 Lock), but projected to clear
+   * 75 within the next ~2 years. Already-ready players belong on the active roster.
+   */
+  function taxiDevEval(player, opts){
+    const options = opts || {};
+    const taxiYears = options.taxiYears != null ? Number(options.taxiYears) : DEFAULT_TAXI_YEARS;
+    const target = options.targetOvr != null ? Number(options.targetOvr) : TAXI_ROSTER_OVR;
+    const horizon = options.horizon != null ? Number(options.horizon) : TAXI_DEV_HORIZON;
+    const eligible = taxiEligible(player, taxiYears);
+    const ovr = inferLockOvr(player);
+    const y = yearsExpOf(player);
+    const age = player && player.age != null ? Number(player.age) : null;
+    const tradeStars = player && player.tradeStars != null ? Number(player.tradeStars) : null;
+    const metric = player && player.metric != null ? Number(player.metric) : null;
+    const isRookie = !!(player && (player.isRookie || player.source === 'rookie' || y === 0));
+
+    if (!eligible){
+      return {
+        eligible: false,
+        readyNow: ovr != null && ovr >= target,
+        stashWorthy: false,
+        currentOvr: ovr,
+        projectedOvr: ovr,
+        targetOvr: target,
+        score: 0,
+        why: 'Not taxi-eligible'
+      };
+    }
+
+    const readyNow = ovr != null && ovr >= target;
+    let projected = ovr;
+    if (ovr != null){
+      projected = ovr + taxiGrowthPerSeason(player) * Math.max(0, horizon);
+      if (Number.isFinite(age)){
+        if (age >= 26) projected -= 8;
+        else if (age >= 24) projected -= 3;
+        else if (age > 0 && age <= 21) projected += 3;
+      }
+      if (Number.isFinite(tradeStars)){
+        if (tradeStars >= 3.5) projected += 8;
+        else if (tradeStars >= 2.5) projected += 6;
+        else if (tradeStars <= 1) projected -= 4;
+      }
+    }
+
+    /* No Lock yet — only stash if early-career signals point at a rosterable path. */
+    const speculative = ovr == null && (isRookie || (y != null && y <= 1)) && (
+      (Number.isFinite(tradeStars) && tradeStars >= 2.5)
+      || (Number.isFinite(metric) && metric >= 12)
+      || (Number.isFinite(age) && age > 0 && age <= 22 && Number.isFinite(metric) && metric >= 8)
+    );
+    if (ovr == null && speculative){
+      projected = target + (Number.isFinite(tradeStars) ? tradeStars * 2 : 2);
+    }
+
+    const pathToRoster = !readyNow && projected != null && projected >= target;
+    const stashWorthy = !readyNow && (pathToRoster || speculative);
+
+    let score = 0;
+    let why = 'No clear path to ' + target + ' Lock in ' + horizon + 'y';
+    if (readyNow){
+      why = 'Already rosterable (Lock ' + Math.round(ovr) + ') — keep active';
+      score = -50;
+    } else if (stashWorthy){
+      const cur = ovr != null ? Math.round(ovr) : null;
+      const proj = projected != null ? Math.round(projected) : null;
+      why = cur != null
+        ? ('Path to rosterable · Lock ' + cur + ' → ~' + proj + ' in ' + horizon + 'y')
+        : ('Early upside stash · projects past ' + target + ' Lock');
+      score = (projected || target) + (ovr != null ? ovr * 0.35 : 10);
+      if (y != null && y <= 0) score += 10;
+      else if (y === 1) score += 5;
+      if (Number.isFinite(age) && age > 0 && age <= 21) score += 4;
+      /* Prefer closer developmental bets (60–74) over raw lottery tickets. */
+      if (ovr != null && ovr >= 60 && ovr < target) score += 12;
+      else if (ovr != null && ovr >= 50 && ovr < 60) score += 4;
+      else if (ovr != null && ovr < 45) score -= 8;
+    } else if (ovr != null){
+      why = 'Projects ~' + Math.round(projected) + ' Lock — below ' + target + ' roster bar';
+      score = Math.max(0, projected - 40);
+    }
+
+    return {
+      eligible: true,
+      readyNow,
+      stashWorthy,
+      currentOvr: ovr,
+      projectedOvr: projected,
+      targetOvr: target,
+      score,
+      why
+    };
+  }
+
+  /* Count developmental stashes already on the roster (taxi + active). */
+  function countTaxiDevStashes(players, opts){
+    const list = Array.isArray(players) ? players : [];
+    let n = 0;
+    list.forEach(p => {
+      if (!p) return;
+      const ev = taxiDevEval(p, opts);
+      if (ev.stashWorthy) n++;
+    });
+    return n;
+  }
+
+  function taxiDevCapacity(devCount, opts){
+    const soft = (opts && opts.softCap != null) ? Number(opts.softCap) : TAXI_DEV_SOFT_CAP;
+    const ideal = (opts && opts.ideal != null) ? Number(opts.ideal) : TAXI_DEV_IDEAL;
+    const n = Math.max(0, Number(devCount) || 0);
+    return {
+      count: n,
+      ideal,
+      softCap: soft,
+      atIdeal: n >= ideal,
+      overCap: n >= soft,
+      openIdeal: Math.max(0, ideal - n),
+      note: n >= soft
+        ? (n + ' developmental stashes — over soft cap (' + soft + '); roster potential thins')
+        : (n >= ideal
+          ? (n + ' developmental stashes — at capacity (~' + ideal + '–' + soft + ' ideal)')
+          : (n + '/' + soft + ' developmental taxi stashes'))
+    };
   }
 
   /* Partition a Sleeper roster. Note: taxi/IR ids are also listed in `players`. */
@@ -370,7 +526,10 @@
 
   global.TeamNeedsModel = {
     CORE, NON_STARTING, NON_REGULAR, DEFAULT_TAXI_YEARS,
+    TAXI_ROSTER_OVR, TAXI_DEV_SOFT_CAP, TAXI_DEV_IDEAL, TAXI_DEV_HORIZON,
     parseSlots, regularCap, taxiEligible, splitRoster,
+    inferLockOvr, taxiGrowthPerSeason, taxiDevEval,
+    countTaxiDevStashes, taxiDevCapacity,
     positions, eligibleForSlot, slotTier, optimize, candidateGain,
     ageBand, agePressure, youthUpgradeBonus, AGE_BAND_ORDER
   };

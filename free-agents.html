@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260804-taxi';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-taxidev';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -463,6 +463,34 @@ function lockCellHtml(a){
     + '</td>';
 }
 
+function teamDevCapacity(team){
+  if (!window.TeamNeedsModel || typeof TeamNeedsModel.countTaxiDevStashes !== 'function'){
+    return {count: 0, softCap: 4, ideal: 3, overCap: false, atIdeal: false, note: ''};
+  }
+  const opts = {taxiYears: team.taxiYears != null ? team.taxiYears : 2};
+  const count = TeamNeedsModel.countTaxiDevStashes(team.players || [], opts);
+  return TeamNeedsModel.taxiDevCapacity(count, opts);
+}
+
+function faTaxiStashGate(a, taxiYears, taxiOpen, devCap){
+  const yearsOk = taxiEligibleFa(a, taxiYears);
+  const slotOk = taxiOpen > 0;
+  if (!window.TeamNeedsModel || typeof TeamNeedsModel.taxiDevEval !== 'function'){
+    const fallback = !!(yearsOk && slotOk && (a.isRookie || (a.lockOvr != null && a.lockOvr < 75)));
+    return {eligible: yearsOk && slotOk, stashWorthy: fallback, dev: null};
+  }
+  const target = TeamNeedsModel.TAXI_ROSTER_OVR || 75;
+  const dev = TeamNeedsModel.taxiDevEval(a, {taxiYears});
+  let stashWorthy = !!(yearsOk && slotOk && dev.stashWorthy && !dev.readyNow);
+  if (stashWorthy && devCap && devCap.overCap){
+    stashWorthy = !!(dev.projectedOvr != null && dev.projectedOvr >= target + 8
+      && (a.lockOvr == null || a.lockOvr >= 62));
+  } else if (stashWorthy && devCap && devCap.atIdeal){
+    stashWorthy = !!(dev.score >= 90 || (a.lockOvr != null && a.lockOvr >= 65));
+  }
+  return {eligible: yearsOk && slotOk, stashWorthy, dev};
+}
+
 function scoreAgentsForTeam(team){
   const taxiYears = team.taxiYears != null ? team.taxiYears : 2;
   const taxiOpen = Math.max(0, Number(team.taxiOpen) || 0);
@@ -471,27 +499,28 @@ function scoreAgentsForTeam(team){
     ? team.regularPlayers
     : team.players;
   const roster = team.players.slice();
+  const devCap = teamDevCapacity(team);
+  const targetOvr = (window.TeamNeedsModel && TeamNeedsModel.TAXI_ROSTER_OVR) || 75;
 
   if (!window.TeamNeedsModel || !state.slots.length){
     return state.agents.map(a => {
       const weak = weakestRostered(regularPlayers);
       const edge = depthRankValue(a) - (weak ? depthRankValue(weak) : 0);
-      const canTaxi = taxiEligibleFa(a, taxiYears) && taxiOpen > 0;
-      const stashWorthy = canTaxi && (
-        a.lockOvr != null || a.isRookie
-        || (a.metric != null && a.metric >= 6)
-        || edge >= 0
-      );
+      const gate = faTaxiStashGate(a, taxiYears, taxiOpen, devCap);
       const upgrade = edge >= ADD_PROJ_EDGE;
-      const shouldAdd = !!(upgrade || stashWorthy);
+      const shouldAdd = !!(upgrade || gate.stashWorthy);
       let drop = null;
       let detail = 'No clear roster upgrade.';
       let verdict = 'Pass';
+      let taxiStash = false;
       if (shouldAdd){
         verdict = 'Add';
-        if (canTaxi && (stashWorthy || upgrade)){
+        if (gate.stashWorthy){
+          taxiStash = true;
           drop = null;
-          detail = 'Stash on taxi (' + taxiOpen + ' open · <' + (taxiYears + 1) + ' seasons)';
+          detail = (gate.dev && gate.dev.why ? gate.dev.why : ('Path to ' + targetOvr + ' Lock'))
+            + ' · taxi (' + taxiOpen + ' open)';
+          if (devCap.atIdeal || devCap.overCap) detail += ' · ' + devCap.note;
         } else if (regularOpen > 0){
           detail = 'Open roster spot';
         } else if (weak){
@@ -509,14 +538,14 @@ function scoreAgentsForTeam(team){
         ageBonus: 0,
         shouldAdd,
         drop,
-        taxiStash: !!(shouldAdd && canTaxi && !drop),
+        taxiStash,
         taxiOpenLeft: taxiOpen,
         taxiYears,
         depthFit: null,
         depthLabel: '—',
         verdict,
         detail,
-        recScore: shouldAdd ? (1000 + edge + (canTaxi ? 40 : 0)) : edge
+        recScore: shouldAdd ? (1000 + edge + (taxiStash ? 40 : 0)) : edge
       };
     }).sort((a, b) => b.recScore - a.recScore || (b.metric || 0) - (a.metric || 0));
   }
@@ -538,20 +567,14 @@ function scoreAgentsForTeam(team){
     const clearBenchUpgrade = projEdge >= ADD_PROJ_EDGE && !!depthFit;
     const upgrade = !!(beatsWeakest && (cracksStarters || depthAdd || clearBenchUpgrade));
 
-    const canTaxi = taxiEligibleFa(a, taxiYears) && taxiOpen > 0;
-    const stashWorthy = canTaxi && (
-      a.lockOvr != null
-      || a.isRookie
-      || (a.metric != null && a.metric >= 6)
-      || !!(depthFit)
-      || upgrade
-    );
+    const gate = faTaxiStashGate(a, taxiYears, taxiOpen, devCap);
+    const stashWorthy = gate.stashWorthy;
 
     let shouldAdd = !!(upgrade || stashWorthy);
     let drop = null;
     let taxiStash = false;
 
-    if (shouldAdd && canTaxi && (stashWorthy || upgrade)){
+    if (shouldAdd && stashWorthy){
       taxiStash = true;
       drop = null;
     } else if (shouldAdd && regularOpen > 0){
@@ -573,7 +596,9 @@ function scoreAgentsForTeam(team){
     if (shouldAdd){
       verdict = 'Add';
       if (taxiStash){
-        detail = 'Stash on taxi (' + taxiOpen + ' open · <' + (taxiYears + 1) + ' seasons)';
+        detail = (gate.dev && gate.dev.why ? gate.dev.why : ('Path to ' + targetOvr + ' Lock'))
+          + ' · taxi (' + taxiOpen + ' open)';
+        if (devCap.atIdeal || devCap.overCap) detail += ' · ' + devCap.note;
       } else if (drop){
         detail = 'Drop ' + drop.name;
       } else if (regularOpen > 0){
@@ -581,9 +606,10 @@ function scoreAgentsForTeam(team){
       } else {
         detail = 'Stream over weakest';
       }
-    } else if (canTaxi === false && taxiEligibleFa(a, taxiYears) && taxiOpen <= 0
-      && (a.isRookie || a.lockOvr != null)){
+    } else if (taxiOpen <= 0 && gate.dev && gate.dev.stashWorthy){
       detail = 'Taxi full — only if cutting a taxi/regular spot';
+    } else if (gate.dev && gate.dev.readyNow && taxiEligibleFa(a, taxiYears)){
+      detail = 'Already rosterable (Lock ≥' + targetOvr + ') — active roster, not taxi';
     } else if (depthFit && depthFit.stringIdx === 2 && projEdge > 0){
       detail = weak
         ? ('Only if cutting ' + weak.name)
@@ -597,7 +623,8 @@ function scoreAgentsForTeam(team){
         + fit.gain * 10
         + (depthFit ? (3 - depthFit.stringIdx) * 25 : 0)
         + Math.max(0, projEdge)
-        + (taxiStash ? 40 : 0))
+        + (taxiStash ? 40 + Math.min(30, ((gate.dev && gate.dev.score) || 0) * 0.15) : 0)
+        - (taxiStash && devCap.overCap ? 80 : 0))
       : (fit.gain * 5
         + Math.max(0, projEdge)
         + (depthFit && depthFit.stringIdx === 2 ? 2 : 0));
