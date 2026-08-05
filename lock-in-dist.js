@@ -110,7 +110,8 @@
   }
 
   /* Score every ESPN box-score line for a Sleeper season year.
-     Returns {samplesByPlayer, per36ByPlayer} where per36 is total FP / total min × 36. */
+     Returns {samplesByPlayer, per36ByPlayer, mpgByPlayer}
+     where per36 is total FP / total min × 36 and mpg is total min / games. */
   function buildSamplesFromGamelogs(statsSeason, scoring){
     const snap = gamelogSnapshot();
     if (!snap || !snap.seasons) return null;
@@ -120,6 +121,7 @@
     const fields = snap.fields || GAMELOG_FIELDS;
     const samplesByPlayer = {};
     const per36ByPlayer = {};
+    const mpgByPlayer = {};
     Object.keys(byPid).forEach(pid => {
       const games = byPid[pid] || [];
       const scored = [];
@@ -136,10 +138,13 @@
       }
       if (scored.length){
         samplesByPlayer[pid] = scored;
-        if (minSum > 0) per36ByPlayer[pid] = (fpSum / minSum) * 36;
+        if (minSum > 0){
+          per36ByPlayer[pid] = (fpSum / minSum) * 36;
+          mpgByPlayer[pid] = minSum / scored.length;
+        }
       }
     });
-    return {samplesByPlayer, per36ByPlayer};
+    return {samplesByPlayer, per36ByPlayer, mpgByPlayer};
   }
 
   /* Full-season FP/G from Sleeper season totals (matches Sleeper app averages). */
@@ -1482,6 +1487,7 @@
     let weeksFound = 0;
     let sampleSource = 'weekly';
     let per36ByPlayer = {};
+    let mpgByPlayer = {};
 
     if (usingBox){
       seasonStats = await fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
@@ -1489,6 +1495,7 @@
         .catch(() => null);
       samplesByPlayer = boxPack.samplesByPlayer;
       per36ByPlayer = boxPack.per36ByPlayer || {};
+      mpgByPlayer = boxPack.mpgByPlayer || {};
       weeksFound = Object.keys(samplesByPlayer).reduce((m, pid) => Math.max(m, samplesByPlayer[pid].length), 0);
       sampleSource = 'boxscore';
     } else {
@@ -1515,6 +1522,8 @@
     Object.keys(distMap).forEach(pid => {
       const p36 = per36ByPlayer[pid];
       if (p36 != null && Number.isFinite(p36)) distMap[pid].avgPer36 = p36;
+      const mpg = mpgByPlayer[pid];
+      if (mpg != null && Number.isFinite(mpg)) distMap[pid].avgMpg = mpg;
     });
     return {
       distMap,
