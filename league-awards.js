@@ -48,6 +48,9 @@
   const WIN_STREAK_THRESHOLD = 10;
   const RS_WIN_BUNDLE_SIZE = 10;
   const PLAYOFF_WIN_BUNDLE_SIZE = 2;
+  /* GM scores each franchise's top N dynasty assets (active 18 + taxi 2).
+     Cutting #21+ filler after draft / IR overflow does not ding the race. */
+  const GM_TOP_N = 20;
   const GOAT_POINTS = {
     champion: 10,
     mvp: 7,
@@ -242,7 +245,7 @@
       { id: 'mvp', name: 'MVP', metric: 'Regular-season Points For', candidates: mvp, ready: mvp.length > 0 },
       { id: 'mip', name: 'Most Improved', metric: 'YoY Points For / game', candidates: mip, ready: mip.length > 0 },
       { id: 'coach', name: 'Coach of the Year', metric: 'Lineup efficiency', candidates: coach, ready: coach.length > 0 },
-      { id: 'gm', name: 'GM of the Year', metric: 'YoY dynasty value', candidates: gm, ready: gm.length > 0 }
+      { id: 'gm', name: 'GM of the Year', metric: 'YoY top-' + GM_TOP_N + ' dynasty value', candidates: gm, ready: gm.length > 0 }
     ];
   }
 
@@ -767,7 +770,17 @@
       return total;
     }
 
-    return { valueForPid, rosterDynastyTotal, ROOKIE_NAMES };
+    /* Sum of the top N dynasty values on a roster (ignores cuttable fat below the cap). */
+    function rosterDynastyTopN(players, playerDb, n){
+      const limit = Number.isFinite(Number(n)) && Number(n) > 0 ? Math.floor(Number(n)) : GM_TOP_N;
+      const vals = (players || []).map(pid => valueForPid(String(pid), playerDb));
+      vals.sort((a, b) => b - a);
+      let total = 0;
+      for (let i = 0; i < Math.min(limit, vals.length); i++) total += vals[i];
+      return total;
+    }
+
+    return { valueForPid, rosterDynastyTotal, rosterDynastyTopN, ROOKIE_NAMES };
   }
 
   /* Players on the current roster who were not on the prior season-end roster. */
@@ -776,20 +789,23 @@
     return (currentPlayers || []).map(String).filter(id => id && !prior.has(id));
   }
 
-  /* GM = greatest YoY gain in total roster dynasty value (same formula as Trade Analyzer). */
+  /* GM = greatest YoY gain in top-N roster dynasty value (same formula as Trade Analyzer). */
   function scoreGmDynastyDelta(pack, priorPack, dynastyMaps, playerDb){
     if (!pack || !pack.gmRows || !pack.gmRows.length || !priorPack || !dynastyMaps) return pack;
     const priorByKey = {};
     (priorPack.rows || []).forEach(r => { priorByKey[r.key] = r; });
+    const topN = GM_TOP_N;
 
     pack.gmRows.forEach(r => {
       const prev = priorByKey[r.key];
-      const curTotal = dynastyMaps.rosterDynastyTotal(r.players || (pack.rows.find(x => x.key === r.key) || {}).players, playerDb);
+      const curPlayers = r.players || (pack.rows.find(x => x.key === r.key) || {}).players;
+      const curTotal = dynastyMaps.rosterDynastyTopN(curPlayers, playerDb, topN);
       const prevTotal = prev
-        ? dynastyMaps.rosterDynastyTotal(prev.players, playerDb)
+        ? dynastyMaps.rosterDynastyTopN(prev.players, playerDb, topN)
         : 0;
       r.dynastyNow = curTotal;
       r.dynastyPrior = prevTotal;
+      r.gmTopN = topN;
       r.gmDelta = curTotal - prevTotal;
     });
 
@@ -798,15 +814,16 @@
       if (a.id === 'gm') return awardRecord('gm', pack.season, gm, pack.pending || !gm);
       return a;
     });
-    pack.gmMeta = { method: 'dynasty-delta' };
+    pack.gmMeta = { method: 'dynasty-delta-topn', topN: topN };
     return pack;
   }
 
-  /* Founding season (no prior league): GM = highest end-of-season roster dynasty total. */
+  /* Founding season (no prior league): GM = highest end-of-season top-N dynasty total. */
   function scoreGmAbsolute(pack, dynastyMaps, playerDb){
     if (!pack || !dynastyMaps) return pack;
+    const topN = GM_TOP_N;
     const gmRows = (pack.rows || []).map(r => {
-      const total = dynastyMaps.rosterDynastyTotal(r.players, playerDb);
+      const total = dynastyMaps.rosterDynastyTopN(r.players, playerDb, topN);
       return {
         key: r.key,
         displayName: r.displayName,
@@ -816,6 +833,7 @@
         players: r.players,
         dynastyNow: total,
         dynastyPrior: 0,
+        gmTopN: topN,
         gmDelta: total,
         maxPts: r.maxPts,
         pf: r.pf
@@ -827,7 +845,7 @@
       if (a.id === 'gm') return awardRecord('gm', pack.season, gm, pack.pending || !gm);
       return a;
     });
-    pack.gmMeta = { method: 'dynasty-total' };
+    pack.gmMeta = { method: 'dynasty-total-topn', topN: topN };
     return pack;
   }
 
@@ -1402,6 +1420,7 @@
     WIN_STREAK_THRESHOLD,
     RS_WIN_BUNDLE_SIZE,
     PLAYOFF_WIN_BUNDLE_SIZE,
+    GM_TOP_N,
     franchiseKey,
     yearLabel,
     seasonTag,

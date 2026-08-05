@@ -117,7 +117,7 @@
   <section>
     <p class="eyebrow">Automatic &middot; No Voting &middot; Lock-in Points = Max Points</p>
     <h2>Accolades</h2>
-    <p class="caption" style="margin-top:0">Champion, MVP (most regular-season Points For), Most Improved (biggest YoY Points For / game), Coach of the Year (lineup efficiency), GM of the Year (biggest YoY gain in total roster dynasty value), and GOAT (manager with the most career GOAT points). Live leaders while the season is open; badges lock when the season completes. Career GOAT points live on the GOAT Race tab.</p>
+    <p class="caption" style="margin-top:0">Champion, MVP (most regular-season Points For), Most Improved (biggest YoY Points For / game), Coach of the Year (lineup efficiency), GM of the Year (biggest YoY gain in top-20 roster dynasty value — active 18 + taxi 2), and GOAT (manager with the most career GOAT points). Live leaders while the season is open; badges lock when the season completes. Career GOAT points live on the GOAT Race tab.</p>
     <p class="status" id="awardsStatus">Loading accolades&hellip;</p>
     <table id="awardsTable" style="display:none">
       <thead><tr><th>Award</th><th>Leader</th><th>Value</th><th>Runner-up</th><th>Status</th></tr></thead>
@@ -179,7 +179,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-per30';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-gm-top20';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
