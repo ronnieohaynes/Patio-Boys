@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-depth-lock';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-protect-stars';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -392,16 +392,25 @@ function recentNbaDeal(player){
   return TeamNeedsModel.recentGoodContract(player && player.name ? player.name : player);
 }
 
+/* Lock 80+ (Strong / All-Star+) — never the FA "Drop …" target while fodder exists. */
+const FA_STAR_LOCK = 80;
+
+function isFaStarKeep(player){
+  return !!(player && player.lockOvr != null && Number(player.lockOvr) >= FA_STAR_LOCK);
+}
+
 function weakestRostered(roster){
   if (!roster || !roster.length) return null;
   /* Prefer dropping low-value players who were not just paid by an NBA team. */
-  return roster.slice().sort((a, b) => {
+  const ranked = roster.slice().sort((a, b) => {
     const ap = recentNbaDeal(a) ? 1 : 0;
     const bp = recentNbaDeal(b) ? 1 : 0;
     if (ap !== bp) return ap - bp;
     return depthRankValue(a) - depthRankValue(b)
       || String(a.name).localeCompare(String(b.name));
-  })[0];
+  });
+  const fodder = ranked.filter(p => !isFaStarKeep(p));
+  return (fodder.length ? fodder : ranked)[0];
 }
 
 function taxiEligibleFa(player, taxiYears){
@@ -536,6 +545,11 @@ function scoreAgentsForTeam(team){
           if (devCap.atIdeal || devCap.overCap) detail += ' · ' + devCap.note;
         } else if (regularOpen > 0){
           detail = 'Open roster spot';
+        } else if (weak && isFaStarKeep(weak)
+          && !(a.lockOvr != null && Number(a.lockOvr) > Number(weak.lockOvr))){
+          verdict = 'Pass';
+          detail = 'No clear roster upgrade.';
+          shouldAdd = false;
         } else if (weak){
           drop = weak;
           detail = 'Drop ' + weak.name;
@@ -594,7 +608,8 @@ function scoreAgentsForTeam(team){
       drop = null;
     } else if (shouldAdd){
       if (weak && projEdge > 0.05) drop = weak;
-      else if (displacedPlayer && depthRankValue(a) > depthRankValue(displacedPlayer)
+      else if (displacedPlayer && !isFaStarKeep(displacedPlayer)
+        && depthRankValue(a) > depthRankValue(displacedPlayer)
         && regularPlayers.some(p => String(p.id) === String(displacedPlayer.id))){
         drop = displacedPlayer;
       } else if (weak) drop = weak;
@@ -603,6 +618,12 @@ function scoreAgentsForTeam(team){
     const dropDeal = drop ? recentNbaDeal(drop) : null;
     if (shouldAdd && dropDeal && !cracksStarters){
       /* Don't recommend dumping a recently paid NBA deal for a fringe FA. */
+      shouldAdd = false;
+      drop = null;
+    }
+    if (shouldAdd && drop && isFaStarKeep(drop)
+      && !(a.lockOvr != null && Number(a.lockOvr) > Number(drop.lockOvr))){
+      /* Never "Drop Tatum" for a lesser FA — only if the FA is a higher Lock star. */
       shouldAdd = false;
       drop = null;
     }

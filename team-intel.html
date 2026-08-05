@@ -471,7 +471,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-role-basic';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-protect-stars';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1852,6 +1852,27 @@ function teamTaxiDevCapacity(t){
   return TeamNeedsModel.taxiDevCapacity(count, opts);
 }
 
+/* Lock 80+ = Strong starter / All-Star / Superstar — never cut while fodder exists. */
+const CUT_STAR_LOCK = 80;
+
+function cutProtectMetric(pid){
+  const d = lockRow(pid);
+  if (d && d.lockOvr != null && Number.isFinite(Number(d.lockOvr))) return Number(d.lockOvr);
+  return playerTradeValue(pid);
+}
+
+function isCutStar(c){
+  return c && c.lockOvr != null && Number(c.lockOvr) >= CUT_STAR_LOCK;
+}
+
+function seriousInjuryStatus(status){
+  const s = String(status || '').toUpperCase();
+  if (!s) return false;
+  /* DTD / Questionable is not a cut signal — OUT / IR / Suspended are. */
+  return s === 'OUT' || s === 'IR' || s === 'SUS' || s === 'SUSPENDED'
+    || s.indexOf('OUT') === 0 || s === 'INJURY_RESERVE';
+}
+
 /* When over the active 18, prefer taxi for real developmental stashes, then cuts. */
 function scoreCutsForTeam(t, slots, opt){
   const cap = t.regularCap || 18;
@@ -1866,10 +1887,16 @@ function scoreCutsForTeam(t, slots, opt){
   const taxiOpen = Math.max(0, Number(t.taxiOpen) || 0);
   const taxiYears = t.taxiYears != null ? t.taxiYears : 2;
   const targetOvr = window.TeamNeedsModel ? TeamNeedsModel.TAXI_ROSTER_OVR : 75;
-  // Protect opt. starters among the active roster only (ignore taxi/IR for cut ranking)
+  /* Protect lineup with Lock OVR — season proj benches injured stars (e.g. Tatum DTD). */
   let starterOpt = opt;
   if (window.TeamNeedsModel && slots && slots.length){
-    starterOpt = TeamNeedsModel.optimize(regularIds.map(needsPlayerRecord), slots);
+    starterOpt = TeamNeedsModel.optimize(
+      regularIds.map(pid => {
+        const rec = needsPlayerRecord(pid);
+        return Object.assign({}, rec, {metric: cutProtectMetric(pid)});
+      }),
+      slots
+    );
   }
   const starterIds = new Set(
     (starterOpt && starterOpt.fills || []).filter(f => f && f.player).map(f => String(f.player.id))
@@ -1884,6 +1911,7 @@ function scoreCutsForTeam(t, slots, opt){
     const tradeStars = d && d.tradeStars != null ? d.tradeStars : null;
     const tradeValue = playerTradeValue(id);
     const isStarter = starterIds.has(id);
+    const starKeep = lockOvr != null && Number(lockOvr) >= CUT_STAR_LOCK;
     const yearsExp = p.years_exp ?? null;
     const devPlayer = taxiDevPlayerFromId(id);
     const dev = window.TeamNeedsModel && typeof TeamNeedsModel.taxiDevEval === 'function'
@@ -1899,8 +1927,11 @@ function scoreCutsForTeam(t, slots, opt){
     if (!isStarter) cutScore += 45;
     else cutScore -= 55;
     if (band === 'decline') cutScore += 12;
-    if (p.injury_status) cutScore += 8;
+    /* Only serious injuries bump cut priority, and never on Lock stars. */
+    if (seriousInjuryStatus(p.injury_status) && !starKeep) cutScore += 8;
     if (lockOvr == null && rec.metric == null) cutScore += 20;
+    /* Hard-protect Strong+ Lock — injured proj can't make Tatum look like fodder. */
+    if (starKeep) cutScore -= 120;
     /* Don't cut true developmental stashes first if a taxi spot can hold them. */
     if (dev.stashWorthy) cutScore -= 25;
     /* NBA teams don't hand out real money by accident — avoid cutting recent paid deals. */
@@ -1916,6 +1947,7 @@ function scoreCutsForTeam(t, slots, opt){
       age: rec.age,
       yearsExp,
       isStarter,
+      starKeep,
       canTaxi,
       taxiDev: dev,
       nbaDeal,
@@ -1935,7 +1967,7 @@ function scoreCutsForTeam(t, slots, opt){
   let devRoom = Math.max(0, (devCap.softCap || 4) - (devCap.count || 0));
 
   const taxiRanked = candidates.slice().filter(c =>
-    c.canTaxi && !c.isStarter && c.taxiDev && c.taxiDev.stashWorthy && !c.taxiDev.readyNow
+    c.canTaxi && !c.isStarter && !c.starKeep && c.taxiDev && c.taxiDev.stashWorthy && !c.taxiDev.readyNow
   ).sort((a, b) => (b.taxiDev.score || 0) - (a.taxiDev.score || 0)
     || (b.lockOvr || 0) - (a.lockOvr || 0));
 
@@ -1957,6 +1989,9 @@ function scoreCutsForTeam(t, slots, opt){
     const ap = a.nbaDeal ? 1 : 0;
     const bp = b.nbaDeal ? 1 : 0;
     if (ap !== bp) return ap - bp;
+    const as = a.starKeep ? 1 : 0;
+    const bs = b.starKeep ? 1 : 0;
+    if (as !== bs) return as - bs;
     return b.cutScore - a.cutScore
       || a.tradeValue - b.tradeValue
       || String(a.name).localeCompare(String(b.name));
@@ -1965,10 +2000,16 @@ function scoreCutsForTeam(t, slots, opt){
   for (const c of cutOrder){
     if (left <= 0) break;
     if (claimed.has(c.id)) continue;
+    /* Never cut Lock 80+ while any non-star active player remains. */
+    if (isCutStar(c)){
+      const fodderLeft = cutOrder.some(x => !claimed.has(x.id) && !isCutStar(x));
+      if (fodderLeft) continue;
+    }
     cuts.push(Object.assign({}, c, {
       action: 'Cut',
       detail: (used + '/' + cap + ' active')
-        + (c.isStarter ? ' · currently in opt. lineup — last resort' : ' · lowest dynasty value among extras')
+        + (c.starKeep ? ' · Lock star — last resort only'
+          : (c.isStarter ? ' · currently in opt. lineup — last resort' : ' · lowest dynasty value among extras'))
         + (c.taxiDev && c.taxiDev.readyNow ? ' · already rosterable — not a taxi stash' : '')
         + (c.nbaDeal ? ' · last resort — ' + c.nbaDeal.why : '')
     }));
