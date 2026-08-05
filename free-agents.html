@@ -135,6 +135,10 @@
     overflow:hidden;flex:0 0 auto;
   }
   td.trade .trade-stars .star.half{width:.45em}
+  td.role{
+    font-size:12px;color:#C9CDD8;min-width:160px;max-width:280px;line-height:1.4;
+  }
+  th.role{min-width:140px}
   td.rec{font-size:12px;color:#C9CDD8;min-width:180px;line-height:1.45}
   td.rec .verdict{
     font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;
@@ -222,6 +226,7 @@
             <th data-sort="metric" data-label="Proj">Proj</th>
             <th data-sort="lockOvr" data-label="Lock">Lock</th>
             <th data-sort="tradeScore" data-label="Trade ★">Trade ★</th>
+            <th class="role hide-sm" data-sort="role" data-label="Role">Role</th>
             <th class="hide-sm" data-sort="age" data-label="Age">Age</th>
             <th data-sort="rec" data-label="Recommendation">Recommendation</th>
           </tr>
@@ -235,7 +240,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-crowded-fix';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fa-role-lock50';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -462,17 +467,26 @@ function applySortSelectToState(){
   state.tableSort = {key, dir};
 }
 
-function makeRecord(pid, playerDb, projById, lockDist){
+function makeRecord(pid, playerDb, projById, lockDist, effectiveOrders){
   const p = playerDb[pid] || {};
   const name = playerName(p);
   const hit = RATINGS_BY_NAME.get(normalizeName(name));
   const positions = p.fantasy_positions || [p.position].filter(Boolean);
   const lock = lockDist && (lockDist[pid] || lockDist[String(pid)]) || null;
+  const pos = posLabel(positions);
+  const eff = effectiveOrders && effectiveOrders[String(pid)];
+  const role = (window.LockInDist && typeof LockInDist.nbaRoleSentence === 'function')
+    ? LockInDist.nbaRoleSentence(p, lock, {
+      effectiveOrder: eff,
+      fallbackPos: pos,
+      playerDb
+    })
+    : (!p.team ? 'Free agent — no current NBA team role.' : '—');
   return {
     id: String(pid),
     name,
     positions,
-    pos: posLabel(positions),
+    pos,
     metric: (window.LockInDist && typeof LockInDist.readProjection === 'function')
       ? LockInDist.readProjection(projById, pid, p)
       : ((window.LockInDist && typeof LockInDist.playerHasNbaTeam === 'function'
@@ -485,12 +499,15 @@ function makeRecord(pid, playerDb, projById, lockDist){
     isRookie: ROOKIE_NAMES.has(normalizeName(name)) || Number(p.years_exp) === 0,
     lockOvr: lock && lock.lockOvr != null ? lock.lockOvr : null,
     lockTier: lock && lock.lockTierLabel ? lock.lockTierLabel : null,
+    lockOvrUnsignedFloor: !!(lock && lock.lockOvrUnsignedFloor),
     tradeScore: lock && lock.tradeScore != null ? lock.tradeScore : null,
     tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null,
     tradeContractMult: lock && lock.tradeContractMult != null ? lock.tradeContractMult : null,
     tradeContractNote: lock && lock.tradeContractNote ? lock.tradeContractNote : null,
     situationMult: lock && lock.tradeSituationMult != null ? lock.tradeSituationMult : null,
-    situationKind: lock && lock.tradeSituationKind ? lock.tradeSituationKind : null
+    situationKind: lock && lock.tradeSituationKind ? lock.tradeSituationKind : null,
+    situationNote: lock && lock.tradeSituationNote ? lock.tradeSituationNote : null,
+    role
   };
 }
 
@@ -504,14 +521,16 @@ function tradeStarsHtml(n){
 
 function lockCellHtml(a){
   if (a.lockOvr == null) return '<td class="num lock">—</td>';
-  const title = a.tradeScore != null
-    ? ('Lock OVR ' + a.lockOvr + (a.lockTier ? ' · ' + a.lockTier : '')
-      + ' · trade score ' + Number(a.tradeScore).toFixed(1)
-      + (a.tradeContractNote ? ' · ' + a.tradeContractNote : ''))
-    : ('Lock OVR ' + a.lockOvr);
-  return '<td class="lock" title="' + escapeHtml(title) + '">'
+  const bits = ['Lock OVR ' + a.lockOvr];
+  if (a.lockTier) bits.push(a.lockTier);
+  if (a.lockOvrUnsignedFloor) bits.push('unsigned floor — no NBA team to lock');
+  if (a.situationNote) bits.push(a.situationNote);
+  if (a.tradeScore != null) bits.push('trade score ' + Number(a.tradeScore).toFixed(1));
+  if (a.tradeContractNote) bits.push(a.tradeContractNote);
+  return '<td class="lock" title="' + escapeHtml(bits.join(' · ')) + '">'
     + '<span class="ovr">' + Math.round(a.lockOvr) + '</span>'
     + (a.lockTier ? '<span class="tier-sub">' + escapeHtml(a.lockTier) + '</span>' : '')
+    + (a.lockOvrUnsignedFloor ? '<span class="tier-sub">unsigned</span>' : '')
     + '</td>';
 }
 
@@ -754,6 +773,7 @@ function filteredList(){
       if (key === 'metric') return row.metric;
       if (key === 'lockOvr') return row.lockOvr;
       if (key === 'tradeScore') return row.tradeScore != null ? row.tradeScore : row.tradeStars;
+      if (key === 'role') return row.role;
       if (key === 'age') return Number.isFinite(row.age) ? row.age : null;
       if (key === 'ovr') return row.ovr;
       if (key === 'gain') return row.gain;
@@ -895,6 +915,7 @@ function render(){
       + '<td class="num">' + (a.metric != null ? a.metric.toFixed(1) : '\u2014') + '</td>'
       + lockCellHtml(a)
       + '<td class="trade">' + tradeStarsHtml(a.tradeStars) + '</td>'
+      + '<td class="role hide-sm">' + escapeHtml(a.role || '—') + '</td>'
       + '<td class="num hide-sm">' + (Number.isFinite(a.age) ? a.age : '\u2014') + '</td>'
       + recCellHtml(a)
       + '</tr>';
@@ -1024,6 +1045,12 @@ async function load(){
       }
     }
 
+    const effectiveOrders = (window.LockInDist && typeof LockInDist.buildEffectiveNbaDepthOrders === 'function')
+      ? LockInDist.buildEffectiveNbaDepthOrders(playerDb, lockDist)
+      : Object.create(null);
+    state.playerDb = playerDb;
+    state.lockDist = lockDist;
+
     const leagueSettings = league.settings || {};
     state.taxiSlots = Number(leagueSettings.taxi_slots) || 0;
     state.taxiYears = leagueSettings.taxi_years != null ? Number(leagueSettings.taxi_years) : 2;
@@ -1046,7 +1073,7 @@ async function load(){
         : [...new Set([].concat(r.players || [], r.reserve || [], r.taxi || []).map(String))];
       const byId = {};
       ids.forEach(pid => {
-        byId[pid] = makeRecord(pid, playerDb, projById, lockDist);
+        byId[pid] = makeRecord(pid, playerDb, projById, lockDist, effectiveOrders);
       });
       const players = ids.map(pid => byId[pid]);
       const taxiIdSet = new Set(split ? split.taxiIds : (r.taxi || []).map(String));
@@ -1071,7 +1098,7 @@ async function load(){
       return a.team.localeCompare(b.team);
     });
 
-    state.agents = prelimAgents.map(pid => makeRecord(pid, playerDb, projById, lockDist))
+    state.agents = prelimAgents.map(pid => makeRecord(pid, playerDb, projById, lockDist, effectiveOrders))
       .sort((a, b) => (b.lockOvr || 0) - (a.lockOvr || 0)
         || (b.metric || 0) - (a.metric || 0)
         || (b.ovr || 0) - (a.ovr || 0));

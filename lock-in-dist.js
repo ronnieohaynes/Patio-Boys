@@ -1020,6 +1020,141 @@
     return Math.max(LOCK_OVR_FLOOR, Math.min(LOCK_OVR_CEIL, n));
   }
 
+  function posRoleWord(slot){
+    const s = String(slot || '').toUpperCase();
+    if (s === 'PG') return 'point guard';
+    if (s === 'SG') return 'shooting guard';
+    if (s === 'SF') return 'wing';
+    if (s === 'PF') return 'power forward';
+    if (s === 'C') return 'center';
+    if (s === 'G') return 'guard';
+    if (s === 'F') return 'forward';
+    return s ? s.toLowerCase() : 'rotation piece';
+  }
+
+  function articleFor(word){
+    return /^[aeiou]/i.test(String(word || '')) ? 'an' : 'a';
+  }
+
+  /*
+   * Sleeper sometimes stamps two teammates as the same depth_chart_order.
+   * Break ties by Lock OVR so Role never lists two at the identical NBA spot.
+   * playerDb: full Sleeper map. distByPid optional. pids optional filter.
+   */
+  function buildEffectiveNbaDepthOrders(playerDb, distByPid, pids){
+    const groups = new Map();
+    const idList = pids && pids.length
+      ? pids.map(String)
+      : Object.keys(playerDb || {});
+    idList.forEach(pid => {
+      const id = String(pid);
+      const p = (playerDb || {})[id] || (playerDb || {})[pid] || {};
+      if (!playerHasNbaTeam(p)) return;
+      if (p.status === 'FA' || p.status === 'Inactive') return;
+      const slot = p.depth_chart_position
+        || ((p.fantasy_positions || [])[0])
+        || null;
+      if (!slot) return;
+      const key = String(p.team).toUpperCase() + '|' + String(slot).toUpperCase();
+      if (!groups.has(key)) groups.set(key, []);
+      const dist = distByPid && (distByPid[id] || distByPid[pid]);
+      const lockOvr = dist && dist.lockOvr != null ? Number(dist.lockOvr) : null;
+      const order = p.depth_chart_order != null ? Number(p.depth_chart_order) : null;
+      groups.get(key).push({id, order, lockOvr});
+    });
+    const effective = Object.create(null);
+    groups.forEach(list => {
+      list.sort((a, b) => {
+        const ao = Number.isFinite(a.order) ? a.order : 999;
+        const bo = Number.isFinite(b.order) ? b.order : 999;
+        if (ao !== bo) return ao - bo;
+        const al = Number.isFinite(a.lockOvr) ? a.lockOvr : -1;
+        const bl = Number.isFinite(b.lockOvr) ? b.lockOvr : -1;
+        if (bl !== al) return bl - al;
+        return String(a.id).localeCompare(String(b.id));
+      });
+      list.forEach((row, i) => {
+        effective[row.id] = i + 1;
+      });
+    });
+    return effective;
+  }
+
+  /* Plain-English NBA role. player = Sleeper player obj; dist = lock row. */
+  function nbaRoleSentence(player, dist, opts){
+    const options = opts || {};
+    const p = player || {};
+    const team = p.team || null;
+    const rawOrder = p.depth_chart_order != null ? Number(p.depth_chart_order) : null;
+    const effectiveOrder = options.effectiveOrder;
+    const order = effectiveOrder != null && Number.isFinite(Number(effectiveOrder))
+      ? Number(effectiveOrder)
+      : rawOrder;
+    const slot = p.depth_chart_position
+      || ((p.fantasy_positions || p.fantasyPositions || [])[0])
+      || options.fallbackPos
+      || null;
+    const slotWord = posRoleWord(slot);
+    const injury = String(p.injury_status || p.injuryStatus || '').toUpperCase();
+    const years = yearsExpOfPlayer(p);
+    const ovr = dist && dist.lockOvr != null ? Number(dist.lockOvr) : null;
+    const tier = dist && (dist.lockTier || dist.lockTierKey) ? (dist.lockTier || dist.lockTierKey) : null;
+
+    if (injury === 'O' || injury === 'OUT'){
+      return team
+        ? ('Out for ' + team + ' — NBA role on pause.')
+        : 'Currently out — NBA role on pause.';
+    }
+    if (injury === 'IR' || injury === 'SUS'){
+      return team
+        ? ('On IR/suspension for ' + team + ' — not in the active mix.')
+        : 'On IR/suspension — not in the active mix.';
+    }
+
+    if (!playerHasNbaTeam(p) || p.status === 'FA' || p.status === 'Inactive'){
+      if (years === 0) return 'Rookie still waiting on a settled NBA roster role.';
+      return 'Free agent — no current NBA team role.';
+    }
+
+    let core = '';
+    if (order === 1){
+      if (tier === 'mvp' || tier === 'superstar' || (ovr != null && ovr >= 90)){
+        core = 'Franchise centerpiece at ' + slot + ' for ' + team + '.';
+      } else if (tier === 'allstar' || (ovr != null && ovr >= 85)){
+        core = 'Featured starter at ' + slot + ' for ' + team + '.';
+      } else if (ovr != null && ovr >= 78){
+        core = 'Everyday starter at ' + slot + ' for ' + team + '.';
+      } else {
+        core = 'Listed as the starting ' + slotWord + ' for ' + team + '.';
+      }
+    } else if (order === 2){
+      if (ovr != null && ovr >= 78){
+        core = 'High-impact backup / sixth-man type at ' + slot + ' for ' + team + '.';
+      } else if (ovr != null && ovr >= 70){
+        core = 'Primary backup ' + slotWord + ' for ' + team + '.';
+      } else {
+        core = 'Second on the ' + slot + ' depth chart for ' + team + '.';
+      }
+    } else if (order === 3){
+      core = 'Rotation ' + slotWord + ' for ' + team + ' — third string on the depth chart.';
+    } else if (order != null && order >= 4){
+      core = 'Deep bench / situational minutes at ' + slot + ' for ' + team + '.';
+    } else if (years === 0){
+      core = 'Rookie on ' + team + ' — NBA role still taking shape.';
+    } else if (ovr != null && ovr >= 78){
+      core = 'Important piece for ' + team + ', though the depth chart listing is unclear.';
+    } else if (ovr != null && ovr >= 65){
+      core = 'On ' + team + '\'s roster as ' + articleFor(slotWord) + ' ' + slotWord + ' with an undefined depth role.';
+    } else {
+      core = 'End-of-roster / fringe piece for ' + team + '.';
+    }
+
+    if (injury === 'DTD'){
+      return core.replace(/\.$/, '') + ' (day-to-day).';
+    }
+    return core;
+  }
+
   function projFromMap(projById, pid){
     if (!projById) return null;
     const key = String(pid);
@@ -1193,11 +1328,25 @@
         sit = situationAdjust(pid, p, prodOvr, teamIndex, strengthOf);
       }
 
-      const ovr = applySituationToLockOvr(prodOvr, sit.mult);
+      /* No NBA team → Lock floor. Nothing to lock-in until they sign. */
+      const unsigned = !playerHasNbaTeam(p);
+      let ovr = unsigned
+        ? LOCK_OVR_FLOOR
+        : applySituationToLockOvr(prodOvr, sit.mult);
+      if (unsigned){
+        sit = {
+          mult: sit.mult != null ? sit.mult : SIT_FA_MULT,
+          why: 'Unsigned — Lock floored at ' + LOCK_OVR_FLOOR + ' until signed',
+          pressure: sit.pressure || 0,
+          notes: sit.notes || [],
+          kind: 'fa'
+        };
+      }
       const tier = lockOvrTier(ovr);
       const displayName = playerDisplayName(p, pid);
       const contractAdj = contractTradeAdjust(displayName, ovr);
-      const tradeScore = tradeScoreFromOvr(prodOvr, {
+      const tradeBaseOvr = unsigned ? LOCK_OVR_FLOOR : prodOvr;
+      const tradeScore = tradeScoreFromOvr(tradeBaseOvr, {
         ageBand: band,
         age: p.age,
         isRookie,
@@ -1208,6 +1357,7 @@
       const tradeStars = tradeStarsFromScore(tradeScore);
 
       d.lockOvr = ovr;
+      d.lockOvrUnsignedFloor = unsigned;
       d.lockTier = tier.key;
       d.lockTierLabel = tier.label;
       d.lockScore = ovr;
@@ -1472,6 +1622,10 @@
     competitionPressure,
     situationAdjust,
     applySituationToLockOvr,
+    posRoleWord,
+    articleFor,
+    buildEffectiveNbaDepthOrders,
+    nbaRoleSentence,
     attachLockValues,
     loadSeasonDistMap,
     fetchLockValueIndex

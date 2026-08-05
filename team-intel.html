@@ -480,7 +480,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-crowded-fix';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fa-role-lock50';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1196,6 +1196,9 @@ function refreshLockValues(){
 }
 
 function posRoleWord(slot){
+  if (window.LockInDist && typeof LockInDist.posRoleWord === 'function'){
+    return LockInDist.posRoleWord(slot);
+  }
   const s = String(slot || '').toUpperCase();
   if (s === 'PG') return 'point guard';
   if (s === 'SG') return 'shooting guard';
@@ -1208,6 +1211,9 @@ function posRoleWord(slot){
 }
 
 function articleFor(word){
+  if (window.LockInDist && typeof LockInDist.articleFor === 'function'){
+    return LockInDist.articleFor(word);
+  }
   return /^[aeiou]/i.test(String(word || '')) ? 'an' : 'a';
 }
 
@@ -1217,6 +1223,9 @@ function articleFor(word){
  * ties by Lock OVR so Role never lists two players at the identical NBA spot.
  */
 function buildEffectiveNbaDepthOrders(pids, distByPid){
+  if (window.LockInDist && typeof LockInDist.buildEffectiveNbaDepthOrders === 'function'){
+    return LockInDist.buildEffectiveNbaDepthOrders(state.playerDb || {}, distByPid, pids);
+  }
   const groups = new Map();
   (pids || []).forEach(pid => {
     const id = String(pid);
@@ -1255,6 +1264,13 @@ function buildEffectiveNbaDepthOrders(pids, distByPid){
 /* Plain-English NBA role for the Basic dynasty table. */
 function nbaRoleSentence(pid, dist, effectiveOrder){
   const p = (state.playerDb || {})[pid] || (state.playerDb || {})[String(pid)] || {};
+  if (window.LockInDist && typeof LockInDist.nbaRoleSentence === 'function'){
+    return LockInDist.nbaRoleSentence(p, dist, {
+      effectiveOrder,
+      fallbackPos: playerPos(pid),
+      playerDb: state.playerDb
+    });
+  }
   const team = p.team || null;
   const rawOrder = p.depth_chart_order != null ? Number(p.depth_chart_order) : null;
   const order = effectiveOrder != null && Number.isFinite(Number(effectiveOrder))
@@ -1283,10 +1299,6 @@ function nbaRoleSentence(pid, dist, effectiveOrder){
   if (!team || p.status === 'FA' || p.status === 'Inactive'){
     if (years === 0) return 'Rookie still waiting on a settled NBA roster role.';
     return 'Free agent — no current NBA team role.';
-  }
-
-  if (injury === 'DTD'){
-    /* Keep going with role, but note availability. */
   }
 
   let core = '';
@@ -1605,7 +1617,7 @@ function renderLockIn(t){
       + ' / 20% proj</strong>; sophomores <strong>75/25</strong>; rookies unchanged. '
       + 'Franchise <strong>situation</strong> (FA status + teammate competition, including rookies not yet on the depth chart) '
       + 'haircuts Trade ★ fully and Lock OVR partially. '
-      + 'Players with <strong>no NBA team</strong> project <strong>0</strong> FP/G until signed. '
+      + 'Players with <strong>no NBA team</strong> project <strong>0</strong> FP/G and Lock floors at <strong>50</strong> until signed. '
       + 'When two rostered teammates share the same Sleeper depth stamp, Role ranks them by Lock OVR '
       + 'so they are not both listed at the same spot. '
       + 'Switch to <strong>Adv stats</strong> for σ, ceiling, smash rates, and sample size. '
