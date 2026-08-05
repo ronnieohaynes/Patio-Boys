@@ -1739,6 +1739,7 @@
     FPM_EDGE,
     FPM_MIN_SAMPLES,
     fpPerMinGrade,
+    fpPerMinGradeClass,
     readFpPerMin,
     formatFpPerMin,
     LOCK_SIT_BLEND,

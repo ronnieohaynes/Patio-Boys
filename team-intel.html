@@ -314,6 +314,20 @@
     display:block;font-family:'IBM Plex Mono',monospace;font-size:9px;
     letter-spacing:.04em;text-transform:uppercase;color:var(--ink-dim);margin-top:2px;
   }
+  table.lockin .grade-ap{color:#1D9E75}
+  table.lockin .grade-a{color:#3AB87D}
+  table.lockin .grade-am{color:#5BC48A}
+  table.lockin .grade-bp{color:#7DD68C}
+  table.lockin .grade-b{color:#C9963A}
+  table.lockin .grade-bm{color:#D4A84A}
+  table.lockin .grade-cp{color:#E0A030}
+  table.lockin .grade-c{color:#D8883A}
+  table.lockin .grade-cm{color:#D07030}
+  table.lockin .grade-dp,
+  table.lockin .grade-d,
+  table.lockin .grade-dm{color:#D8553A}
+  table.lockin .grade-f{color:#B03020}
+  table.lockin .grade-pending{color:var(--ink-dim)}
   table.lockin .trade-stars{
     display:inline-flex;align-items:center;gap:1px;
     font-size:14px;letter-spacing:0;color:var(--gold);white-space:nowrap;
@@ -480,7 +494,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fpm7575-moves';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fpm-ui75-moves';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
