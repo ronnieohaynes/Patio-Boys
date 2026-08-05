@@ -445,7 +445,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-contractslide';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-depth-lock';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1332,24 +1332,24 @@ function renderLockIn(t){
 }
 
 function depthRankValue(rec){
-  /* Depth chart ranks by projected FP/G (same metric as Team Needs). */
+  /* Depth chart ranks by Lock OVR so 3rd-string / drop fodder stands out. */
+  if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr);
   if (rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
-  if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr) / 10;
   return -1;
 }
 
 function depthCellHtml(player){
   if (!player) return '<td class="slot-empty">—</td>';
-  const proj = player.metric != null && Number.isFinite(Number(player.metric))
-    ? '<span class="slot-ovr">' + Number(player.metric).toFixed(1) + '</span><span> proj</span>'
-    : '';
   const stars = (window.LockInDist && LockInDist.formatStarsHtml && player.tradeStars != null)
     ? LockInDist.formatStarsHtml(player.tradeStars, {className: 'trade-stars'})
     : '';
   const ovr = player.lockOvr != null
-    ? '<span>Lock ' + Math.round(player.lockOvr) + '</span>' + stars
+    ? '<span class="slot-ovr">' + Math.round(player.lockOvr) + '</span>' + stars
     : '';
-  const meta = [proj, ovr].filter(Boolean).join('<span style="opacity:.35"> · </span>');
+  const proj = player.metric != null && Number.isFinite(Number(player.metric))
+    ? '<span>' + Number(player.metric).toFixed(1) + ' proj</span>'
+    : '';
+  const meta = [ovr, proj].filter(Boolean).join('<span style="opacity:.35"> · </span>');
   return '<td><span class="slot-name">' + escapeHtml(player.name) + '</span>'
     + (meta ? '<span class="slot-meta">' + meta + '</span>' : '')
     + '</td>';
@@ -1445,7 +1445,7 @@ function renderDepthChart(t){
     return;
   }
 
-  tag.textContent = pack.slots.length + ' slots · 1st–3rd string · proj';
+  tag.textContent = pack.slots.length + ' slots · 1st–3rd string · Lock OVR';
   const head = '<tr><th>Pos</th><th>1st string</th><th>2nd string</th><th>3rd string</th></tr>';
   const rowHtml = pack.rows.map(row => {
     return '<tr><td class="pos">' + escapeHtml(row.label) + '</td>'
@@ -1458,8 +1458,8 @@ function renderDepthChart(t){
   body.innerHTML = '<table class="depth"><thead>' + head + '</thead><tbody>' + rowHtml + '</tbody></table>'
     + '<p class="lineup-foot">Same ' + pack.slots.length + ' starting slots as Team Needs ('
     + escapeHtml(pack.slots.join(', '))
-    + '). Exclusive depth — scarcest slot first — ranked by <strong>projected FP/G</strong> '
-    + '(same metric as Team Needs). Each player appears once, up to 3rd string.</p>';
+    + '). Exclusive depth — scarcest slot first — ranked by <strong>Lock OVR</strong> '
+    + '(projection fallback). 3rd string is the usual drop pool. Each player appears once.</p>';
 }
 
 function needsPlayerRecord(pid){
