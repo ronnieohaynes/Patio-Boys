@@ -524,12 +524,234 @@
     };
   }
 
+  /* ---- Recent good NBA contracts (Spotrac FA snapshot) ---- */
+  function normContractName(name){
+    return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+  }
+
+  function contractsSnapshot(){
+    return global.NBA_CONTRACTS_SNAPSHOT || null;
+  }
+
+  function contractsIndex(){
+    const snap = contractsSnapshot();
+    if (!snap) return null;
+    if (snap._index) return snap._index;
+    const deals = Object.create(null);
+    const salaries = Object.create(null);
+    const buyouts = Object.create(null);
+    (snap.deals || []).forEach(d => {
+      if (!d) return;
+      const key = d.key || normContractName(d.name);
+      if (!key) return;
+      const prev = deals[key];
+      if (!prev || Number(d.faYear) > Number(prev.faYear)
+        || (Number(d.faYear) === Number(prev.faYear) && Number(d.aav) > Number(prev.aav))){
+        deals[key] = d;
+      }
+    });
+    (snap.salaries || []).forEach(s => {
+      if (!s) return;
+      const key = s.key || normContractName(s.name);
+      if (key) salaries[key] = s;
+    });
+    (snap.buyouts || []).forEach(b => {
+      if (!b) return;
+      const key = b.key || normContractName(b.name);
+      if (!key) return;
+      const prev = buyouts[key];
+      if (!prev || Number(b.season) >= Number(prev.season || 0)) buyouts[key] = b;
+    });
+    snap._index = {deals, salaries, buyouts, snap};
+    return snap._index;
+  }
+
+  function contractsByKey(){
+    const idx = contractsIndex();
+    return idx ? idx.deals : null;
+  }
+
+  function fmtMoneyShort(n){
+    const v = Number(n);
+    if (!Number.isFinite(v)) return '';
+    if (v >= 1e6) return '$' + (v / 1e6).toFixed(v >= 10e6 ? 0 : 1) + 'M';
+    if (v >= 1e3) return '$' + Math.round(v / 1e3) + 'K';
+    return '$' + Math.round(v);
+  }
+
+  /*
+   * Protect players an NBA team just paid — usually a bad fantasy cut/drop
+   * even when Lock/Trade looks soft. Window defaults to 2 FA-class years.
+   */
+  function recentGoodContract(playerOrName, opts){
+    const options = opts || {};
+    const map = contractsByKey();
+    if (!map) return null;
+    const name = (playerOrName && typeof playerOrName === 'object')
+      ? (playerOrName.name || playerOrName.full_name || '')
+      : playerOrName;
+    const key = normContractName(name);
+    if (!key) return null;
+    const deal = map[key];
+    if (!deal) return null;
+    const snap = contractsSnapshot() || {};
+    const asOf = options.asOfYear != null ? Number(options.asOfYear)
+      : (snap.asOfYear != null ? Number(snap.asOfYear) : new Date().getUTCFullYear());
+    const protectYears = options.protectYears != null ? Number(options.protectYears)
+      : (snap.protectYears != null ? Number(snap.protectYears) : 2);
+    const faYear = Number(deal.faYear);
+    if (!Number.isFinite(faYear) || !Number.isFinite(asOf)) return null;
+    const age = asOf - faYear;
+    if (age < 0 || age > protectYears) return null;
+    const aavTxt = fmtMoneyShort(deal.aav);
+    const why = (aavTxt ? aavTxt + '/yr' : 'Paid deal')
+      + (deal.years ? ' · ' + deal.years + 'y' : '')
+      + ' (' + faYear + ' FA)';
+    return {
+      deal,
+      faYear,
+      yearsAgo: age,
+      aav: deal.aav,
+      years: deal.years,
+      why,
+      note: 'Recent good NBA deal — usually keep'
+    };
+  }
+
+  /*
+   * Continuous Trade ★ contract slider from annual salary.
+   * Near-min → short leash (sub-1.0). MLE-ish → neutral. Max-ish → paid bump.
+   * Soften the low-end haircut when Lock shows they're actually producing.
+   */
+  const CONTRACT_SLIDER = {
+    loSal: 2.5e6,
+    midSal: 10e6,
+    hiSal: 45e6,
+    loMult: 0.92,
+    midMult: 1.0,
+    hiMult: 1.065
+  };
+
+  function clamp01(x){
+    const n = Number(x);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(1, n));
+  }
+
+  function lerp(a, b, t){
+    return a + (b - a) * t;
+  }
+
+  function contractSalaryMult(salary, opts){
+    const options = opts || {};
+    const y1 = Number(salary);
+    if (!Number.isFinite(y1) || y1 <= 0) return 1;
+    const cfg = CONTRACT_SLIDER;
+    const s = Math.max(1e5, y1);
+    let mult;
+    if (s <= cfg.midSal){
+      const t = clamp01(
+        (Math.log(s) - Math.log(cfg.loSal)) / (Math.log(cfg.midSal) - Math.log(cfg.loSal))
+      );
+      mult = lerp(cfg.loMult, cfg.midMult, t);
+    } else {
+      const t = clamp01(
+        (Math.log(s) - Math.log(cfg.midSal)) / (Math.log(cfg.hiSal) - Math.log(cfg.midSal))
+      );
+      mult = lerp(cfg.midMult, cfg.hiMult, t);
+    }
+    /* Producing on a short leash → don't punish as hard. */
+    const ovr = options.lockOvr != null ? Number(options.lockOvr) : null;
+    if (mult < 1 && Number.isFinite(ovr)){
+      const prod = clamp01((ovr - 60) / 25);
+      mult = lerp(mult, 1, prod * 0.7);
+    }
+    return Math.round(mult * 1000) / 1000;
+  }
+
+  function contractAnnualSalary(salaryRow, recentDeal){
+    if (salaryRow && salaryRow.y1 != null && Number.isFinite(Number(salaryRow.y1))){
+      return Number(salaryRow.y1);
+    }
+    if (recentDeal && recentDeal.aav != null && Number.isFinite(Number(recentDeal.aav))){
+      return Number(recentDeal.aav);
+    }
+    return null;
+  }
+
+  /*
+   * Contract profile for Trade ★ — continuous salary slider, plus buyout ding.
+   */
+  function contractProfile(playerOrName, opts){
+    const options = opts || {};
+    const idx = contractsIndex();
+    if (!idx) return null;
+    const name = (playerOrName && typeof playerOrName === 'object')
+      ? (playerOrName.name || playerOrName.full_name || playerOrName.fullName || '')
+      : playerOrName;
+    const key = normContractName(name);
+    if (!key) return null;
+
+    const snap = idx.snap || {};
+    const asOf = options.asOfYear != null ? Number(options.asOfYear)
+      : (snap.asOfYear != null ? Number(snap.asOfYear) : new Date().getUTCFullYear());
+    const buyoutYears = options.buyoutYears != null ? Number(options.buyoutYears) : 2;
+    const ovr = options.lockOvr != null ? Number(options.lockOvr) : null;
+
+    const salary = idx.salaries[key] || null;
+    const buyout = idx.buyouts[key] || null;
+    const recent = recentGoodContract(name, options);
+    const buyoutFresh = !!(buyout && Number.isFinite(Number(buyout.season))
+      && (asOf - Number(buyout.season)) <= buyoutYears);
+
+    const annual = contractAnnualSalary(salary, recent);
+    const tier = salary && salary.tier ? salary.tier : null;
+    let tradeMult = annual != null ? contractSalaryMult(annual, {lockOvr: ovr}) : 1;
+    const bits = [];
+
+    if (annual != null){
+      const dir = tradeMult >= 1.01 ? 'paid confidence'
+        : (tradeMult <= 0.98 ? 'short leash' : 'neutral');
+      bits.push(fmtMoneyShort(annual) + '/yr slider ×' + tradeMult.toFixed(3)
+        + (dir !== 'neutral' ? ' · ' + dir : ''));
+    }
+
+    if (buyoutFresh){
+      /* Buyout is its own signal — team walked away from the money. */
+      tradeMult = Math.round(tradeMult * 0.90 * 1000) / 1000;
+      bits.push('Buyout/waive ' + buyout.season
+        + (buyout.status === 'unsigned' ? ' (still unsigned)' : ''));
+    }
+
+    if (tradeMult === 1 && annual == null && !buyoutFresh) return null;
+    return {
+      key,
+      tier,
+      y1: annual,
+      yearsLeft: salary ? salary.yearsLeft : null,
+      buyout: buyoutFresh ? buyout : null,
+      recentDeal: recent,
+      tradeMult,
+      slider: annual != null,
+      why: bits.join(' · ') || (tier ? ('Contract tier: ' + tier) : '')
+    };
+  }
+
+  function contractTradeMult(playerOrName, opts){
+    const profile = contractProfile(playerOrName, opts);
+    return profile && profile.tradeMult != null ? profile.tradeMult : 1;
+  }
+
   global.TeamNeedsModel = {
     CORE, NON_STARTING, NON_REGULAR, DEFAULT_TAXI_YEARS,
     TAXI_ROSTER_OVR, TAXI_DEV_SOFT_CAP, TAXI_DEV_IDEAL, TAXI_DEV_HORIZON,
+    CONTRACT_SLIDER,
     parseSlots, regularCap, taxiEligible, splitRoster,
     inferLockOvr, taxiGrowthPerSeason, taxiDevEval,
     countTaxiDevStashes, taxiDevCapacity,
+    recentGoodContract, contractSalaryMult, contractProfile, contractTradeMult,
+    contractsSnapshot,
     positions, eligibleForSlot, slotTier, optimize, candidateGain,
     ageBand, agePressure, youthUpgradeBonus, AGE_BAND_ORDER
   };

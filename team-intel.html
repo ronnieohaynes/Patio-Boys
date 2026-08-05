@@ -445,8 +445,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-taxidev';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-contractslide';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -1271,6 +1271,10 @@ function renderLockIn(t){
         + ' × age ' + (d.tradeAgeMult != null ? Number(d.tradeAgeMult).toFixed(2) : '—')
         + ' (' + (d.lockAgeBand || '?') + ')'
         + ' × injury ' + (d.tradeInjuryMult != null ? Number(d.tradeInjuryMult).toFixed(2) : '1.00')
+        + (d.tradeContractMult != null && Number(d.tradeContractMult) !== 1
+          ? (' × contract ' + Number(d.tradeContractMult).toFixed(2))
+          : '')
+        + (d.tradeContractNote ? (' (' + d.tradeContractNote + ')') : '')
         + (d.lockAgeBand === 'young' ? ' +1 young' : '')
         + ' · bands 95/90/85/80/75/70/65/60')
       : 'Trade stars unavailable';
@@ -1716,6 +1720,10 @@ function scoreCutsForTeam(t, slots, opt){
       : {eligible: false, stashWorthy: false, readyNow: false, score: 0, why: ''};
     const canTaxi = !!dev.eligible;
     const band = window.TeamNeedsModel ? TeamNeedsModel.ageBand(rec) : 'unknown';
+    const name = rec.name || playerName(id);
+    const nbaDeal = window.TeamNeedsModel && typeof TeamNeedsModel.recentGoodContract === 'function'
+      ? TeamNeedsModel.recentGoodContract(name)
+      : null;
     let cutScore = Math.max(0, 95 - tradeValue);
     if (!isStarter) cutScore += 45;
     else cutScore -= 55;
@@ -1724,9 +1732,11 @@ function scoreCutsForTeam(t, slots, opt){
     if (lockOvr == null && rec.metric == null) cutScore += 20;
     /* Don't cut true developmental stashes first if a taxi spot can hold them. */
     if (dev.stashWorthy) cutScore -= 25;
+    /* NBA teams don't hand out real money by accident — avoid cutting recent paid deals. */
+    if (nbaDeal) cutScore -= 60;
     return {
       id,
-      name: rec.name || playerName(id),
+      name,
       pos: (rec.positions || []).join('/') || playerPos(id),
       lockOvr,
       tradeStars,
@@ -1737,6 +1747,7 @@ function scoreCutsForTeam(t, slots, opt){
       isStarter,
       canTaxi,
       taxiDev: dev,
+      nbaDeal,
       ageBand: band,
       cutScore
     };
@@ -1770,7 +1781,17 @@ function scoreCutsForTeam(t, slots, opt){
     devRoom--;
   }
 
-  for (const c of candidates){
+  /* Prefer cutting players without a recent good NBA deal; paid deals are last resort. */
+  const cutOrder = candidates.slice().sort((a, b) => {
+    const ap = a.nbaDeal ? 1 : 0;
+    const bp = b.nbaDeal ? 1 : 0;
+    if (ap !== bp) return ap - bp;
+    return b.cutScore - a.cutScore
+      || a.tradeValue - b.tradeValue
+      || String(a.name).localeCompare(String(b.name));
+  });
+
+  for (const c of cutOrder){
     if (left <= 0) break;
     if (claimed.has(c.id)) continue;
     cuts.push(Object.assign({}, c, {
@@ -1778,6 +1799,7 @@ function scoreCutsForTeam(t, slots, opt){
       detail: (used + '/' + cap + ' active')
         + (c.isStarter ? ' · currently in opt. lineup — last resort' : ' · lowest dynasty value among extras')
         + (c.taxiDev && c.taxiDev.readyNow ? ' · already rosterable — not a taxi stash' : '')
+        + (c.nbaDeal ? ' · last resort — ' + c.nbaDeal.why : '')
     }));
     claimed.add(c.id);
     left--;
@@ -2002,6 +2024,7 @@ function renderRosterMoves(t){
     + ((window.TeamNeedsModel && TeamNeedsModel.TAXI_DEV_SOFT_CAP) || 4)
     + ' of those developmental stashes — more than that thins roster potential. '
     + 'Already-rosterable talent (&ge;' + targetOvr + ') stays on the active roster. '
+    + 'Players with a good NBA deal signed in the last ~2 FA classes are protected from cut suggestions. '
     + 'When over the active ' + cutPack.cap
     + ', those taxi moves come first; then lowest dynasty value among extras. '
     + 'Adds use the lineup optimizer (marginal FP/G). '

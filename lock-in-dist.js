@@ -589,7 +589,74 @@
     return 1;
   }
 
-  /* tradeScore = LockOVR × age × injury (+1 young bump). */
+  function normContractName(name){
+    return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+  }
+
+  function playerDisplayName(p, pid){
+    if (!p) return '';
+    if (p.full_name) return p.full_name;
+    if (p.fullName) return p.fullName;
+    if (p.name) return p.name;
+    const first = p.first_name || p.firstName || '';
+    const last = p.last_name || p.lastName || '';
+    const joined = (first + ' ' + last).trim();
+    return joined || String(pid || '');
+  }
+
+  /* Prefer TeamNeedsModel when present (shared with cut protect); else read snapshot. */
+  function contractTradeAdjust(name, ovr){
+    if (global.TeamNeedsModel && typeof TeamNeedsModel.contractProfile === 'function'){
+      const profile = TeamNeedsModel.contractProfile(name, {lockOvr: ovr});
+      if (!profile) return {mult: 1, why: '', profile: null};
+      return {mult: profile.tradeMult || 1, why: profile.why || '', profile};
+    }
+    const snap = global.NBA_CONTRACTS_SNAPSHOT;
+    if (!snap) return {mult: 1, why: '', profile: null};
+    const key = normContractName(name);
+    if (!key) return {mult: 1, why: '', profile: null};
+    const salary = (snap.salaries || []).find(s => (s.key || normContractName(s.name)) === key);
+    const buyout = (snap.buyouts || []).find(b => (b.key || normContractName(b.name)) === key);
+    const deal = (snap.deals || []).find(d => (d.key || normContractName(d.name)) === key);
+    const asOf = snap.asOfYear != null ? Number(snap.asOfYear) : new Date().getUTCFullYear();
+    const buyoutFresh = !!(buyout && (asOf - Number(buyout.season || 0)) <= 2);
+    const annual = (salary && salary.y1 != null) ? Number(salary.y1)
+      : (deal && deal.aav != null ? Number(deal.aav) : null);
+    /* Mirror TeamNeedsModel.contractSalaryMult log slider if model isn't loaded. */
+    let mult = 1;
+    if (Number.isFinite(annual) && annual > 0){
+      const loSal = 2.5e6, midSal = 10e6, hiSal = 45e6;
+      const loMult = 0.92, midMult = 1.0, hiMult = 1.065;
+      const s = Math.max(1e5, annual);
+      const clamp01 = x => Math.max(0, Math.min(1, x));
+      const lerp = (a, b, t) => a + (b - a) * t;
+      if (s <= midSal){
+        const t = clamp01((Math.log(s) - Math.log(loSal)) / (Math.log(midSal) - Math.log(loSal)));
+        mult = lerp(loMult, midMult, t);
+      } else {
+        const t = clamp01((Math.log(s) - Math.log(midSal)) / (Math.log(hiSal) - Math.log(midSal)));
+        mult = lerp(midMult, hiMult, t);
+      }
+      if (mult < 1 && ovr != null && Number.isFinite(Number(ovr))){
+        const prod = clamp01((Number(ovr) - 60) / 25);
+        mult = lerp(mult, 1, prod * 0.7);
+      }
+      mult = Math.round(mult * 1000) / 1000;
+    }
+    let why = '';
+    if (Number.isFinite(annual) && annual > 0){
+      why = '$' + (annual >= 1e6 ? (annual / 1e6).toFixed(annual >= 10e6 ? 0 : 1) + 'M' : Math.round(annual))
+        + '/yr slider ×' + mult.toFixed(3);
+    }
+    if (buyoutFresh){
+      mult = Math.round(mult * 0.90 * 1000) / 1000;
+      why = (why ? why + ' · ' : '') + 'Buyout/waive ' + buyout.season;
+    }
+    return {mult, why, profile: salary || buyout || deal || null};
+  }
+
+  /* tradeScore = LockOVR × age × injury × contract (+1 young bump). */
   function tradeScoreFromOvr(ovr, meta){
     const o = Number(ovr);
     if (!Number.isFinite(o)) return null;
@@ -597,7 +664,10 @@
     const band = info.ageBand || lockAgeBand(info.age, info.isRookie);
     const am = AGE_MULT[band] || 0.95;
     const im = injuryStatusMult(info.injuryStatus);
-    let score = o * am * im;
+    const cm = info.contractMult != null && Number.isFinite(Number(info.contractMult))
+      ? Number(info.contractMult)
+      : 1;
+    let score = o * am * im * cm;
     if (band === 'young') score += 1;
     return score;
   }
@@ -687,11 +757,14 @@
       const tier = lockOvrTier(ovr);
       const band = lockAgeBand(p.age, isRookie);
       const injuryStatus = p.injury_status || p.injuryStatus || '';
+      const displayName = playerDisplayName(p, pid);
+      const contractAdj = contractTradeAdjust(displayName, ovr);
       const tradeScore = tradeScoreFromOvr(ovr, {
         ageBand: band,
         age: p.age,
         isRookie,
-        injuryStatus
+        injuryStatus,
+        contractMult: contractAdj.mult
       });
       const tradeStars = tradeStarsFromScore(tradeScore);
 
@@ -708,6 +781,11 @@
       d.tradeStars = tradeStars;
       d.tradeAgeMult = AGE_MULT[band] || 0.95;
       d.tradeInjuryMult = injuryStatusMult(injuryStatus);
+      d.tradeContractMult = contractAdj.mult;
+      d.tradeContractNote = contractAdj.why || null;
+      d.contractTier = (contractAdj.profile && contractAdj.profile.tier)
+        || (contractAdj.profile && contractAdj.profile.recentDeal ? 'mid' : null);
+      d.contractBuyout = !!(contractAdj.why && /buyout/i.test(contractAdj.why));
       d.rookieComp = comp;
       d.rookieCompPeak = peakComp;
       d.rookieEarlyMult = earlyMult;
