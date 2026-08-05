@@ -1523,6 +1523,7 @@ function renderLockIn(t){
     const ceilO = (window.LockInDist && LockInDist.LOCK_OVR_CEIL) || 99;
     const lockTitle = d.lockOvr != null
       ? ('Lock OVR ' + d.lockOvr + ' · ' + (d.lockTierLabel || '')
+        + (d.lockOvrUnsignedFloor ? ' · unsigned floor (no NBA team)' : '')
         + ' · ' + (d.lockBaseSource || 'smash')
         + ' base ' + (d.lockBase != null ? d.lockBase.toFixed(1) : '—')
         + (d.lockOvrProd != null && d.lockOvrProd !== d.lockOvr
