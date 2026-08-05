@@ -589,7 +589,59 @@
     return 1;
   }
 
-  /* tradeScore = LockOVR × age × injury (+1 young bump). */
+  function normContractName(name){
+    return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+  }
+
+  function playerDisplayName(p, pid){
+    if (!p) return '';
+    if (p.full_name) return p.full_name;
+    if (p.fullName) return p.fullName;
+    if (p.name) return p.name;
+    const first = p.first_name || p.firstName || '';
+    const last = p.last_name || p.lastName || '';
+    const joined = (first + ' ' + last).trim();
+    return joined || String(pid || '');
+  }
+
+  /* Prefer TeamNeedsModel when present (shared with cut protect); else read snapshot. */
+  function contractTradeAdjust(name, ovr){
+    if (global.TeamNeedsModel && typeof TeamNeedsModel.contractProfile === 'function'){
+      const profile = TeamNeedsModel.contractProfile(name, {lockOvr: ovr});
+      if (!profile) return {mult: 1, why: '', profile: null};
+      return {mult: profile.tradeMult || 1, why: profile.why || '', profile};
+    }
+    const snap = global.NBA_CONTRACTS_SNAPSHOT;
+    if (!snap) return {mult: 1, why: '', profile: null};
+    const key = normContractName(name);
+    if (!key) return {mult: 1, why: '', profile: null};
+    const salary = (snap.salaries || []).find(s => (s.key || normContractName(s.name)) === key);
+    const buyout = (snap.buyouts || []).find(b => (b.key || normContractName(b.name)) === key);
+    const asOf = snap.asOfYear != null ? Number(snap.asOfYear) : new Date().getUTCFullYear();
+    const buyoutFresh = !!(buyout && (asOf - Number(buyout.season || 0)) <= 2);
+    const tier = salary && salary.tier;
+    let mult = 1;
+    let why = '';
+    if (buyoutFresh){
+      mult = 0.90;
+      why = 'Buyout/waive ' + buyout.season;
+    } else if (tier === 'large'){
+      mult = 1.045;
+      why = 'Large NBA deal';
+    } else if (tier === 'mid'){
+      mult = 1.02;
+      why = 'Mid NBA deal';
+    } else if (tier === 'min'){
+      if (ovr != null && ovr >= 78) mult = 0.99;
+      else if (ovr != null && ovr >= 70) mult = 0.965;
+      else mult = 0.93;
+      why = 'Min deal — short leash';
+    }
+    return {mult, why, profile: salary || buyout || null};
+  }
+
+  /* tradeScore = LockOVR × age × injury × contract (+1 young bump). */
   function tradeScoreFromOvr(ovr, meta){
     const o = Number(ovr);
     if (!Number.isFinite(o)) return null;
@@ -597,7 +649,10 @@
     const band = info.ageBand || lockAgeBand(info.age, info.isRookie);
     const am = AGE_MULT[band] || 0.95;
     const im = injuryStatusMult(info.injuryStatus);
-    let score = o * am * im;
+    const cm = info.contractMult != null && Number.isFinite(Number(info.contractMult))
+      ? Number(info.contractMult)
+      : 1;
+    let score = o * am * im * cm;
     if (band === 'young') score += 1;
     return score;
   }
@@ -687,11 +742,14 @@
       const tier = lockOvrTier(ovr);
       const band = lockAgeBand(p.age, isRookie);
       const injuryStatus = p.injury_status || p.injuryStatus || '';
+      const displayName = playerDisplayName(p, pid);
+      const contractAdj = contractTradeAdjust(displayName, ovr);
       const tradeScore = tradeScoreFromOvr(ovr, {
         ageBand: band,
         age: p.age,
         isRookie,
-        injuryStatus
+        injuryStatus,
+        contractMult: contractAdj.mult
       });
       const tradeStars = tradeStarsFromScore(tradeScore);
 
@@ -708,6 +766,11 @@
       d.tradeStars = tradeStars;
       d.tradeAgeMult = AGE_MULT[band] || 0.95;
       d.tradeInjuryMult = injuryStatusMult(injuryStatus);
+      d.tradeContractMult = contractAdj.mult;
+      d.tradeContractNote = contractAdj.why || null;
+      d.contractTier = (contractAdj.profile && contractAdj.profile.tier)
+        || (contractAdj.profile && contractAdj.profile.recentDeal ? 'mid' : null);
+      d.contractBuyout = !!(contractAdj.why && /buyout/i.test(contractAdj.why));
       d.rookieComp = comp;
       d.rookieCompPeak = peakComp;
       d.rookieEarlyMult = earlyMult;

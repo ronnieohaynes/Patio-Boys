@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-contracts';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-contracttrade';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -448,7 +448,9 @@ function makeRecord(pid, playerDb, projById, lockDist){
     lockOvr: lock && lock.lockOvr != null ? lock.lockOvr : null,
     lockTier: lock && lock.lockTierLabel ? lock.lockTierLabel : null,
     tradeScore: lock && lock.tradeScore != null ? lock.tradeScore : null,
-    tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null
+    tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null,
+    tradeContractMult: lock && lock.tradeContractMult != null ? lock.tradeContractMult : null,
+    tradeContractNote: lock && lock.tradeContractNote ? lock.tradeContractNote : null
   };
 }
 
@@ -464,7 +466,8 @@ function lockCellHtml(a){
   if (a.lockOvr == null) return '<td class="num lock">—</td>';
   const title = a.tradeScore != null
     ? ('Lock OVR ' + a.lockOvr + (a.lockTier ? ' · ' + a.lockTier : '')
-      + ' · trade score ' + Number(a.tradeScore).toFixed(1))
+      + ' · trade score ' + Number(a.tradeScore).toFixed(1)
+      + (a.tradeContractNote ? ' · ' + a.tradeContractNote : ''))
     : ('Lock OVR ' + a.lockOvr);
   return '<td class="lock" title="' + escapeHtml(title) + '">'
     + '<span class="ovr">' + Math.round(a.lockOvr) + '</span>'

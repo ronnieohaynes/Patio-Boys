@@ -445,7 +445,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-contracts';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-contracttrade';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1271,6 +1271,10 @@ function renderLockIn(t){
         + ' × age ' + (d.tradeAgeMult != null ? Number(d.tradeAgeMult).toFixed(2) : '—')
         + ' (' + (d.lockAgeBand || '?') + ')'
         + ' × injury ' + (d.tradeInjuryMult != null ? Number(d.tradeInjuryMult).toFixed(2) : '1.00')
+        + (d.tradeContractMult != null && Number(d.tradeContractMult) !== 1
+          ? (' × contract ' + Number(d.tradeContractMult).toFixed(2))
+          : '')
+        + (d.tradeContractNote ? (' (' + d.tradeContractNote + ')') : '')
         + (d.lockAgeBand === 'young' ? ' +1 young' : '')
         + ' · bands 95/90/85/80/75/70/65/60')
       : 'Trade stars unavailable';

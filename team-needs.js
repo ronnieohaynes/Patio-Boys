@@ -534,23 +534,42 @@
     return global.NBA_CONTRACTS_SNAPSHOT || null;
   }
 
-  function contractsByKey(){
+  function contractsIndex(){
     const snap = contractsSnapshot();
     if (!snap) return null;
-    if (snap._byKey) return snap._byKey;
-    const map = Object.create(null);
+    if (snap._index) return snap._index;
+    const deals = Object.create(null);
+    const salaries = Object.create(null);
+    const buyouts = Object.create(null);
     (snap.deals || []).forEach(d => {
       if (!d) return;
       const key = d.key || normContractName(d.name);
       if (!key) return;
-      const prev = map[key];
+      const prev = deals[key];
       if (!prev || Number(d.faYear) > Number(prev.faYear)
         || (Number(d.faYear) === Number(prev.faYear) && Number(d.aav) > Number(prev.aav))){
-        map[key] = d;
+        deals[key] = d;
       }
     });
-    snap._byKey = map;
-    return map;
+    (snap.salaries || []).forEach(s => {
+      if (!s) return;
+      const key = s.key || normContractName(s.name);
+      if (key) salaries[key] = s;
+    });
+    (snap.buyouts || []).forEach(b => {
+      if (!b) return;
+      const key = b.key || normContractName(b.name);
+      if (!key) return;
+      const prev = buyouts[key];
+      if (!prev || Number(b.season) >= Number(prev.season || 0)) buyouts[key] = b;
+    });
+    snap._index = {deals, salaries, buyouts, snap};
+    return snap._index;
+  }
+
+  function contractsByKey(){
+    const idx = contractsIndex();
+    return idx ? idx.deals : null;
   }
 
   function fmtMoneyShort(n){
@@ -600,13 +619,83 @@
     };
   }
 
+  /*
+   * Contract profile for Trade ★:
+   *  - large deals boost (earned / someone is paying)
+   *  - true minimums get a short-leash haircut when production is soft
+   *  - buyouts are a real negative signal
+   */
+  function contractProfile(playerOrName, opts){
+    const options = opts || {};
+    const idx = contractsIndex();
+    if (!idx) return null;
+    const name = (playerOrName && typeof playerOrName === 'object')
+      ? (playerOrName.name || playerOrName.full_name || playerOrName.fullName || '')
+      : playerOrName;
+    const key = normContractName(name);
+    if (!key) return null;
+
+    const snap = idx.snap || {};
+    const asOf = options.asOfYear != null ? Number(options.asOfYear)
+      : (snap.asOfYear != null ? Number(snap.asOfYear) : new Date().getUTCFullYear());
+    const buyoutYears = options.buyoutYears != null ? Number(options.buyoutYears) : 2;
+    const ovr = options.lockOvr != null ? Number(options.lockOvr) : null;
+
+    const salary = idx.salaries[key] || null;
+    const buyout = idx.buyouts[key] || null;
+    const recent = recentGoodContract(name, options);
+    const buyoutFresh = !!(buyout && Number.isFinite(Number(buyout.season))
+      && (asOf - Number(buyout.season)) <= buyoutYears);
+
+    const tier = salary && salary.tier ? salary.tier : null;
+    let tradeMult = 1;
+    const bits = [];
+
+    if (buyoutFresh){
+      tradeMult *= 0.90;
+      bits.push('Buyout/waive ' + buyout.season
+        + (buyout.status === 'unsigned' ? ' (still unsigned)' : ''));
+    } else if (tier === 'large'){
+      tradeMult *= 1.045;
+      bits.push('Large deal ' + fmtMoneyShort(salary.y1) + '/yr — paid production');
+    } else if (tier === 'mid' || recent){
+      tradeMult *= 1.02;
+      bits.push(recent
+        ? ('Recent paid deal (' + recent.why + ')')
+        : ('Mid deal ' + fmtMoneyShort(salary.y1) + '/yr'));
+    } else if (tier === 'min'){
+      /* Short leash: harsher when they aren't producing. */
+      if (ovr != null && ovr >= 78) tradeMult *= 0.99;
+      else if (ovr != null && ovr >= 70) tradeMult *= 0.965;
+      else tradeMult *= 0.93;
+      bits.push('Min deal ' + fmtMoneyShort(salary.y1) + '/yr — short leash');
+    }
+
+    if (tradeMult === 1 && !tier && !buyoutFresh && !recent) return null;
+    return {
+      key,
+      tier,
+      y1: salary ? salary.y1 : null,
+      yearsLeft: salary ? salary.yearsLeft : null,
+      buyout: buyoutFresh ? buyout : null,
+      recentDeal: recent,
+      tradeMult,
+      why: bits.join(' · ') || (tier ? ('Contract tier: ' + tier) : '')
+    };
+  }
+
+  function contractTradeMult(playerOrName, opts){
+    const profile = contractProfile(playerOrName, opts);
+    return profile && profile.tradeMult != null ? profile.tradeMult : 1;
+  }
+
   global.TeamNeedsModel = {
     CORE, NON_STARTING, NON_REGULAR, DEFAULT_TAXI_YEARS,
     TAXI_ROSTER_OVR, TAXI_DEV_SOFT_CAP, TAXI_DEV_IDEAL, TAXI_DEV_HORIZON,
     parseSlots, regularCap, taxiEligible, splitRoster,
     inferLockOvr, taxiGrowthPerSeason, taxiDevEval,
     countTaxiDevStashes, taxiDevCapacity,
-    recentGoodContract, contractsSnapshot,
+    recentGoodContract, contractProfile, contractTradeMult, contractsSnapshot,
     positions, eligibleForSlot, slotTier, optimize, candidateGain,
     ageBand, agePressure, youthUpgradeBonus, AGE_BAND_ORDER
   };
