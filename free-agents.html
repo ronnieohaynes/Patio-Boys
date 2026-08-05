@@ -240,7 +240,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-per30';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fpm-moves-moves';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -322,8 +322,29 @@ const SORT_KEY_TO_SELECT = {
 
 const ADD_GAIN = 0.5;
 const ADD_PROJ_EDGE = 0.5;
+const FA_FPM_ELITE = (window.LockInDist && LockInDist.FPM_ELITE) || 1.00;
+const FA_FPM_SOLID = (window.LockInDist && LockInDist.FPM_SOLID) || 0.85;
+const FA_FPM_EDGE = (window.LockInDist && LockInDist.FPM_EDGE) || 0.08;
 const STRING_LABELS = ['1st string', 'Top 8'];
 const FA_DEPTH_TOP8 = 8;
+
+function faFpPerMin(rec){
+  if (!rec) return null;
+  if (window.LockInDist && typeof LockInDist.readFpPerMin === 'function'){
+    const fromLock = LockInDist.readFpPerMin(rec);
+    if (fromLock != null) return fromLock;
+  }
+  const x = Number(rec.avgFpPerMin);
+  return Number.isFinite(x) ? x : null;
+}
+
+function faFormatFpm(rate){
+  if (window.LockInDist && typeof LockInDist.formatFpPerMin === 'function'){
+    return LockInDist.formatFpPerMin(rate);
+  }
+  if (rate == null || !Number.isFinite(Number(rate))) return '';
+  return 'FP/m ' + Number(rate).toFixed(2);
+}
 
 function depthRankValue(rec){
   /* Depth / drop ranking by Lock OVR — off-chart fodder surfaces as drop targets. */
@@ -507,6 +528,10 @@ function makeRecord(pid, playerDb, projById, lockDist, effectiveOrders){
     situationMult: lock && lock.tradeSituationMult != null ? lock.tradeSituationMult : null,
     situationKind: lock && lock.tradeSituationKind ? lock.tradeSituationKind : null,
     situationNote: lock && lock.tradeSituationNote ? lock.tradeSituationNote : null,
+    avgFpPerMin: (window.LockInDist && typeof LockInDist.readFpPerMin === 'function')
+      ? LockInDist.readFpPerMin(lock)
+      : (lock && lock.avgFpPerMin != null ? Number(lock.avgFpPerMin) : null),
+    sampleN: lock && lock.n != null ? lock.n : null,
     role
   };
 }
@@ -578,8 +603,12 @@ function scoreAgentsForTeam(team){
       const weak = weakestRostered(regularPlayers);
       const edge = depthRankValue(a) - (weak ? depthRankValue(weak) : 0);
       const gate = faTaxiStashGate(a, taxiYears, taxiOpen, devCap);
-      const upgrade = edge >= ADD_PROJ_EDGE;
-      const shouldAdd = !!(upgrade || gate.stashWorthy);
+      const faFpm = faFpPerMin(a);
+      const weakFpm = weak ? faFpPerMin(weak) : null;
+      const fpmEdge = (faFpm != null && weakFpm != null) ? (faFpm - weakFpm) : null;
+      const fpmUpgrade = !!(fpmEdge != null && fpmEdge >= FA_FPM_EDGE && faFpm >= FA_FPM_SOLID);
+      const upgrade = edge >= ADD_PROJ_EDGE || fpmUpgrade;
+      let shouldAdd = !!(upgrade || gate.stashWorthy);
       let drop = null;
       let detail = 'No clear roster upgrade.';
       let verdict = 'Pass';
@@ -601,7 +630,10 @@ function scoreAgentsForTeam(team){
           shouldAdd = false;
         } else if (weak){
           drop = weak;
-          detail = 'Drop ' + weak.name;
+          detail = (fpmUpgrade ? 'Efficiency add — Drop ' : 'Drop ') + weak.name;
+          if (fpmEdge != null && fpmEdge >= FA_FPM_EDGE){
+            detail += ' · ' + faFormatFpm(faFpm) + ' beats ' + faFormatFpm(weakFpm);
+          }
         } else {
           detail = 'Open roster spot';
         }
@@ -621,7 +653,9 @@ function scoreAgentsForTeam(team){
         depthLabel: '—',
         verdict,
         detail,
-        recScore: shouldAdd ? (1000 + edge + (taxiStash ? 40 : 0)) : edge
+        recScore: shouldAdd
+          ? (1000 + edge + (taxiStash ? 40 : 0) + (fpmUpgrade ? 25 : 0))
+          : edge
       };
     }).sort((a, b) => b.recScore - a.recScore || (b.metric || 0) - (a.metric || 0));
   }
@@ -641,7 +675,14 @@ function scoreAgentsForTeam(team){
     const cracksStarters = fit.gain >= ADD_GAIN && fit.slot;
     const depthAdd = !!(depthFit && depthFit.stringIdx <= 1 && beatsWeakest);
     const clearBenchUpgrade = projEdge >= ADD_PROJ_EDGE && !!depthFit;
-    const upgrade = !!(beatsWeakest && (cracksStarters || depthAdd || clearBenchUpgrade));
+    const faFpm = faFpPerMin(a);
+    const weakFpm = weak ? faFpPerMin(weak) : null;
+    const fpmEdge = (faFpm != null && weakFpm != null) ? (faFpm - weakFpm) : null;
+    const fpmEdgeEnough = fpmEdge != null && fpmEdge >= FA_FPM_EDGE;
+    const fpmElite = faFpm != null && faFpm >= FA_FPM_ELITE;
+    const fpmSolid = faFpm != null && faFpm >= FA_FPM_SOLID;
+    const fpmUpgrade = !!(fpmEdgeEnough && fpmSolid && beatsWeakest);
+    const upgrade = !!(beatsWeakest && (cracksStarters || depthAdd || clearBenchUpgrade || fpmUpgrade));
 
     const gate = faTaxiStashGate(a, taxiYears, taxiOpen, devCap);
     const stashWorthy = gate.stashWorthy;
@@ -656,7 +697,7 @@ function scoreAgentsForTeam(team){
     } else if (shouldAdd && regularOpen > 0){
       drop = null;
     } else if (shouldAdd){
-      if (weak && projEdge > 0.05) drop = weak;
+      if (weak && (projEdge > 0.05 || fpmEdgeEnough)) drop = weak;
       else if (displacedPlayer && !isFaStarKeep(displacedPlayer)
         && depthRankValue(a) > depthRankValue(displacedPlayer)
         && regularPlayers.some(p => String(p.id) === String(displacedPlayer.id))){
@@ -665,14 +706,16 @@ function scoreAgentsForTeam(team){
     }
 
     const dropDeal = drop ? recentNbaDeal(drop) : null;
-    if (shouldAdd && dropDeal && !cracksStarters){
+    if (shouldAdd && dropDeal && !cracksStarters && !fpmUpgrade){
       /* Don't recommend dumping a recently paid NBA deal for a fringe FA. */
       shouldAdd = false;
       drop = null;
     }
     if (shouldAdd && drop && isFaStarKeep(drop)
-      && !(a.lockOvr != null && Number(a.lockOvr) > Number(drop.lockOvr))){
-      /* Never "Drop Tatum" for a lesser FA — only if the FA is a higher Lock star. */
+      && !(a.lockOvr != null && Number(a.lockOvr) > Number(drop.lockOvr))
+      && !(fpmElite && faFpm != null && faFpPerMin(drop) != null && faFpm - faFpPerMin(drop) >= FA_FPM_EDGE * 2)){
+      /* Never "Drop Tatum" for a lesser FA — only if the FA is a higher Lock star
+         or a clear elite FP/m smash. */
       shouldAdd = false;
       drop = null;
     }
@@ -689,6 +732,10 @@ function scoreAgentsForTeam(team){
         detail = (gate.dev && gate.dev.why ? gate.dev.why : ('Path to ' + targetOvr + ' Lock'))
           + ' · taxi (' + taxiOpen + ' open)';
         if (devCap.atIdeal || devCap.overCap) detail += ' · ' + devCap.note;
+      } else if (fpmUpgrade && !cracksStarters && !depthAdd && !clearBenchUpgrade){
+        detail = 'Efficiency add'
+          + (drop ? (' — Drop ' + drop.name) : '')
+          + (dropDeal ? ' (last resort — ' + dropDeal.why + ')' : '');
       } else if (drop){
         detail = 'Drop ' + drop.name
           + (dropDeal ? ' (last resort — ' + dropDeal.why + ')' : '');
@@ -696,6 +743,13 @@ function scoreAgentsForTeam(team){
         detail = 'Open roster spot';
       } else {
         detail = 'Stream over weakest';
+      }
+      if (fpmEdgeEnough && drop){
+        detail += ' · ' + faFormatFpm(faFpm) + ' beats ' + faFormatFpm(faFpPerMin(drop) ?? weakFpm);
+      } else if (fpmElite){
+        detail += ' · elite ' + faFormatFpm(faFpm);
+      } else if (fpmSolid && !taxiStash){
+        detail += ' · ' + faFormatFpm(faFpm) + ' solid';
       }
     } else if (dropDeal){
       detail = 'Skip — ' + dropDeal.note + ' on ' + (weak && weak.name ? weak.name : 'roster')
@@ -710,6 +764,8 @@ function scoreAgentsForTeam(team){
         : 'Fringe Top 8 depth';
     } else if (fit.slot && fit.gain > 0.05){
       detail = 'Slight ' + fit.slot + ' edge — not enough to add';
+    } else if (fpmElite){
+      detail = 'Elite ' + faFormatFpm(faFpm) + ' — watch if a roster spot opens';
     }
 
     const recScore = shouldAdd
@@ -717,10 +773,13 @@ function scoreAgentsForTeam(team){
         + fit.gain * 10
         + (depthFit ? (3 - depthFit.stringIdx) * 25 : 0)
         + Math.max(0, projEdge)
+        + (fpmEdgeEnough ? 30 + Math.min(25, fpmEdge * 100) : 0)
+        + (fpmElite ? 18 : (fpmSolid ? 6 : 0))
         + (taxiStash ? 40 + Math.min(30, ((gate.dev && gate.dev.score) || 0) * 0.15) : 0)
         - (taxiStash && devCap.overCap ? 80 : 0))
       : (fit.gain * 5
         + Math.max(0, projEdge)
+        + (fpmElite ? 4 : 0)
         + (depthFit && depthFit.stringIdx === 1 ? 2 : 0));
 
     return {
