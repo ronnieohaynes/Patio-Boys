@@ -1670,6 +1670,16 @@
     }
     return 'F';
   }
+  function fpPerMinGradeClass(grade){
+    const map = {
+      'A+': 'grade-ap', A: 'grade-a', 'A-': 'grade-am',
+      'B+': 'grade-bp', B: 'grade-b', 'B-': 'grade-bm',
+      'C+': 'grade-cp', C: 'grade-c', 'C-': 'grade-cm',
+      'D+': 'grade-dp', D: 'grade-d', 'D-': 'grade-dm',
+      F: 'grade-f'
+    };
+    return map[grade] || 'grade-pending';
+  }
 
   function readFpPerMin(dist){
     if (!dist) return null;

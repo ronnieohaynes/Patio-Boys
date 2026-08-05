@@ -1630,8 +1630,27 @@ function renderLockIn(t){
     const mpgCell = '<td class="num" title="Minutes per game (box-score minutes ÷ games)">'
       + mpgTxt + '</td>';
     const fpmTxt = d.avgFpPerMin != null && Number.isFinite(d.avgFpPerMin) ? d.avgFpPerMin.toFixed(2) : '—';
-    const fpmCell = '<td class="num" title="Fantasy points per minute (box-score FP ÷ minutes)">'
-      + fpmTxt + '</td>';
+    const fpmGrade = d.fpPerMinGrade
+      || (d.avgFpPerMin != null && window.LockInDist && LockInDist.fpPerMinGrade
+        ? LockInDist.fpPerMinGrade(d.avgFpPerMin)
+        : null);
+    const fpmGradeClass = fpmGrade && window.LockInDist && LockInDist.fpPerMinGradeClass
+      ? LockInDist.fpPerMinGradeClass(fpmGrade)
+      : 'grade-pending';
+    const fpmTitle = fpmGrade
+      ? ('Fantasy points per minute ' + Number(d.avgFpPerMin).toFixed(3)
+        + ' · grade ' + fpmGrade
+        + ' (A+ ≥1.20 · A ≥1.10 · A- ≥1.00 · B+ ≥0.95 · B ≥0.90 · B- ≥0.85'
+        + ' · C+ ≥0.80 · C ≥0.75 · C- ≥0.70 · D+ ≥0.65 · D ≥0.60 · D- ≥0.55 · F below'
+        + ' · drop soft floor <' + ((window.LockInDist && LockInDist.FPM_POOR) || 0.75) + ')')
+      : 'Fantasy points per minute (box-score FP ÷ minutes)';
+    const fpmCell = d.avgFpPerMin != null && Number.isFinite(d.avgFpPerMin)
+      ? ('<td class="num" title="' + escapeHtml(fpmTitle) + '">' + fpmTxt
+        + (fpmGrade
+          ? ('<span class="tier-sub ' + fpmGradeClass + '">' + escapeHtml(fpmGrade) + '</span>')
+          : '')
+        + '</td>')
+      : '<td class="num">—</td>';
 
     if (basic){
       return '<tr>' + posCell + nameCell + lockCell + ageCell + tradeCell + avgCell
@@ -1687,7 +1706,7 @@ function renderLockIn(t){
       + 'Lock OVR applies ~45% of the same situation gap so offseason adds move dynasty value, not only Trade. '
       + '<strong>Avg · Min · FP/m · /30 · /36 · σ · Ceil · hits</strong> still describe '
       + escapeHtml(String(state.statsSeason))
-      + ' box scores only (Min = minutes/game; FP/m = FP ÷ minutes; /30 = realistic starter rate; /36 = star-minute upside) — hover OVR for the blend math. '
+      + ' box scores only (Min = minutes/game; FP/m = FP ÷ minutes with letter grade; /30 = realistic starter rate; /36 = star-minute upside) — hover OVR for the blend math. '
       + 'Showing all ' + show.length + ' rostered players'
       + (scored.length < show.length ? ' (' + (show.length - scored.length) + ' without dynasty samples yet)' : '')
       + '.</p>');
