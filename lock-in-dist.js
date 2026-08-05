@@ -110,8 +110,9 @@
   }
 
   /* Score every ESPN box-score line for a Sleeper season year.
-     Returns {samplesByPlayer, per36ByPlayer, mpgByPlayer}
-     where per36 is total FP / total min × 36 and mpg is total min / games. */
+     Returns {samplesByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer}
+     where per36 is total FP / total min × 36, mpg is total min / games,
+     and fpPerMin is total FP / total min. */
   function buildSamplesFromGamelogs(statsSeason, scoring){
     const snap = gamelogSnapshot();
     if (!snap || !snap.seasons) return null;
@@ -122,6 +123,7 @@
     const samplesByPlayer = {};
     const per36ByPlayer = {};
     const mpgByPlayer = {};
+    const fpPerMinByPlayer = {};
     Object.keys(byPid).forEach(pid => {
       const games = byPid[pid] || [];
       const scored = [];
@@ -139,12 +141,14 @@
       if (scored.length){
         samplesByPlayer[pid] = scored;
         if (minSum > 0){
-          per36ByPlayer[pid] = (fpSum / minSum) * 36;
+          const rate = fpSum / minSum;
+          fpPerMinByPlayer[pid] = rate;
+          per36ByPlayer[pid] = rate * 36;
           mpgByPlayer[pid] = minSum / scored.length;
         }
       }
     });
-    return {samplesByPlayer, per36ByPlayer, mpgByPlayer};
+    return {samplesByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer};
   }
 
   /* Full-season FP/G from Sleeper season totals (matches Sleeper app averages). */
@@ -1488,6 +1492,7 @@
     let sampleSource = 'weekly';
     let per36ByPlayer = {};
     let mpgByPlayer = {};
+    let fpPerMinByPlayer = {};
 
     if (usingBox){
       seasonStats = await fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
@@ -1496,6 +1501,7 @@
       samplesByPlayer = boxPack.samplesByPlayer;
       per36ByPlayer = boxPack.per36ByPlayer || {};
       mpgByPlayer = boxPack.mpgByPlayer || {};
+      fpPerMinByPlayer = boxPack.fpPerMinByPlayer || {};
       weeksFound = Object.keys(samplesByPlayer).reduce((m, pid) => Math.max(m, samplesByPlayer[pid].length), 0);
       sampleSource = 'boxscore';
     } else {
@@ -1524,6 +1530,8 @@
       if (p36 != null && Number.isFinite(p36)) distMap[pid].avgPer36 = p36;
       const mpg = mpgByPlayer[pid];
       if (mpg != null && Number.isFinite(mpg)) distMap[pid].avgMpg = mpg;
+      const fpm = fpPerMinByPlayer[pid];
+      if (fpm != null && Number.isFinite(fpm)) distMap[pid].avgFpPerMin = fpm;
     });
     return {
       distMap,
