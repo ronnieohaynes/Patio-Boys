@@ -3,7 +3,7 @@
   'use strict';
 
   function defaultDirForKey(key){
-    if (key === 'name' || key === 'pos' || key === 'age' || key === 'fitLabel') return 'asc';
+    if (key === 'name' || key === 'pos' || key === 'age' || key === 'fitLabel' || key === 'role') return 'asc';
     return 'desc';
   }
 

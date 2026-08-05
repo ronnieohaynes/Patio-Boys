@@ -1074,7 +1074,7 @@ async function load(){
     status.classList.remove('error');
     status.textContent = 'Add / pass with taxi stash (players with <'
       + ((state.taxiYears != null ? state.taxiYears : 2) + 1)
-      + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots) or drop target + depth-chart fit. '
+      + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots) or Lock-ranked drop target (usually 3rd string). '
       + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR / Trade \u2605'
       + (state.lockStatsSeason ? ' (' + state.lockStatsSeason + ' smash)' : '')
       + '.';
