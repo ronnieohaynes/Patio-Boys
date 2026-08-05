@@ -480,7 +480,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-multiseason';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-hit30-drop';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -2113,6 +2113,11 @@ function seriousInjuryStatus(status){
 }
 
 /* Off-chart players (not 1st/2nd/taxi) → ranked drop candidates (#1 = drop first). */
+/* ≥30 FP less than 20% of weeks → can't stream them; prime drop signal. */
+const DROP_HIT30_MARK = 30;
+const DROP_HIT30_FLOOR = 0.20;
+const DROP_HIT30_MIN_N = 5;
+
 function scoreCutsForTeam(t, slots, opt){
   const cap = t.regularCap || 18;
   const regularIds = (t.regularIds || t.players || []).map(String);
@@ -2158,6 +2163,11 @@ function scoreCutsForTeam(t, slots, opt){
     const nbaDeal = window.TeamNeedsModel && typeof TeamNeedsModel.recentGoodContract === 'function'
       ? TeamNeedsModel.recentGoodContract(name)
       : null;
+    const hit30 = d && d.hits && d.hits[DROP_HIT30_MARK] != null
+      ? Number(d.hits[DROP_HIT30_MARK])
+      : null;
+    const hitN = d && d.n != null ? Number(d.n) : 0;
+    const hit30Soft = hit30 != null && hitN >= DROP_HIT30_MIN_N && hit30 < DROP_HIT30_FLOOR;
     let cutScore = Math.max(0, 95 - tradeValue);
     if (!isStarter) cutScore += 45;
     else cutScore -= 55;
@@ -2169,6 +2179,11 @@ function scoreCutsForTeam(t, slots, opt){
     if (nbaDeal) cutScore -= 60;
     /* Off the depth chart is the drop pool — bump vs anyone still charted. */
     if (!chartIds.has(id)) cutScore += 30;
+    /* Soft floor: if they rarely clear 30 FP, you can't start them most weeks. */
+    if (hit30Soft && !starKeep) cutScore += 55;
+    else if (hit30 != null && hitN >= DROP_HIT30_MIN_N && hit30 >= DROP_HIT30_FLOOR){
+      cutScore -= Math.min(18, (hit30 - DROP_HIT30_FLOOR) * 35);
+    }
     return {
       id,
       name,
@@ -2185,6 +2200,9 @@ function scoreCutsForTeam(t, slots, opt){
       taxiDev: dev,
       nbaDeal,
       ageBand: band,
+      hit30,
+      hitN,
+      hit30Soft,
       cutScore,
       onChart: chartIds.has(id)
     };
@@ -2215,6 +2233,10 @@ function scoreCutsForTeam(t, slots, opt){
     const as = a.starKeep ? 1 : 0;
     const bs = b.starKeep ? 1 : 0;
     if (as !== bs) return as - bs;
+    /* Soft ≥30 rate first among unprotected fodder. */
+    const ah = a.hit30Soft ? 0 : 1;
+    const bh = b.hit30Soft ? 0 : 1;
+    if (ah !== bh) return ah - bh;
     return b.cutScore - a.cutScore
       || a.tradeValue - b.tradeValue
       || String(a.name).localeCompare(String(b.name));
@@ -2231,9 +2253,14 @@ function scoreCutsForTeam(t, slots, opt){
     detail: (over > 0 && i < over
       ? ('Need ' + over + ' cut' + (over === 1 ? '' : 's') + ' · drop #' + (i + 1) + ' first')
       : ('Off depth chart · drop #' + (i + 1)))
+      + (c.hit30Soft
+        ? (' · hits ≥' + DROP_HIT30_MARK + ' only '
+          + Math.round((c.hit30 || 0) * 100) + '% of weeks — soft floor')
+        : (c.hit30 != null && c.hitN >= DROP_HIT30_MIN_N
+          ? (' · ≥' + DROP_HIT30_MARK + ' in ' + Math.round(c.hit30 * 100) + '% of weeks')
+          : ''))
       + (c.starKeep ? ' · Lock star — last resort only' : '')
       + (c.nbaDeal ? ' · protected deal — ' + c.nbaDeal.why : '')
-      + (c.lockOvr != null ? '' : '')
   }));
 
   /* Required cuts when over = top `over` from the ranked drop list. */
@@ -2424,6 +2451,10 @@ function renderRosterMoves(t){
       + '<div class="mv-meta">' + escapeHtml(a.pos || '—')
       + (a.lockOvr != null ? ' · Lock ' + Math.round(a.lockOvr) : '')
       + (a.tradeStars != null ? ' · ' + moveStarsTxt(a.tradeStars) : '')
+      + (a.hit30 != null && a.hitN >= DROP_HIT30_MIN_N
+        ? (' · ≥30 ' + Math.round(a.hit30 * 100) + '%'
+          + (a.hit30Soft ? ' soft' : ''))
+        : '')
       + (a.metric != null ? ' · ' + Number(a.metric).toFixed(1) + ' proj' : '')
       + (a.slot ? ' · ' + escapeHtml(a.slot) : '')
       + '</div>'
@@ -2467,6 +2498,9 @@ function renderRosterMoves(t){
     + '<p class="moves-foot">Drop candidates are everyone <strong>off the depth chart</strong> '
     + '(not 1st string, Top 8, or the ' + DEPTH_TAXI_SPOTS + ' taxi spots), ranked by dynasty value — '
     + '<strong>#1</strong> should be dropped first. '
+    + 'Players who hit <strong>≥30 FP in under '
+    + Math.round(DROP_HIT30_FLOOR * 100)
+    + '% of weeks</strong> rise as prime cuts (you can\'t start them most nights). '
     + 'Taxi on the chart is for under-' + targetOvr
     + ' Lock developmental stashes (soft cap ~'
     + ((window.TeamNeedsModel && TeamNeedsModel.TAXI_DEV_IDEAL) || 3) + '–'
