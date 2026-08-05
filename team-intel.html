@@ -480,7 +480,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-top8';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-multiseason';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -696,34 +696,46 @@ async function loadCeilings(){
     if (r.ok){ statsSeason = (await r.json()).season; }
   }
   state.statsSeason = statsSeason;
-  const weeks = Array.from({length: 25}, (_, i) => i + 1);
-  const [seasonStats, ...weeklyResults] = await Promise.all([
-    fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
-      .then(r => r.ok ? r.json() : null)
-      .catch(() => null),
-    ...weeks.map(w =>
-      fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
-        .then(r => r.ok ? r.json() : null)
-        .catch(() => null)
-    )
-  ]);
-  state.statsWeeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
-  if (!state.statsWeeksFound) throw new Error('No weekly stats available for ' + statsSeason);
+  const priorSeasonNum = Number(statsSeason) - 1;
+  const priorSeason = Number.isFinite(priorSeasonNum) && priorSeasonNum >= 2015
+    ? String(priorSeasonNum)
+    : null;
+  state.priorStatsSeason = priorSeason;
 
   const marks = (window.LockInDist && LockInDist.DEFAULT_MARKS) || [30, 40, 50];
   state.lockInMarks = marks;
 
-  let samplesByPlayer;
   let distMap;
-  if (window.LockInDist){
-    const seasonAvgByPid = seasonStats
-      ? LockInDist.buildSeasonAvgMap(seasonStats, scoring)
-      : {};
-    samplesByPlayer = LockInDist.buildSamplesByPlayer(weeklyResults, scoring);
-    distMap = LockInDist.buildDistMap(samplesByPlayer, marks, seasonAvgByPid);
+  if (window.LockInDist && typeof LockInDist.loadSeasonDistMap === 'function'){
+    const packs = await Promise.all([
+      LockInDist.loadSeasonDistMap(statsSeason, scoring, fetch, marks),
+      priorSeason
+        ? LockInDist.loadSeasonDistMap(priorSeason, scoring, fetch, marks).catch(() => null)
+        : Promise.resolve(null)
+    ]);
+    const primary = packs[0];
+    const prior = packs[1];
+    state.statsWeeksFound = primary.weeksFound;
+    if (!state.statsWeeksFound) throw new Error('No weekly stats available for ' + statsSeason);
+    distMap = primary.distMap;
+    state.priorLockInByPid = (prior && prior.weeksFound) ? prior.distMap : null;
+    if (!state.priorLockInByPid) state.priorStatsSeason = null;
   } else {
-    // Fallback if lock-in-dist.js failed to load.
-    samplesByPlayer = {};
+    /* Fallback if lock-in-dist.js failed to load / is stale. */
+    const weeks = Array.from({length: 25}, (_, i) => i + 1);
+    const [seasonStats, ...weeklyResults] = await Promise.all([
+      fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null),
+      ...weeks.map(w =>
+        fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null)
+      )
+    ]);
+    state.statsWeeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
+    if (!state.statsWeeksFound) throw new Error('No weekly stats available for ' + statsSeason);
+    const samplesByPlayer = {};
     const scoringKeys = Object.keys(scoring);
     weeklyResults.forEach(wk => {
       if (!wk) return;
@@ -745,6 +757,8 @@ async function loadCeilings(){
       marks.forEach(m => { hits[m] = arr.filter(v => v >= m).length / arr.length; });
       distMap[pid] = {n: arr.length, mean, sampleMean: mean, stdev, ceiling: mean + stdev, hits, normalHits: hits, marks, samples: arr};
     });
+    state.priorLockInByPid = null;
+    state.priorStatsSeason = null;
   }
 
   state.lockInByPid = distMap;
@@ -1149,7 +1163,9 @@ function refreshLockValues(){
     projById: state.projById,
     rookieNames,
     rookieIds,
-    twoKSnapshot: snap
+    twoKSnapshot: snap,
+    priorDistMap: state.priorLockInByPid || null,
+    priorStatsSeason: state.priorStatsSeason || null
   });
   return true;
 }
@@ -1472,8 +1488,13 @@ function renderLockIn(t){
       ? ('Lock OVR ' + d.lockOvr + ' · ' + (d.lockTierLabel || '')
         + ' · ' + (d.lockBaseSource || 'smash')
         + ' base ' + (d.lockBase != null ? d.lockBase.toFixed(1) : '—')
-        + ' · weights Avg ' + Math.round(w.avg*100) + '% / Ceil ' + Math.round(w.ceil*100)
-        + '% / smash-hit ' + Math.round(w.hit*100) + '%'
+        + (d.lockBlend && d.lockBlend.parts && d.lockBlend.parts.length
+          ? (' · blend ' + d.lockBlend.parts.map(p =>
+            (Math.round(p.wNorm * 100) + '% ' + p.key + ' ' + Number(p.v).toFixed(1))
+          ).join(' + '))
+          : (' · smash weights Avg ' + Math.round(w.avg*100) + '% / Ceil ' + Math.round(w.ceil*100)
+            + '% / smash-hit ' + Math.round(w.hit*100) + '%'))
+        + (state.priorStatsSeason ? (' · prior ' + state.priorStatsSeason) : '')
         + ' · absolute scale ' + floor + '–' + ceilO)
       : 'Lock OVR unavailable';
     const tier = d.lockTier || 'depth';
@@ -1541,24 +1562,29 @@ function renderLockIn(t){
     ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Trade ★, season Avg, NBA '
       + '<strong>Contract</strong> (years left / remaining total, nearest $0.1M), and an NBA '
       + '<strong>Role</strong> line from Sleeper depth chart + production tier. '
+      + 'Lock blends smash bases — vets <strong>60% '
+      + escapeHtml(String(state.statsSeason || 'last'))
+      + ' / 20% '
+      + escapeHtml(String(state.priorStatsSeason || 'prior'))
+      + ' / 20% proj</strong>; sophomores <strong>75/25</strong>; rookies unchanged. '
       + 'When two rostered teammates share the same Sleeper depth stamp, Role ranks them by Lock OVR '
       + 'so they are not both listed at the same spot. '
       + 'Switch to <strong>Adv stats</strong> for σ, ceiling, smash rates, and sample size. '
       + 'Showing all ' + show.length + ' rostered players'
       + (scored.length < show.length ? ' (' + (show.length - scored.length) + ' without dynasty samples yet)' : '')
       + '.</p>')
-    : ('<p class="lineup-foot"><strong>Lock OVR</strong> is smash production only (50–99, absolute curve). '
+    : ('<p class="lineup-foot"><strong>Lock OVR</strong> maps a blended smash base to 50–99 (absolute curve). '
+      + 'Vets: 60% last-season smash · 20% prior-season smash'
+      + (state.priorStatsSeason ? (' (' + escapeHtml(String(state.priorStatsSeason)) + ')') : '')
+      + ' · 20% next-year proj (renormalized if a leg is missing). '
+      + 'Sophomores (1 year exp): 75% last · 25% proj. Rookies stay on Y1 proj + early-career comps, '
+      + 'capped at Lock ' + ((window.LockInDist && LockInDist.ROOKIE_LOCK_OVR_CAP) || 82)
+      + ' until they have smash samples. '
       + '<strong>Trade ★</strong> = OVR × age × injury'
       + ' (young 1.12 +1 · prime 1.04 · decline 0.80), then '
       + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
-      + 'Same OVR can be a haul or a discount depending on age. '
-      + 'Rookies use Y1 proj + early-career comps (peak ESPN floors haircut) or draft-rank bands, '
-      + 'capped at Lock ' + ((window.LockInDist && LockInDist.ROOKIE_LOCK_OVR_CAP) || 82)
-      + ' until they have smash samples. Thin vets (N&lt;'
-      + ((window.LockInDist && LockInDist.MIN_SAMPLES_FOR_SMASH) || 5)
-      + ') fall back to projected FP/G. '
-      + '<strong>Avg</strong> is full-season FP/G from ' + escapeHtml(String(state.statsSeason)) + '. '
-      + 'Hover OVR or Trade for the math. '
+      + '<strong>Avg / σ / Ceil / hits</strong> still describe '
+      + escapeHtml(String(state.statsSeason)) + ' only — hover OVR for the blend math. '
       + 'Showing all ' + show.length + ' rostered players'
       + (scored.length < show.length ? ' (' + (show.length - scored.length) + ' without dynasty samples yet)' : '')
       + '.</p>');

@@ -230,6 +230,12 @@
      Age / injury stay off OVR — those belong on Trade stars later. */
   const SMASH_WEIGHTS = { avg: 0.40, ceil: 0.30, hit: 0.30 };
   const MIN_SAMPLES_FOR_SMASH = 5;
+  /* Multi-season Lock blend (smash bases, then OVR curve).
+     Vet: 60% last · 20% prior · 20% next-year proj.
+     Sophomore (years_exp=1): 75% last · 25% proj.
+     Rookie: unchanged (proj + early-career comps). */
+  const BLEND_VET = {last: 0.60, prior: 0.20, proj: 0.20};
+  const BLEND_SOPH = {last: 0.75, proj: 0.25};
   const LOCK_OVR_FLOOR = 50;
   const LOCK_OVR_CEIL = 99;
   const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
@@ -476,6 +482,59 @@
       + SMASH_WEIGHTS.hit * smashHitScore(dist);
   }
 
+  /* Smash input for one season — prefer full smash; fall back to season mean. */
+  function seasonLockInput(dist){
+    if (!dist || dist.projOnly) return null;
+    const smash = smashLockBase(dist);
+    if (smash != null && Number.isFinite(smash)) return smash;
+    if (Number.isFinite(Number(dist.mean)) && Number(dist.mean) > 0) return Number(dist.mean);
+    return null;
+  }
+
+  /* Renormalize over whichever legs are present. parts: [{key,w,v}, ...] */
+  function blendWeightedBase(parts){
+    const ok = (parts || []).filter(p =>
+      p && p.w > 0 && p.v != null && Number.isFinite(Number(p.v))
+    );
+    if (!ok.length) return null;
+    const sumW = ok.reduce((s, p) => s + p.w, 0);
+    if (!(sumW > 0)) return null;
+    const norm = ok.map(p => ({
+      key: p.key,
+      w: p.w,
+      wNorm: p.w / sumW,
+      v: Number(p.v)
+    }));
+    const base = norm.reduce((s, p) => s + p.v * p.wNorm, 0);
+    return {base, parts: norm, sumW};
+  }
+
+  function blendSourceLabel(isSoph, blend){
+    if (!blend || !blend.parts || !blend.parts.length) return null;
+    const keys = blend.parts.map(p => p.key).sort().join('+');
+    if (isSoph){
+      if (keys === 'last+proj') return 'blend-75-25';
+      if (keys === 'last') return 'blend-last';
+      if (keys === 'proj') return 'blend-proj';
+      return 'blend-soph-renorm';
+    }
+    if (keys === 'last+prior+proj') return 'blend-60-20-20';
+    if (keys === 'last+proj') return 'blend-75-25-renorm'; /* missing prior */
+    if (keys === 'last+prior') return 'blend-last-prior-renorm';
+    if (keys === 'prior+proj') return 'blend-prior-proj-renorm';
+    if (keys === 'last') return 'blend-last';
+    if (keys === 'prior') return 'blend-prior';
+    if (keys === 'proj') return 'blend-proj';
+    return 'blend-renorm';
+  }
+
+  function yearsExpOfPlayer(p){
+    if (!p || typeof p !== 'object') return null;
+    const y = p.years_exp != null ? p.years_exp : p.yearsExp;
+    const n = Number(y);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
   function lockAgeBand(age, isRookie){
     const a = Number(age);
     if (!Number.isFinite(a) || a <= 0) return isRookie ? 'young' : 'unknown';
@@ -684,11 +743,13 @@
   }
 
   /* Mutates each dist with lockBase / lockOvr / lockTier / tradeScore / tradeStars.
-     OVR is pure smash (or rookie proj+comp); Trade stars layer age + injury. */
+     OVR is smash (multi-season blend for non-rookies) or rookie proj+comp.
+     Trade stars layer age + injury. */
   function attachLockValues(distMap, opts){
     const options = opts || {};
     const playerDb = options.playerDb || {};
     const projById = options.projById || null;
+    const priorDistMap = options.priorDistMap || null;
     const rookieNames = options.rookieNames || rookieNamesFromSnapshot(options.twoKSnapshot);
     let count = 0;
 
@@ -707,9 +768,14 @@
       const comp = isRookie ? rookieValueFloor(p, null, options.twoKSnapshot) : null;
       const earlyMult = isRookie ? rookieEarlyCareerMult(rookieOutlookRow(p)) : null;
       const thin = !(d.n >= MIN_SAMPLES_FOR_SMASH);
+      const yearsExp = yearsExpOfPlayer(p);
+      const priorD = priorDistMap
+        ? (priorDistMap[pid] || priorDistMap[String(pid)] || null)
+        : null;
 
       let base = null;
       let baseSource = null;
+      let blendInfo = null;
       if (isRookie){
         base = blendRookieBase(proj, comp);
         if (base != null){
@@ -724,15 +790,35 @@
           base = smashLockBase(d);
           baseSource = base != null ? 'smash' : null;
         }
-      } else if (thin && proj != null){
-        base = proj;
-        baseSource = 'proj';
       } else {
-        base = smashLockBase(d);
-        baseSource = 'smash';
-        if (base == null && proj != null){
+        /* Vet / sophomore: blend smash bases across seasons + next-year proj. */
+        const lastBase = seasonLockInput(d);
+        const priorBase = seasonLockInput(priorD);
+        const isSoph = yearsExp === 1;
+        const parts = isSoph
+          ? [
+            {key: 'last', w: BLEND_SOPH.last, v: lastBase},
+            {key: 'proj', w: BLEND_SOPH.proj, v: proj}
+          ]
+          : [
+            {key: 'last', w: BLEND_VET.last, v: lastBase},
+            {key: 'prior', w: BLEND_VET.prior, v: priorBase},
+            {key: 'proj', w: BLEND_VET.proj, v: proj}
+          ];
+        blendInfo = blendWeightedBase(parts);
+        if (blendInfo){
+          base = blendInfo.base;
+          baseSource = blendSourceLabel(isSoph, blendInfo);
+        } else if (thin && proj != null){
           base = proj;
           baseSource = 'proj';
+        } else {
+          base = smashLockBase(d);
+          baseSource = base != null ? 'smash' : null;
+          if (base == null && proj != null){
+            base = proj;
+            baseSource = 'proj';
+          }
         }
       }
       if (base == null || !Number.isFinite(base)){
@@ -745,6 +831,7 @@
         d.lockPct = null;
         d.tradeScore = null;
         d.tradeStars = null;
+        d.lockBlend = null;
         d.rookieComp = comp;
         d.rookieCompPeak = peakComp;
         d.rookieEarlyMult = earlyMult;
@@ -770,6 +857,13 @@
 
       d.lockBase = base;
       d.lockBaseSource = baseSource;
+      d.lockBlend = blendInfo
+        ? {
+          yearsExp,
+          parts: blendInfo.parts,
+          priorSeason: options.priorStatsSeason || null
+        }
+        : null;
       d.lockAgeBand = band;
       d.lockOvr = ovr;
       d.lockTier = tier.key;
@@ -811,8 +905,38 @@
     return true;
   }
 
+  /* Fetch one season's smash dist map (season totals + weekly samples). */
+  async function loadSeasonDistMap(statsSeason, scoring, fetchImpl, marks){
+    const fetchFn = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+    if (!statsSeason) throw new Error('statsSeason required');
+    if (!fetchFn) throw new Error('fetch unavailable');
+    const useMarks = marks && marks.length ? marks : DEFAULT_MARKS;
+    const weeks = Array.from({length: 25}, (_, i) => i + 1);
+    const [seasonStats, ...weeklyResults] = await Promise.all([
+      fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null),
+      ...weeks.map(w =>
+        fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null)
+      )
+    ]);
+    const weeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
+    const samplesByPlayer = buildSamplesByPlayer(weeklyResults, scoring || {});
+    const seasonAvgByPid = seasonStats ? buildSeasonAvgMap(seasonStats, scoring || {}) : {};
+    const distMap = buildDistMap(samplesByPlayer, useMarks, seasonAvgByPid);
+    return {
+      distMap,
+      statsSeason: String(statsSeason),
+      weeksFound,
+      seasonAvgCount: Object.keys(seasonAvgByPid).length
+    };
+  }
+
   /* Fetch season totals + weekly samples, score under league settings, attach
-     Lock OVR + Trade stars. Shared by Intel / Trade Analyzer / later surfaces. */
+     Lock OVR + Trade stars. Shared by Intel / Trade Analyzer / later surfaces.
+     Also loads statsSeason-1 for the vet 60/20/20 blend when available. */
   async function fetchLockValueIndex(opts){
     const options = opts || {};
     const scoring = options.scoring || {};
@@ -829,21 +953,23 @@
     const rookieIds = new Set(matchedRookieIds);
     (options.rookieIds || []).forEach(id => rookieIds.add(String(id)));
 
-    const weeks = Array.from({length: 25}, (_, i) => i + 1);
-    const [seasonStats, ...weeklyResults] = await Promise.all([
-      fetchImpl('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
-        .then(r => r.ok ? r.json() : null)
-        .catch(() => null),
-      ...weeks.map(w =>
-        fetchImpl('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
-          .then(r => r.ok ? r.json() : null)
-          .catch(() => null)
-      )
+    const priorSeasonNum = Number(statsSeason) - 1;
+    const priorSeason = Number.isFinite(priorSeasonNum) && priorSeasonNum >= 2015
+      ? String(priorSeasonNum)
+      : null;
+    const skipPrior = options.skipPriorSeason === true || !priorSeason;
+
+    const [primary, priorPack] = await Promise.all([
+      loadSeasonDistMap(statsSeason, scoring, fetchImpl),
+      skipPrior
+        ? Promise.resolve(null)
+        : loadSeasonDistMap(priorSeason, scoring, fetchImpl).catch(() => null)
     ]);
-    const weeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
-    const samplesByPlayer = buildSamplesByPlayer(weeklyResults, scoring);
-    const seasonAvgByPid = seasonStats ? buildSeasonAvgMap(seasonStats, scoring) : {};
-    const distMap = buildDistMap(samplesByPlayer, DEFAULT_MARKS, seasonAvgByPid);
+
+    const distMap = primary.distMap;
+    const priorDistMap = priorPack && priorPack.weeksFound
+      ? priorPack.distMap
+      : null;
 
     const seedIds = new Set([...playerIds, ...rookieIds].map(String));
     seedIds.forEach(id => {
@@ -870,14 +996,19 @@
 
     const scored = attachLockValues(distMap, {
       playerDb, projById, rookieIds, rookieNames,
-      twoKSnapshot: options.twoKSnapshot
+      twoKSnapshot: options.twoKSnapshot,
+      priorDistMap,
+      priorStatsSeason: priorDistMap ? priorSeason : null
     });
     return {
       distMap,
-      statsSeason,
-      weeksFound,
+      priorDistMap,
+      statsSeason: primary.statsSeason,
+      priorStatsSeason: priorDistMap ? priorSeason : null,
+      weeksFound: primary.weeksFound,
+      priorWeeksFound: priorPack ? priorPack.weeksFound : 0,
       scored,
-      seasonAvgCount: Object.keys(seasonAvgByPid).length,
+      seasonAvgCount: primary.seasonAvgCount,
       rookieSeeded: [...rookieIds].filter(id => distMap[id] && distMap[id].projOnly).length
     };
   }
@@ -919,6 +1050,8 @@
     LOCK_SLOTS,
     SMASH_WEIGHTS,
     MIN_SAMPLES_FOR_SMASH,
+    BLEND_VET,
+    BLEND_SOPH,
     LOCK_OVR_FLOOR,
     LOCK_OVR_CEIL,
     LOCK_OVR_ANCHORS,
@@ -947,6 +1080,10 @@
     teamLockInSummary,
     smashHitScore,
     smashLockBase,
+    seasonLockInput,
+    blendWeightedBase,
+    blendSourceLabel,
+    yearsExpOfPlayer,
     normalizePlayerName,
     playerNameKeys,
     sleeperPlayerName,
@@ -974,6 +1111,7 @@
     tradeStarsFromScore,
     tradeScoreFromOvr,
     attachLockValues,
+    loadSeasonDistMap,
     fetchLockValueIndex
   };
 })(window);
