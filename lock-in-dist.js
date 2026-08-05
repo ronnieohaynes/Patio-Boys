@@ -1637,7 +1637,7 @@
   }
 
   /* Absolute FP/min letter grades (Patio Boys scoring). Not curved.
-     ~1.00+ star rate · ~0.85 solid starter · ~0.75 average · <0.55 poor. */
+     ~1.00+ star rate · ~0.85 solid starter · ~0.75 average · below 0.75 soft drop floor. */
   const FP_PER_MIN_BANDS = [
     {min: 1.20, grade: 'A+'},
     {min: 1.10, grade: 'A'},
