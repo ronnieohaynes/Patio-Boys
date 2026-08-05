@@ -5,6 +5,7 @@ Sources:
   1) Spotrac free-agent signings — recent "good deals" (cut/drop protect)
   2) Basketball-Reference current contracts — salary tier for Trade ★
   3) Hoops Rumors buyout market watch — completed buyouts/waives
+  4) EXTENSION_OVERRIDES — fresh extensions BBRef lags on (e.g. Naji Marshall)
 
 Refresh:
   python3 build-nba-contracts.py
@@ -36,6 +37,72 @@ BUYOUT_PAGES = [
     "https://www.hoopsrumors.com/2026/02/2026-nba-buyout-market-watch.html",
     "https://www.hoopsrumors.com/2025/02/2025-nba-buyout-market-watch.html",
 ]
+
+# Fresh extensions BBRef / Spotrac FA tables often lag on (yearsLeft + protect deals).
+# Salaries: remaining seasons including current. Deals: extension terms (faYear = sign year).
+EXTENSION_OVERRIDES = [
+    {
+        "name": "Naji Marshall",
+        "key": "najimarshall",
+        "team": "DAL",
+        # 2026-27 still on prior deal; extension 2027-28..2029-30 (Spotrac cash).
+        "y1": 9_428_571,
+        "yearsLeft": 4,
+        "guaranteed": 61_628_571,  # 9.428571 + 18.1956 + 17.323584 + 16.680816
+        "tier": "mid",
+        "source": "manual-extension-2026-08",
+        "deal": {
+            "faYear": 2026,
+            "years": 3,
+            "total": 52_200_000,
+            "aav": 17_400_000,
+            "source": "manual-extension-2026-08",
+        },
+    },
+]
+
+
+def apply_extension_overrides(salaries: list[dict], deals: list[dict]) -> None:
+    sal_by = {s["key"]: s for s in salaries}
+    deal_by = {d["key"]: d for d in deals}
+    for row in EXTENSION_OVERRIDES:
+        key = row["key"]
+        sal = {
+            "name": row["name"],
+            "key": key,
+            "team": row.get("team"),
+            "y1": row["y1"],
+            "yearsLeft": row["yearsLeft"],
+            "guaranteed": row.get("guaranteed"),
+            "tier": row.get("tier") or salary_tier(row["y1"]),
+            "source": row.get("source") or "manual-extension",
+        }
+        prev = sal_by.get(key)
+        if not prev or int(sal["yearsLeft"]) >= int(prev.get("yearsLeft") or 0):
+            sal_by[key] = sal
+            print(f"Override salary: {row['name']} → {sal['yearsLeft']}y / "
+                  f"${(sal.get('guaranteed') or 0)/1e6:.1f}M rem")
+        deal_info = row.get("deal")
+        if deal_info:
+            deal = {
+                "name": row["name"],
+                "key": key,
+                "faYear": deal_info["faYear"],
+                "years": deal_info["years"],
+                "total": deal_info["total"],
+                "aav": deal_info["aav"],
+                "source": deal_info.get("source") or row.get("source") or "manual-extension",
+            }
+            prev_d = deal_by.get(key)
+            if (not prev_d
+                or int(deal["faYear"]) > int(prev_d.get("faYear") or 0)
+                or (int(deal["faYear"]) == int(prev_d.get("faYear") or 0)
+                    and int(deal["aav"]) >= int(prev_d.get("aav") or 0))):
+                deal_by[key] = deal
+                print(f"Override deal: {row['name']} → {deal['years']}y / "
+                      f"${deal['aav']/1e6:.1f}M AAV ({deal['faYear']})")
+    salaries[:] = sorted(sal_by.values(), key=lambda r: (-(r.get("y1") or 0), r["name"]))
+    deals[:] = sorted(deal_by.values(), key=lambda r: (-r["aav"], r["name"]))
 
 
 def norm_name(name: str) -> str:
@@ -288,8 +355,10 @@ def main() -> None:
     buyouts = sorted(buy_by.values(), key=lambda r: (-(r.get("season") or 0), r["name"]))
     print(f"Buyouts total: {len(buyouts)}")
 
+    apply_extension_overrides(salaries, deals)
+
     payload = {
-        "source": "spotrac FA + bbref contracts + hoopshrumors buyouts",
+        "source": "spotrac FA + bbref contracts + hoopshrumors buyouts + manual extension overrides",
         "captured": now.strftime("%Y-%m-%d"),
         "asOfYear": as_of_year,
         "protectYears": 2,
