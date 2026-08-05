@@ -110,8 +110,8 @@
   }
 
   /* Score every ESPN box-score line for a Sleeper season year.
-     Returns {samplesByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer}
-     where per36 is total FP / total min × 36, mpg is total min / games,
+     Returns {samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer}
+     where per30/per36 are total FP / total min × 30/36, mpg is total min / games,
      and fpPerMin is total FP / total min. */
   function buildSamplesFromGamelogs(statsSeason, scoring){
     const snap = gamelogSnapshot();
@@ -121,6 +121,7 @@
     if (!byPid) return null;
     const fields = snap.fields || GAMELOG_FIELDS;
     const samplesByPlayer = {};
+    const per30ByPlayer = {};
     const per36ByPlayer = {};
     const mpgByPlayer = {};
     const fpPerMinByPlayer = {};
@@ -143,12 +144,13 @@
         if (minSum > 0){
           const rate = fpSum / minSum;
           fpPerMinByPlayer[pid] = rate;
+          per30ByPlayer[pid] = rate * 30;
           per36ByPlayer[pid] = rate * 36;
           mpgByPlayer[pid] = minSum / scored.length;
         }
       }
     });
-    return {samplesByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer};
+    return {samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer};
   }
 
   /* Full-season FP/G from Sleeper season totals (matches Sleeper app averages). */
@@ -1490,6 +1492,7 @@
     let samplesByPlayer;
     let weeksFound = 0;
     let sampleSource = 'weekly';
+    let per30ByPlayer = {};
     let per36ByPlayer = {};
     let mpgByPlayer = {};
     let fpPerMinByPlayer = {};
@@ -1499,6 +1502,7 @@
         .then(r => r.ok ? r.json() : null)
         .catch(() => null);
       samplesByPlayer = boxPack.samplesByPlayer;
+      per30ByPlayer = boxPack.per30ByPlayer || {};
       per36ByPlayer = boxPack.per36ByPlayer || {};
       mpgByPlayer = boxPack.mpgByPlayer || {};
       fpPerMinByPlayer = boxPack.fpPerMinByPlayer || {};
@@ -1526,6 +1530,8 @@
     const seasonAvgByPid = seasonStats ? buildSeasonAvgMap(seasonStats, scoreSettings) : {};
     const distMap = buildDistMap(samplesByPlayer, useMarks, seasonAvgByPid);
     Object.keys(distMap).forEach(pid => {
+      const p30 = per30ByPlayer[pid];
+      if (p30 != null && Number.isFinite(p30)) distMap[pid].avgPer30 = p30;
       const p36 = per36ByPlayer[pid];
       if (p36 != null && Number.isFinite(p36)) distMap[pid].avgPer36 = p36;
       const mpg = mpgByPlayer[pid];
