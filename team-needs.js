@@ -553,7 +553,10 @@
   /* ---- Recent good NBA contracts (Spotrac FA snapshot) ---- */
   function normContractName(name){
     return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+      .replace(/[.\u2019']/g, '')
+      /* Sleeper often drops Jr/Sr/II/III (Wendell Carter vs Wendell Carter Jr.). */
+      .replace(/\b(jr|sr|ii|iii|iv)\b/g, '')
+      .replace(/[^a-z0-9]/g, '');
   }
 
   function contractsSnapshot(){
@@ -567,27 +570,25 @@
     const deals = Object.create(null);
     const salaries = Object.create(null);
     const buyouts = Object.create(null);
+    function indexRow(map, row, preferNewer){
+      if (!row) return;
+      const primary = normContractName(row.name) || row.key;
+      if (!primary) return;
+      const prev = map[primary];
+      if (!prev || (preferNewer && preferNewer(prev, row))) map[primary] = row;
+      /* Keep raw snapshot key as an alias when it differs (legacy jr keys). */
+      if (row.key && row.key !== primary && !map[row.key]) map[row.key] = map[primary];
+    }
     (snap.deals || []).forEach(d => {
-      if (!d) return;
-      const key = d.key || normContractName(d.name);
-      if (!key) return;
-      const prev = deals[key];
-      if (!prev || Number(d.faYear) > Number(prev.faYear)
-        || (Number(d.faYear) === Number(prev.faYear) && Number(d.aav) > Number(prev.aav))){
-        deals[key] = d;
-      }
+      indexRow(deals, d, (prev, next) =>
+        Number(next.faYear) > Number(prev.faYear)
+        || (Number(next.faYear) === Number(prev.faYear) && Number(next.aav) > Number(prev.aav)));
     });
     (snap.salaries || []).forEach(s => {
-      if (!s) return;
-      const key = s.key || normContractName(s.name);
-      if (key) salaries[key] = s;
+      indexRow(salaries, s, null);
     });
     (snap.buyouts || []).forEach(b => {
-      if (!b) return;
-      const key = b.key || normContractName(b.name);
-      if (!key) return;
-      const prev = buyouts[key];
-      if (!prev || Number(b.season) >= Number(prev.season || 0)) buyouts[key] = b;
+      indexRow(buyouts, b, (prev, next) => Number(next.season) >= Number(prev.season || 0));
     });
     snap._index = {deals, salaries, buyouts, snap};
     return snap._index;

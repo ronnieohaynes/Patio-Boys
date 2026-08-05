@@ -109,6 +109,8 @@ def norm_name(name: str) -> str:
     s = unicodedata.normalize("NFD", name or "").lower()
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     s = s.replace("'", "").replace(".", "").replace("’", "")
+    # Match TeamNeedsModel: Sleeper often omits Jr/Sr/II/III.
+    s = re.sub(r"\b(jr|sr|ii|iii|iv)\b", "", s)
     return re.sub(r"[^a-z0-9]", "", s)
 
 
