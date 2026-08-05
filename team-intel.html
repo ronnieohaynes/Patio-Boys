@@ -2368,7 +2368,8 @@ function scoreCutsForTeam(t, slots, opt){
     else if (hit30 != null && hitN >= DROP_HIT30_MIN_N && hit30 >= DROP_HIT30_FLOOR){
       cutScore -= Math.min(18, (hit30 - DROP_HIT30_FLOOR) * 35);
     }
-    /* Empty minutes — low FP/min means the role isn't producing. */
+    /* Empty minutes — low FP/min means the role isn't producing.
+       Soft floor 0.75: only bites once they're already drop fodder (off chart, etc.). */
     if (fpmDead && !starKeep) cutScore += 42;
     else if (fpmPoor && !starKeep) cutScore += 28;
     else if (fpmElite) cutScore -= 22;
