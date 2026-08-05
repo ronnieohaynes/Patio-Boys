@@ -407,8 +407,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-top8-lock';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-boxscores';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -1657,7 +1657,7 @@ async function load(){
     } else {
       status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
         + 'Trade value = Lock OVR × age × injury · ' + (lockPack.scored || 0)
-        + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' weeks).';
+        + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
     }
     onTeamChange();
     setMode('analyze');

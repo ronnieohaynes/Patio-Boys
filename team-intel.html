@@ -480,8 +480,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-top8-lock';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-boxscores';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -716,7 +716,8 @@ async function loadCeilings(){
     const primary = packs[0];
     const prior = packs[1];
     state.statsWeeksFound = primary.weeksFound;
-    if (!state.statsWeeksFound) throw new Error('No weekly stats available for ' + statsSeason);
+    state.sampleSource = primary.sampleSource || 'weekly';
+    if (!state.statsWeeksFound) throw new Error('No game samples available for ' + statsSeason);
     distMap = primary.distMap;
     state.priorLockInByPid = (prior && prior.weeksFound) ? prior.distMap : null;
     if (!state.priorLockInByPid) state.priorStatsSeason = null;
@@ -1069,8 +1070,8 @@ function renderLineup(t){
   ).join('');
   const rest = t.players.length - top.length;
   body.innerHTML = '<table class="lineup"><thead><tr><th>Pos</th><th>Name</th><th style="text-align:right">2K</th><th style="text-align:right">Ceil</th><th style="text-align:right">Age</th></tr></thead><tbody>' + rows + '</tbody></table>'
-    + '<p class="lineup-foot">Ceil = game mean + 1σ under league scoring (lock-in unit). Each Sleeper week sample is a single-game line from '
-    + escapeHtml(String(state.statsSeason)) + '.'
+    + '<p class="lineup-foot">Ceil = game mean + 1σ under league scoring (lock-in unit). Samples are full box scores from '
+    + escapeHtml(String(state.statsSeason)) + ' scored with your league settings.'
     + ' 2K = top-100 NBA 2K27 snapshot.'
     + (rest > 0 ? ' +' + rest + ' more on roster.' : '') + '</p>';
 }
@@ -1098,7 +1099,7 @@ function renderObservations(t){
     if (best) items.push('Highest lock-in ceiling on the roster: <strong>' + escapeHtml(playerName(best.pid)) + '</strong> at ' + best.ceil.toFixed(1) + ' per game.');
     statusTag.textContent = t.maxPts.toFixed(0) + ' / ' + bar + ' · ' + t.maxPtsGrade;
   } else {
-    items.push('Max Points grade is still computing from Sleeper game samples&hellip;');
+    items.push('Max Points grade is still computing from game samples&hellip;');
     statusTag.textContent = '';
   }
 
@@ -1514,10 +1515,10 @@ function renderLockIn(t){
     }).join('');
     const avgTitle = d.avgSource === 'season'
       ? ('Full-season FP/G over ' + d.seasonGp + ' games (Sleeper-aligned)'
-        + (d.sampleMean != null ? '; sample mean of N weeks was ' + Number(d.sampleMean).toFixed(1) : ''))
+        + (d.sampleMean != null ? '; sample mean of N games was ' + Number(d.sampleMean).toFixed(1) : ''))
       : d.projOnly
         ? 'Projection stub (no game samples yet)'
-        : ('Mean of ' + d.n + ' weekly game samples (season totals unavailable)');
+        : ('Mean of ' + d.n + ' game samples (season totals unavailable)');
     const w = (window.LockInDist && LockInDist.SMASH_WEIGHTS) || {avg:0.4, ceil:0.3, hit:0.3};
     const floor = (window.LockInDist && LockInDist.LOCK_OVR_FLOOR) || 50;
     const ceilO = (window.LockInDist && LockInDist.LOCK_OVR_CEIL) || 99;
@@ -1604,7 +1605,7 @@ function renderLockIn(t){
       + '<td class="num">' + sdTxt + '</td>'
       + '<td class="num">' + ceilTxt + '</td>'
       + hitCells
-      + '<td class="num" title="Weekly game samples used for σ and hit rates">' + d.n + '</td></tr>';
+      + '<td class="num" title="Box-score games used for σ and hit rates">' + d.n + '</td></tr>';
   }).join('');
 
   const note = basic
@@ -1637,7 +1638,7 @@ function renderLockIn(t){
       + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
       + 'Lock OVR applies ~45% of the same situation gap so offseason adds move dynasty value, not only Trade. '
       + '<strong>Avg / σ / Ceil / hits</strong> still describe '
-      + escapeHtml(String(state.statsSeason)) + ' only — hover OVR for the blend math. '
+      + escapeHtml(String(state.statsSeason)) + ' box scores only — hover OVR for the blend math. '
       + 'Showing all ' + show.length + ' rostered players'
       + (scored.length < show.length ? ' (' + (show.length - scored.length) + ' without dynasty samples yet)' : '')
       + '.</p>');

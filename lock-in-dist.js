@@ -1,12 +1,14 @@
 /* Lock-in distribution model for Patio Boys.
-   Sleeper's NBA "weekly" stats rows behave like single-game lines (~one sample
-   per fantasy week). Lock-in weeks sum 10 chosen game scores into starter spots,
-   so per-game μ / σ / hit-rates are the right unit — not weekly totals. */
+   Smash samples prefer full-season ESPN box scores (nba-gamelogs-snapshot.js),
+   scored live under league settings. Falls back to Sleeper fantasy-week rows
+   when the snapshot is missing a season. Lock-in weeks sum 10 chosen game
+   scores into starter spots, so per-game μ / σ / hit-rates are the unit. */
 (function(global){
   'use strict';
 
   const DEFAULT_MARKS = [30, 40, 50];
   const LOCK_SLOTS = 10;
+  const GAMELOG_FIELDS = ['pts', 'reb', 'oreb', 'ast', 'stl', 'blk', 'to', 'fgmi', 'ftmi', 'tpm'];
 
   /* Abramowitz & Stegun normal CDF (good enough for hit-rate display). */
   function normalCdf(z){
@@ -36,33 +38,48 @@
     return hits / arr.length;
   }
 
-  /* Score one Sleeper stats row under league settings.
-     Applies 40/50-pt bonuses and 3PM when Sleeper omits those derived fields.
+  /* Score one counting-stat row under league settings.
+     Applies 40/50-pt bonuses, 3PM, and dd/td when those derived fields are omitted.
      If the row includes gp (season totals), returns FP per game. */
   function scoreGame(obj, scoring){
     if (!obj || !scoring) return null;
+    const row = Object.assign({}, obj);
+
+    const pts = Number(row.pts);
+    const reb = Number(row.reb);
+    const ast = Number(row.ast);
+    const stl = Number(row.stl);
+    const blk = Number(row.blk);
+    if (scoring.dd != null && row.dd == null){
+      const cats = [pts, reb, ast, stl, blk].filter(v => Number.isFinite(v) && v >= 10).length;
+      if (cats >= 2) row.dd = 1;
+    }
+    if (scoring.td != null && row.td == null){
+      const cats = [pts, reb, ast, stl, blk].filter(v => Number.isFinite(v) && v >= 10).length;
+      if (cats >= 3) row.td = 1;
+    }
+
     const keys = Object.keys(scoring);
     let total = 0;
     let matched = 0;
     keys.forEach(k => {
-      if (obj[k] != null){
-        total += Number(obj[k]) * Number(scoring[k]);
+      if (row[k] != null){
+        total += Number(row[k]) * Number(scoring[k]);
         matched++;
       }
     });
 
-    const pts = Number(obj.pts);
-    if (scoring.bonus_pt_40p != null && obj.bonus_pt_40p == null && Number.isFinite(pts) && pts >= 40){
+    if (scoring.bonus_pt_40p != null && row.bonus_pt_40p == null && Number.isFinite(pts) && pts >= 40){
       total += Number(scoring.bonus_pt_40p);
       matched++;
     }
-    if (scoring.bonus_pt_50p != null && obj.bonus_pt_50p == null && Number.isFinite(pts) && pts >= 50){
+    if (scoring.bonus_pt_50p != null && row.bonus_pt_50p == null && Number.isFinite(pts) && pts >= 50){
       total += Number(scoring.bonus_pt_50p);
       matched++;
     }
-    if (scoring.tpm != null && obj.tpm == null){
-      let tpm = obj.fg3m;
-      if (tpm == null && obj.tpa != null && obj.tpmi != null) tpm = Number(obj.tpa) - Number(obj.tpmi);
+    if (scoring.tpm != null && row.tpm == null){
+      let tpm = row.fg3m;
+      if (tpm == null && row.tpa != null && row.tpmi != null) tpm = Number(row.tpa) - Number(row.tpmi);
       if (tpm != null){
         total += Number(tpm) * Number(scoring.tpm);
         matched++;
@@ -70,8 +87,49 @@
     }
 
     if (matched === 0) return null;
-    const gp = Number(obj.gp || obj.games_played || 0);
+    const gp = Number(row.gp || row.games_played || 0);
     return gp > 0 ? total / gp : total;
+  }
+
+  function gamelogSnapshot(){
+    return (typeof global !== 'undefined' && global.NBA_GAMELOGS) ||
+      (typeof window !== 'undefined' && window.NBA_GAMELOGS) ||
+      null;
+  }
+
+  /* Expand one compact box-score row ([pts,reb,...]) into a scoring object. */
+  function rowFromGamelogFields(row, fields){
+    const cols = fields && fields.length ? fields : GAMELOG_FIELDS;
+    if (!row || !row.length) return null;
+    const obj = {};
+    for (let i = 0; i < cols.length; i++){
+      if (row[i] == null) continue;
+      obj[cols[i]] = Number(row[i]);
+    }
+    return obj;
+  }
+
+  /* Score every ESPN box-score line for a Sleeper season year. */
+  function buildSamplesFromGamelogs(statsSeason, scoring){
+    const snap = gamelogSnapshot();
+    if (!snap || !snap.seasons) return null;
+    const seasonKey = String(statsSeason);
+    const byPid = snap.seasons[seasonKey];
+    if (!byPid) return null;
+    const fields = snap.fields || GAMELOG_FIELDS;
+    const out = {};
+    Object.keys(byPid).forEach(pid => {
+      const games = byPid[pid] || [];
+      const scored = [];
+      for (let i = 0; i < games.length; i++){
+        const obj = rowFromGamelogFields(games[i], fields);
+        const v = scoreGame(obj, scoring);
+        if (v == null || !Number.isFinite(v)) continue;
+        scored.push(v);
+      }
+      if (scored.length) out[pid] = scored;
+    });
+    return out;
   }
 
   /* Full-season FP/G from Sleeper season totals (matches Sleeper app averages). */
@@ -224,7 +282,7 @@
      Raw smash base = 0.40·Avg + 0.30·Ceil + 0.30·(40·P≥40 + 50·P≥50)
      Rookies: Y1 proj + early-career comps (peak floors haircut) or draft-rank
      bands (50/50), soft-capped until smash samples exist.
-     Thin vet samples (N < 5 weekly game lines) fall back to projected FP/G.
+     Thin vet samples (N < 5 game lines) fall back to projected FP/G.
      Lock OVR maps smash base → 50–99 on an ABSOLUTE curve (not pool
      percentile — percentile vs all NBA stuffed every roster guy into the 90s).
      Age / injury stay off OVR — those belong on Trade stars later. */
@@ -1395,31 +1453,58 @@
     return true;
   }
 
-  /* Fetch one season's smash dist map (season totals + weekly samples). */
+  /* Fetch one season's smash dist map (season totals + game samples).
+     Prefers ESPN box-score snapshot; falls back to Sleeper weekly rows. */
   async function loadSeasonDistMap(statsSeason, scoring, fetchImpl, marks){
     const fetchFn = fetchImpl || (typeof fetch === 'function' ? fetch : null);
     if (!statsSeason) throw new Error('statsSeason required');
     if (!fetchFn) throw new Error('fetch unavailable');
     const useMarks = marks && marks.length ? marks : DEFAULT_MARKS;
-    const weeks = Array.from({length: 25}, (_, i) => i + 1);
-    const [seasonStats, ...weeklyResults] = await Promise.all([
-      fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
+    const scoreSettings = scoring || {};
+
+    const boxSamples = buildSamplesFromGamelogs(String(statsSeason), scoreSettings);
+    const usingBox = !!(boxSamples && Object.keys(boxSamples).length);
+
+    let seasonStats = null;
+    let weeklyResults = [];
+    let samplesByPlayer;
+    let weeksFound = 0;
+    let sampleSource = 'weekly';
+
+    if (usingBox){
+      seasonStats = await fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
         .then(r => r.ok ? r.json() : null)
-        .catch(() => null),
-      ...weeks.map(w =>
-        fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+        .catch(() => null);
+      samplesByPlayer = boxSamples;
+      weeksFound = Object.keys(boxSamples).reduce((m, pid) => Math.max(m, boxSamples[pid].length), 0);
+      sampleSource = 'boxscore';
+    } else {
+      const weeks = Array.from({length: 25}, (_, i) => i + 1);
+      const pack = await Promise.all([
+        fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
           .then(r => r.ok ? r.json() : null)
-          .catch(() => null)
-      )
-    ]);
-    const weeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
-    const samplesByPlayer = buildSamplesByPlayer(weeklyResults, scoring || {});
-    const seasonAvgByPid = seasonStats ? buildSeasonAvgMap(seasonStats, scoring || {}) : {};
+          .catch(() => null),
+        ...weeks.map(w =>
+          fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+            .then(r => r.ok ? r.json() : null)
+            .catch(() => null)
+        )
+      ]);
+      seasonStats = pack[0];
+      weeklyResults = pack.slice(1);
+      weeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
+      samplesByPlayer = buildSamplesByPlayer(weeklyResults, scoreSettings);
+      sampleSource = 'weekly';
+    }
+
+    const seasonAvgByPid = seasonStats ? buildSeasonAvgMap(seasonStats, scoreSettings) : {};
     const distMap = buildDistMap(samplesByPlayer, useMarks, seasonAvgByPid);
     return {
       distMap,
       statsSeason: String(statsSeason),
       weeksFound,
+      sampleSource,
+      gamesFound: weeksFound,
       seasonAvgCount: Object.keys(seasonAvgByPid).length
     };
   }
@@ -1501,6 +1586,7 @@
       priorStatsSeason: priorDistMap ? priorSeason : null,
       weeksFound: primary.weeksFound,
       priorWeeksFound: priorPack ? priorPack.weeksFound : 0,
+      sampleSource: primary.sampleSource || 'weekly',
       scored,
       seasonAvgCount: primary.seasonAvgCount,
       rookieSeeded: [...rookieIds].filter(id => distMap[id] && distMap[id].projOnly).length
@@ -1571,6 +1657,9 @@
     scoreGame,
     buildSeasonAvgMap,
     buildSamplesByPlayer,
+    buildSamplesFromGamelogs,
+    rowFromGamelogFields,
+    gamelogSnapshot,
     playerDist,
     buildDistMap,
     expectedLocks,
