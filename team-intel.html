@@ -480,7 +480,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fa-proj0';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-crowded-fix';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1676,8 +1676,10 @@ function situationFields(lock){
 
 function isPathBlocked(rec){
   if (!rec) return false;
-  if (rec.situationKind === 'fa' || rec.situationKind === 'crowded') return true;
+  if (rec.situationKind === 'fa') return true;
   const sit = Number(rec.situationMult);
+  /* Mild crowding (e.g. Reaves ×0.915 on a stacked LAL) is a Trade haircut,
+     not “no path to value.” Only hard situation cuts demote off the chart. */
   return Number.isFinite(sit) && sit < SIT_PATH_BLOCKED;
 }
 

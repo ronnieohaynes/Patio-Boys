@@ -108,8 +108,8 @@
     const isRookie = !!(player && (player.isRookie || player.source === 'rookie' || y === 0));
     const sitMult = player && player.situationMult != null ? Number(player.situationMult) : null;
     const sitKind = player && player.situationKind ? String(player.situationKind) : '';
+    /* FA or hard situation cut (<0.90). Mild "crowded" labels alone are not blocked. */
     const pathBlocked = sitKind === 'fa'
-      || sitKind === 'crowded'
       || (Number.isFinite(sitMult) && sitMult < 0.90);
 
     if (!eligible){
