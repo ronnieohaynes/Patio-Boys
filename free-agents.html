@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-contractslide';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-depth-lock';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -320,12 +320,13 @@ const ADD_PROJ_EDGE = 0.5;
 const STRING_LABELS = ['1st string', '2nd string', '3rd string'];
 
 function depthRankValue(rec){
+  /* Depth / drop ranking by Lock OVR — 3rd-string fodder surfaces as drop targets. */
+  if (rec && rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr);
   if (rec && rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
-  if (rec && rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr) / 10;
   return -1;
 }
 
-/* Same exclusive 10-slot × 3-string chart as Team Intel, ranked by proj. */
+/* Same exclusive 10-slot × 3-string chart as Team Intel, ranked by Lock OVR. */
 function buildFaDepthChart(players, slots){
   if (!window.TeamNeedsModel || !slots || !slots.length) return null;
   const records = (players || []).filter(Boolean).map(p => Object.assign({}, p, {
@@ -1073,7 +1074,7 @@ async function load(){
     status.classList.remove('error');
     status.textContent = 'Add / pass with taxi stash (players with <'
       + ((state.taxiYears != null ? state.taxiYears : 2) + 1)
-      + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots) or drop target + depth-chart fit. '
+      + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots) or Lock-ranked drop target (usually 3rd string). '
       + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR / Trade \u2605'
       + (state.lockStatsSeason ? ' (' + state.lockStatsSeason + ' smash)' : '')
       + '.';

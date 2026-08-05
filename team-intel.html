@@ -324,7 +324,26 @@
     width:.9em;height:1em;line-height:1;font-size:1em;
     overflow:hidden;flex:0 0 auto;
   }
-  table.lockin .trade-stars .star.half{width:.45em}
+  .panel-head .view-toggle{
+    display:inline-flex;align-items:center;gap:0;margin-left:auto;
+    border:1px solid var(--hairline);border-radius:6px;overflow:hidden;
+    background:var(--surface-2);
+  }
+  .panel-head .view-toggle button{
+    appearance:none;border:0;background:transparent;color:var(--ink-dim);
+    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
+    letter-spacing:.06em;text-transform:uppercase;padding:5px 10px;cursor:pointer;
+  }
+  .panel-head .view-toggle button + button{border-left:1px solid var(--hairline)}
+  .panel-head .view-toggle button.active{
+    background:color-mix(in srgb, var(--gold) 18%, var(--surface-2));
+    color:var(--gold);
+  }
+  .panel-head .view-toggle button:hover{color:var(--ink)}
+  table.lockin td.role{
+    font-size:12.5px;line-height:1.4;color:#C9CDD8;max-width:340px;
+  }
+  table.lockin th.role{min-width:180px}
 
   #depthPanel{margin-top:16px}
   table.depth{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -411,7 +430,14 @@
     </div>
 
     <div class="panel" id="dynastyPanel">
-      <div class="panel-head"><h2>Dynasty Value</h2><span class="tag" id="lockInTag"></span></div>
+      <div class="panel-head">
+        <h2>Dynasty Value</h2>
+        <span class="tag" id="lockInTag"></span>
+        <div class="view-toggle" role="tablist" aria-label="Dynasty Value view">
+          <button type="button" id="lockViewBasic" class="active" data-view="basic" aria-selected="true">Basic</button>
+          <button type="button" id="lockViewAdv" data-view="adv" aria-selected="false">Adv stats</button>
+        </div>
+      </div>
       <div class="panel-body" id="lockInBody"><p class="pending">Building dynasty value curves&hellip;</p></div>
     </div>
 
@@ -445,7 +471,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-contractslide';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-role-basic';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -527,6 +553,7 @@ const state = {
   awardsReady: false,
   loadError: null,
   lockSort: {key: 'lockOvr', dir: 'desc'},
+  lockTableView: 'basic', // 'basic' | 'adv'
   freeAgents: null,     // [{id,name,positions,metric,age,yearsExp,lockOvr,tradeScore,tradeStars,...}]
   freeAgentsSettled: false,
   freeAgentsError: null,
@@ -1117,10 +1144,111 @@ function refreshLockValues(){
   return true;
 }
 
+function posRoleWord(slot){
+  const s = String(slot || '').toUpperCase();
+  if (s === 'PG') return 'point guard';
+  if (s === 'SG') return 'shooting guard';
+  if (s === 'SF') return 'wing';
+  if (s === 'PF') return 'power forward';
+  if (s === 'C') return 'center';
+  if (s === 'G') return 'guard';
+  if (s === 'F') return 'forward';
+  return s ? s.toLowerCase() : 'rotation piece';
+}
+
+function articleFor(word){
+  return /^[aeiou]/i.test(String(word || '')) ? 'an' : 'a';
+}
+
+/* Plain-English NBA role for the Basic dynasty table. */
+function nbaRoleSentence(pid, dist){
+  const p = (state.playerDb || {})[pid] || (state.playerDb || {})[String(pid)] || {};
+  const team = p.team || null;
+  const order = p.depth_chart_order != null ? Number(p.depth_chart_order) : null;
+  const slot = p.depth_chart_position
+    || ((p.fantasy_positions || [])[0])
+    || playerPos(pid);
+  const slotWord = posRoleWord(slot);
+  const injury = String(p.injury_status || '').toUpperCase();
+  const years = p.years_exp != null ? Number(p.years_exp) : null;
+  const ovr = dist && dist.lockOvr != null ? Number(dist.lockOvr) : null;
+  const tier = dist && dist.lockTier ? dist.lockTier : null;
+
+  if (injury === 'O' || injury === 'OUT'){
+    return team
+      ? ('Out for ' + team + ' — NBA role on pause.')
+      : 'Currently out — NBA role on pause.';
+  }
+  if (injury === 'IR' || injury === 'SUS'){
+    return team
+      ? ('On IR/suspension for ' + team + ' — not in the active mix.')
+      : 'On IR/suspension — not in the active mix.';
+  }
+
+  if (!team || p.status === 'FA' || p.status === 'Inactive'){
+    if (years === 0) return 'Rookie still waiting on a settled NBA roster role.';
+    return 'Free agent — no current NBA team role.';
+  }
+
+  if (injury === 'DTD'){
+    /* Keep going with role, but note availability. */
+  }
+
+  let core = '';
+  if (order === 1){
+    if (tier === 'mvp' || tier === 'superstar' || (ovr != null && ovr >= 90)){
+      core = 'Franchise centerpiece at ' + slot + ' for ' + team + '.';
+    } else if (tier === 'allstar' || (ovr != null && ovr >= 85)){
+      core = 'Featured starter at ' + slot + ' for ' + team + '.';
+    } else if (ovr != null && ovr >= 78){
+      core = 'Everyday starter at ' + slot + ' for ' + team + '.';
+    } else {
+      core = 'Listed as the starting ' + slotWord + ' for ' + team + '.';
+    }
+  } else if (order === 2){
+    if (ovr != null && ovr >= 78){
+      core = 'High-impact backup / sixth-man type at ' + slot + ' for ' + team + '.';
+    } else if (ovr != null && ovr >= 70){
+      core = 'Primary backup ' + slotWord + ' for ' + team + '.';
+    } else {
+      core = 'Second on the ' + slot + ' depth chart for ' + team + '.';
+    }
+  } else if (order === 3){
+    core = 'Rotation ' + slotWord + ' for ' + team + ' — third string on the depth chart.';
+  } else if (order != null && order >= 4){
+    core = 'Deep bench / situational minutes at ' + slot + ' for ' + team + '.';
+  } else if (years === 0){
+    core = 'Rookie on ' + team + ' — NBA role still taking shape.';
+  } else if (ovr != null && ovr >= 78){
+    core = 'Important piece for ' + team + ', though the depth chart listing is unclear.';
+  } else if (ovr != null && ovr >= 65){
+    core = 'On ' + team + '\'s roster as ' + articleFor(slotWord) + ' ' + slotWord + ' with an undefined depth role.';
+  } else {
+    core = 'End-of-roster / fringe piece for ' + team + '.';
+  }
+
+  if (injury === 'DTD'){
+    return core.replace(/\.$/, '') + ' (day-to-day).';
+  }
+  return core;
+}
+
+function syncLockViewToggle(){
+  const view = state.lockTableView === 'adv' ? 'adv' : 'basic';
+  [['lockViewBasic', 'basic'], ['lockViewAdv', 'adv']].forEach(([id, v]) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    const on = view === v;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+}
+
 function renderLockIn(t){
   const body = document.getElementById('lockInBody');
   const tag = document.getElementById('lockInTag');
   if (!body) return;
+  syncLockViewToggle();
   if (!state.lockInByPid){
     tag.textContent = '';
     body.innerHTML = '<p class="pending">' + (state.ceilingSettled
@@ -1133,6 +1261,7 @@ function renderLockIn(t){
 
   const marks = state.lockInMarks || [30, 40, 50];
   const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
+  const basic = state.lockTableView !== 'adv';
   const dists = t.players
     .map(pid => {
       const id = String(pid);
@@ -1154,9 +1283,10 @@ function renderLockIn(t){
   const avgFill = summary ? summary.sim.avgFill : {};
   const expected = summary ? summary.sim.expected : {};
 
-  tag.textContent = state.statsSeason + ' · Dynasty OVR 50–99 · ' + dists.length + ' players';
+  tag.textContent = state.statsSeason + ' · Dynasty OVR 50–99 · '
+    + (basic ? 'Basic' : 'Adv stats') + ' · ' + dists.length + ' players';
 
-  const fillHtml = '<div class="lock-fill">' + marks.map(m => {
+  const fillHtml = basic ? '' : ('<div class="lock-fill">' + marks.map(m => {
     const fill = avgFill[m];
     const exp = expected[m];
     const fillTxt = fill != null ? fill.toFixed(1) : '—';
@@ -1164,7 +1294,17 @@ function renderLockIn(t){
     return '<div class="lf"><div class="lf-mark">Locks ≥' + m + '</div>'
       + '<div class="lf-val">' + fillTxt + '<span style="font-size:14px;color:var(--ink-dim)">/' + slots + '</span></div>'
       + '<div class="lf-sub">Simulated top-' + slots + ' nights<br>Roster hit sum ' + expTxt + '</div></div>';
-  }).join('') + '</div>';
+  }).join('') + '</div>');
+
+  /* If user was sorting an Adv-only column, fall back for Basic. */
+  const advOnly = {stdev:1, ceiling:1, n:1};
+  marks.forEach(m => { advOnly['hit:' + m] = 1; });
+  if (basic && state.lockSort && advOnly[state.lockSort.key]){
+    state.lockSort = {key: 'lockOvr', dir: 'desc'};
+  }
+  if (!basic && state.lockSort && state.lockSort.key === 'role'){
+    state.lockSort = {key: 'lockOvr', dir: 'desc'};
+  }
 
   const show = dists.slice().sort((a, b) => {
     const sort = state.lockSort || {key: 'lockOvr', dir: 'desc'};
@@ -1178,6 +1318,7 @@ function renderLockIn(t){
       if (key === 'lockOvr') return d.lockOvr != null ? d.lockOvr : d.lockScore;
       if (key === 'tradeScore') return d.tradeScore != null ? d.tradeScore : d.tradeStars;
       if (key === 'mean') return d.mean;
+      if (key === 'role') return nbaRoleSentence(d.pid, d);
       if (key === 'stdev') return d.n ? d.stdev : null;
       if (key === 'ceiling') return d.ceiling;
       if (key === 'n') return d.n;
@@ -1202,23 +1343,40 @@ function renderLockIn(t){
   });
   const TS = window.TableSort;
   const sortState = state.lockSort || {key: 'lockOvr', dir: 'desc'};
-  const head = '<tr>'
-    + (TS ? TS.thHtml('Pos', 'pos', sortState) : '<th>Pos</th>')
-    + (TS ? TS.thHtml('Name', 'name', sortState) : '<th>Name</th>')
-    + (TS ? TS.thHtml('OVR', 'lockOvr', sortState) : '<th>OVR</th>')
-    + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
-    + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
-    + (TS ? TS.thHtml('\u03c3', 'stdev', sortState, 'num') : '<th class="num">\u03c3</th>')
-    + (TS ? TS.thHtml('Ceil', 'ceiling', sortState, 'num') : '<th class="num">Ceil</th>')
-    + marks.map(m => TS
-      ? TS.thHtml('\u2265' + m, 'hit:' + m, sortState, 'num')
-      : '<th class="num">\u2265' + m + '</th>').join('')
-    + (TS ? TS.thHtml('N', 'n', sortState, 'num') : '<th class="num">N</th>')
-    + '</tr>';
+
+  const head = basic
+    ? ('<tr>'
+      + (TS ? TS.thHtml('Pos', 'pos', sortState) : '<th>Pos</th>')
+      + (TS ? TS.thHtml('Name', 'name', sortState) : '<th>Name</th>')
+      + (TS ? TS.thHtml('OVR', 'lockOvr', sortState) : '<th>OVR</th>')
+      + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
+      + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
+      + (TS ? TS.thHtml('Role', 'role', sortState, 'role') : '<th class="role">Role</th>')
+      + '</tr>')
+    : ('<tr>'
+      + (TS ? TS.thHtml('Pos', 'pos', sortState) : '<th>Pos</th>')
+      + (TS ? TS.thHtml('Name', 'name', sortState) : '<th>Name</th>')
+      + (TS ? TS.thHtml('OVR', 'lockOvr', sortState) : '<th>OVR</th>')
+      + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
+      + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
+      + (TS ? TS.thHtml('\u03c3', 'stdev', sortState, 'num') : '<th class="num">\u03c3</th>')
+      + (TS ? TS.thHtml('Ceil', 'ceiling', sortState, 'num') : '<th class="num">Ceil</th>')
+      + marks.map(m => TS
+        ? TS.thHtml('\u2265' + m, 'hit:' + m, sortState, 'num')
+        : '<th class="num">\u2265' + m + '</th>').join('')
+      + (TS ? TS.thHtml('N', 'n', sortState, 'num') : '<th class="num">N</th>')
+      + '</tr>');
+
   const rows = show.map(d => {
+    const posCell = '<td class="pos">' + escapeHtml(playerPos(d.pid)) + '</td>';
+    const nameCell = '<td class="name">' + escapeHtml(playerName(d.pid)) + '</td>';
     if (d.missing){
-      return '<tr><td class="pos">' + escapeHtml(playerPos(d.pid)) + '</td>'
-        + '<td class="name">' + escapeHtml(playerName(d.pid)) + '</td>'
+      if (basic){
+        return '<tr>' + posCell + nameCell
+          + '<td class="num">—</td><td class="num">—</td><td class="num">—</td>'
+          + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d)) + '</td></tr>';
+      }
+      return '<tr>' + posCell + nameCell
         + '<td class="num">—</td><td class="num">—</td>'
         + '<td class="num">—</td><td class="num">—</td><td class="num">—</td>'
         + marks.map(() => '<td class="num">—</td>').join('')
@@ -1291,34 +1449,47 @@ function renderLockIn(t){
         + '<span class="tier-sub">' + escapeHtml(d.lockAgeBand || '') + '</span></td>')
       : '<td class="num">—</td>';
     const avgTxt = d.mean != null && Number.isFinite(d.mean) ? d.mean.toFixed(1) : '—';
+    const avgCell = '<td class="num" title="' + escapeHtml(avgTitle) + '">' + avgTxt + '</td>';
+
+    if (basic){
+      return '<tr>' + posCell + nameCell + lockCell + tradeCell + avgCell
+        + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d)) + '</td></tr>';
+    }
+
     const sdTxt = d.n ? d.stdev.toFixed(1) : '—';
     const ceilTxt = d.ceiling != null && Number.isFinite(d.ceiling) ? d.ceiling.toFixed(1) : '—';
-    return '<tr><td class="pos">' + escapeHtml(playerPos(d.pid)) + '</td>'
-      + '<td class="name">' + escapeHtml(playerName(d.pid)) + '</td>'
+    return '<tr>' + posCell + nameCell
       + lockCell
       + tradeCell
-      + '<td class="num" title="' + escapeHtml(avgTitle) + '">' + avgTxt + '</td>'
+      + avgCell
       + '<td class="num">' + sdTxt + '</td>'
       + '<td class="num">' + ceilTxt + '</td>'
       + hitCells
       + '<td class="num" title="Weekly game samples used for σ and hit rates">' + d.n + '</td></tr>';
   }).join('');
 
-  const note = '<p class="lineup-foot"><strong>Lock OVR</strong> is smash production only (50–99, absolute curve). '
-    + '<strong>Trade ★</strong> = OVR × age × injury'
-    + ' (young 1.12 +1 · prime 1.04 · decline 0.80), then '
-    + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
-    + 'Same OVR can be a haul or a discount depending on age. '
-    + 'Rookies use Y1 proj + early-career comps (peak ESPN floors haircut) or draft-rank bands, '
-    + 'capped at Lock ' + ((window.LockInDist && LockInDist.ROOKIE_LOCK_OVR_CAP) || 82)
-    + ' until they have smash samples. Thin vets (N&lt;'
-    + ((window.LockInDist && LockInDist.MIN_SAMPLES_FOR_SMASH) || 5)
-    + ') fall back to projected FP/G. '
-    + '<strong>Avg</strong> is full-season FP/G from ' + escapeHtml(String(state.statsSeason)) + '. '
-    + 'Hover OVR or Trade for the math. '
-    + 'Showing all ' + show.length + ' rostered players'
-    + (scored.length < show.length ? ' (' + (show.length - scored.length) + ' without dynasty samples yet)' : '')
-    + '.</p>';
+  const note = basic
+    ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Trade ★, season Avg, and an NBA '
+      + '<strong>Role</strong> line from Sleeper depth chart + production tier. '
+      + 'Switch to <strong>Adv stats</strong> for σ, ceiling, smash rates, and sample size. '
+      + 'Showing all ' + show.length + ' rostered players'
+      + (scored.length < show.length ? ' (' + (show.length - scored.length) + ' without dynasty samples yet)' : '')
+      + '.</p>')
+    : ('<p class="lineup-foot"><strong>Lock OVR</strong> is smash production only (50–99, absolute curve). '
+      + '<strong>Trade ★</strong> = OVR × age × injury'
+      + ' (young 1.12 +1 · prime 1.04 · decline 0.80), then '
+      + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
+      + 'Same OVR can be a haul or a discount depending on age. '
+      + 'Rookies use Y1 proj + early-career comps (peak ESPN floors haircut) or draft-rank bands, '
+      + 'capped at Lock ' + ((window.LockInDist && LockInDist.ROOKIE_LOCK_OVR_CAP) || 82)
+      + ' until they have smash samples. Thin vets (N&lt;'
+      + ((window.LockInDist && LockInDist.MIN_SAMPLES_FOR_SMASH) || 5)
+      + ') fall back to projected FP/G. '
+      + '<strong>Avg</strong> is full-season FP/G from ' + escapeHtml(String(state.statsSeason)) + '. '
+      + 'Hover OVR or Trade for the math. '
+      + 'Showing all ' + show.length + ' rostered players'
+      + (scored.length < show.length ? ' (' + (show.length - scored.length) + ' without dynasty samples yet)' : '')
+      + '.</p>');
 
   body.innerHTML = fillHtml
     + '<table class="lockin"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table>'
@@ -1332,24 +1503,24 @@ function renderLockIn(t){
 }
 
 function depthRankValue(rec){
-  /* Depth chart ranks by projected FP/G (same metric as Team Needs). */
+  /* Depth chart ranks by Lock OVR so 3rd-string / drop fodder stands out. */
+  if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr);
   if (rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
-  if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr) / 10;
   return -1;
 }
 
 function depthCellHtml(player){
   if (!player) return '<td class="slot-empty">—</td>';
-  const proj = player.metric != null && Number.isFinite(Number(player.metric))
-    ? '<span class="slot-ovr">' + Number(player.metric).toFixed(1) + '</span><span> proj</span>'
-    : '';
   const stars = (window.LockInDist && LockInDist.formatStarsHtml && player.tradeStars != null)
     ? LockInDist.formatStarsHtml(player.tradeStars, {className: 'trade-stars'})
     : '';
   const ovr = player.lockOvr != null
-    ? '<span>Lock ' + Math.round(player.lockOvr) + '</span>' + stars
+    ? '<span class="slot-ovr">' + Math.round(player.lockOvr) + '</span>' + stars
     : '';
-  const meta = [proj, ovr].filter(Boolean).join('<span style="opacity:.35"> · </span>');
+  const proj = player.metric != null && Number.isFinite(Number(player.metric))
+    ? '<span>' + Number(player.metric).toFixed(1) + ' proj</span>'
+    : '';
+  const meta = [ovr, proj].filter(Boolean).join('<span style="opacity:.35"> · </span>');
   return '<td><span class="slot-name">' + escapeHtml(player.name) + '</span>'
     + (meta ? '<span class="slot-meta">' + meta + '</span>' : '')
     + '</td>';
@@ -1445,7 +1616,7 @@ function renderDepthChart(t){
     return;
   }
 
-  tag.textContent = pack.slots.length + ' slots · 1st–3rd string · proj';
+  tag.textContent = pack.slots.length + ' slots · 1st–3rd string · Lock OVR';
   const head = '<tr><th>Pos</th><th>1st string</th><th>2nd string</th><th>3rd string</th></tr>';
   const rowHtml = pack.rows.map(row => {
     return '<tr><td class="pos">' + escapeHtml(row.label) + '</td>'
@@ -1458,8 +1629,8 @@ function renderDepthChart(t){
   body.innerHTML = '<table class="depth"><thead>' + head + '</thead><tbody>' + rowHtml + '</tbody></table>'
     + '<p class="lineup-foot">Same ' + pack.slots.length + ' starting slots as Team Needs ('
     + escapeHtml(pack.slots.join(', '))
-    + '). Exclusive depth — scarcest slot first — ranked by <strong>projected FP/G</strong> '
-    + '(same metric as Team Needs). Each player appears once, up to 3rd string.</p>';
+    + '). Exclusive depth — scarcest slot first — ranked by <strong>Lock OVR</strong> '
+    + '(projection fallback). 3rd string is the usual drop pool. Each player appears once.</p>';
 }
 
 function needsPlayerRecord(pid){
@@ -2113,6 +2284,17 @@ async function loadAwards(){
 }
 
 (async () => {
+  document.querySelectorAll('#dynastyPanel .view-toggle button[data-view]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const view = btn.getAttribute('data-view') === 'adv' ? 'adv' : 'basic';
+      if (state.lockTableView === view) return;
+      state.lockTableView = view;
+      syncLockViewToggle();
+      const t = state.teamsByKey[state.selected];
+      if (t) renderLockIn(t);
+    });
+  });
+
   try {
     await loadCore();
     setLoadNote('Loaded ' + state.teams.length + ' franchises from "' + (state.league.name || 'Sleeper league') + '" · season ' + state.league.season + '. Pulling stats, players, and trades…');
