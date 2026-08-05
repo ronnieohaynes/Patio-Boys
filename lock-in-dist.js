@@ -618,27 +618,42 @@
     if (!key) return {mult: 1, why: '', profile: null};
     const salary = (snap.salaries || []).find(s => (s.key || normContractName(s.name)) === key);
     const buyout = (snap.buyouts || []).find(b => (b.key || normContractName(b.name)) === key);
+    const deal = (snap.deals || []).find(d => (d.key || normContractName(d.name)) === key);
     const asOf = snap.asOfYear != null ? Number(snap.asOfYear) : new Date().getUTCFullYear();
     const buyoutFresh = !!(buyout && (asOf - Number(buyout.season || 0)) <= 2);
-    const tier = salary && salary.tier;
+    const annual = (salary && salary.y1 != null) ? Number(salary.y1)
+      : (deal && deal.aav != null ? Number(deal.aav) : null);
+    /* Mirror TeamNeedsModel.contractSalaryMult log slider if model isn't loaded. */
     let mult = 1;
-    let why = '';
-    if (buyoutFresh){
-      mult = 0.90;
-      why = 'Buyout/waive ' + buyout.season;
-    } else if (tier === 'large'){
-      mult = 1.045;
-      why = 'Large NBA deal';
-    } else if (tier === 'mid'){
-      mult = 1.02;
-      why = 'Mid NBA deal';
-    } else if (tier === 'min'){
-      if (ovr != null && ovr >= 78) mult = 0.99;
-      else if (ovr != null && ovr >= 70) mult = 0.965;
-      else mult = 0.93;
-      why = 'Min deal — short leash';
+    if (Number.isFinite(annual) && annual > 0){
+      const loSal = 2.5e6, midSal = 10e6, hiSal = 45e6;
+      const loMult = 0.92, midMult = 1.0, hiMult = 1.065;
+      const s = Math.max(1e5, annual);
+      const clamp01 = x => Math.max(0, Math.min(1, x));
+      const lerp = (a, b, t) => a + (b - a) * t;
+      if (s <= midSal){
+        const t = clamp01((Math.log(s) - Math.log(loSal)) / (Math.log(midSal) - Math.log(loSal)));
+        mult = lerp(loMult, midMult, t);
+      } else {
+        const t = clamp01((Math.log(s) - Math.log(midSal)) / (Math.log(hiSal) - Math.log(midSal)));
+        mult = lerp(midMult, hiMult, t);
+      }
+      if (mult < 1 && ovr != null && Number.isFinite(Number(ovr))){
+        const prod = clamp01((Number(ovr) - 60) / 25);
+        mult = lerp(mult, 1, prod * 0.7);
+      }
+      mult = Math.round(mult * 1000) / 1000;
     }
-    return {mult, why, profile: salary || buyout || null};
+    let why = '';
+    if (Number.isFinite(annual) && annual > 0){
+      why = '$' + (annual >= 1e6 ? (annual / 1e6).toFixed(annual >= 10e6 ? 0 : 1) + 'M' : Math.round(annual))
+        + '/yr slider ×' + mult.toFixed(3);
+    }
+    if (buyoutFresh){
+      mult = Math.round(mult * 0.90 * 1000) / 1000;
+      why = (why ? why + ' · ' : '') + 'Buyout/waive ' + buyout.season;
+    }
+    return {mult, why, profile: salary || buyout || deal || null};
   }
 
   /* tradeScore = LockOVR × age × injury × contract (+1 young bump). */

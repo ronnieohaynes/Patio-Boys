@@ -620,10 +620,68 @@
   }
 
   /*
-   * Contract profile for Trade ★:
-   *  - large deals boost (earned / someone is paying)
-   *  - true minimums get a short-leash haircut when production is soft
-   *  - buyouts are a real negative signal
+   * Continuous Trade ★ contract slider from annual salary.
+   * Near-min → short leash (sub-1.0). MLE-ish → neutral. Max-ish → paid bump.
+   * Soften the low-end haircut when Lock shows they're actually producing.
+   */
+  const CONTRACT_SLIDER = {
+    loSal: 2.5e6,
+    midSal: 10e6,
+    hiSal: 45e6,
+    loMult: 0.92,
+    midMult: 1.0,
+    hiMult: 1.065
+  };
+
+  function clamp01(x){
+    const n = Number(x);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(1, n));
+  }
+
+  function lerp(a, b, t){
+    return a + (b - a) * t;
+  }
+
+  function contractSalaryMult(salary, opts){
+    const options = opts || {};
+    const y1 = Number(salary);
+    if (!Number.isFinite(y1) || y1 <= 0) return 1;
+    const cfg = CONTRACT_SLIDER;
+    const s = Math.max(1e5, y1);
+    let mult;
+    if (s <= cfg.midSal){
+      const t = clamp01(
+        (Math.log(s) - Math.log(cfg.loSal)) / (Math.log(cfg.midSal) - Math.log(cfg.loSal))
+      );
+      mult = lerp(cfg.loMult, cfg.midMult, t);
+    } else {
+      const t = clamp01(
+        (Math.log(s) - Math.log(cfg.midSal)) / (Math.log(cfg.hiSal) - Math.log(cfg.midSal))
+      );
+      mult = lerp(cfg.midMult, cfg.hiMult, t);
+    }
+    /* Producing on a short leash → don't punish as hard. */
+    const ovr = options.lockOvr != null ? Number(options.lockOvr) : null;
+    if (mult < 1 && Number.isFinite(ovr)){
+      const prod = clamp01((ovr - 60) / 25);
+      mult = lerp(mult, 1, prod * 0.7);
+    }
+    return Math.round(mult * 1000) / 1000;
+  }
+
+  function contractAnnualSalary(salaryRow, recentDeal){
+    if (salaryRow && salaryRow.y1 != null && Number.isFinite(Number(salaryRow.y1))){
+      return Number(salaryRow.y1);
+    }
+    if (recentDeal && recentDeal.aav != null && Number.isFinite(Number(recentDeal.aav))){
+      return Number(recentDeal.aav);
+    }
+    return null;
+  }
+
+  /*
+   * Contract profile for Trade ★ — continuous salary slider, plus buyout ding.
    */
   function contractProfile(playerOrName, opts){
     const options = opts || {};
@@ -647,39 +705,35 @@
     const buyoutFresh = !!(buyout && Number.isFinite(Number(buyout.season))
       && (asOf - Number(buyout.season)) <= buyoutYears);
 
+    const annual = contractAnnualSalary(salary, recent);
     const tier = salary && salary.tier ? salary.tier : null;
-    let tradeMult = 1;
+    let tradeMult = annual != null ? contractSalaryMult(annual, {lockOvr: ovr}) : 1;
     const bits = [];
 
-    if (buyoutFresh){
-      tradeMult *= 0.90;
-      bits.push('Buyout/waive ' + buyout.season
-        + (buyout.status === 'unsigned' ? ' (still unsigned)' : ''));
-    } else if (tier === 'large'){
-      tradeMult *= 1.045;
-      bits.push('Large deal ' + fmtMoneyShort(salary.y1) + '/yr — paid production');
-    } else if (tier === 'mid' || recent){
-      tradeMult *= 1.02;
-      bits.push(recent
-        ? ('Recent paid deal (' + recent.why + ')')
-        : ('Mid deal ' + fmtMoneyShort(salary.y1) + '/yr'));
-    } else if (tier === 'min'){
-      /* Short leash: harsher when they aren't producing. */
-      if (ovr != null && ovr >= 78) tradeMult *= 0.99;
-      else if (ovr != null && ovr >= 70) tradeMult *= 0.965;
-      else tradeMult *= 0.93;
-      bits.push('Min deal ' + fmtMoneyShort(salary.y1) + '/yr — short leash');
+    if (annual != null){
+      const dir = tradeMult >= 1.01 ? 'paid confidence'
+        : (tradeMult <= 0.98 ? 'short leash' : 'neutral');
+      bits.push(fmtMoneyShort(annual) + '/yr slider ×' + tradeMult.toFixed(3)
+        + (dir !== 'neutral' ? ' · ' + dir : ''));
     }
 
-    if (tradeMult === 1 && !tier && !buyoutFresh && !recent) return null;
+    if (buyoutFresh){
+      /* Buyout is its own signal — team walked away from the money. */
+      tradeMult = Math.round(tradeMult * 0.90 * 1000) / 1000;
+      bits.push('Buyout/waive ' + buyout.season
+        + (buyout.status === 'unsigned' ? ' (still unsigned)' : ''));
+    }
+
+    if (tradeMult === 1 && annual == null && !buyoutFresh) return null;
     return {
       key,
       tier,
-      y1: salary ? salary.y1 : null,
+      y1: annual,
       yearsLeft: salary ? salary.yearsLeft : null,
       buyout: buyoutFresh ? buyout : null,
       recentDeal: recent,
       tradeMult,
+      slider: annual != null,
       why: bits.join(' · ') || (tier ? ('Contract tier: ' + tier) : '')
     };
   }
@@ -692,10 +746,12 @@
   global.TeamNeedsModel = {
     CORE, NON_STARTING, NON_REGULAR, DEFAULT_TAXI_YEARS,
     TAXI_ROSTER_OVR, TAXI_DEV_SOFT_CAP, TAXI_DEV_IDEAL, TAXI_DEV_HORIZON,
+    CONTRACT_SLIDER,
     parseSlots, regularCap, taxiEligible, splitRoster,
     inferLockOvr, taxiGrowthPerSeason, taxiDevEval,
     countTaxiDevStashes, taxiDevCapacity,
-    recentGoodContract, contractProfile, contractTradeMult, contractsSnapshot,
+    recentGoodContract, contractSalaryMult, contractProfile, contractTradeMult,
+    contractsSnapshot,
     positions, eligibleForSlot, slotTier, optimize, candidateGain,
     ageBand, agePressure, youthUpgradeBonus, AGE_BAND_ORDER
   };
