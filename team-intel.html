@@ -1615,7 +1615,7 @@ function depthCellHtml(player, opts){
     ? '<span>' + Number(player.metric).toFixed(1) + ' proj</span>'
     : '';
   const meta = [ovr, proj].filter(Boolean).join('<span style="opacity:.35"> · </span>');
-  return '<td class="' + (options.taxi ? 'slot-taxi' : '') + '">'
+  return '<td' + (options.taxi ? ' class="slot-taxi"' : '') + '>'
     + '<span class="slot-name">' + escapeHtml(player.name) + '</span>'
     + (meta ? '<span class="slot-meta">' + meta + '</span>' : '')
     + '</td>';
