@@ -743,6 +743,69 @@
     return profile && profile.tradeMult != null ? profile.tradeMult : 1;
   }
 
+  /* Years remaining + total $ for Basic Dynasty “4yr / 188.4M” cells. */
+  function contractTerms(playerOrName, opts){
+    const options = opts || {};
+    const idx = contractsIndex();
+    if (!idx) return null;
+    const name = (playerOrName && typeof playerOrName === 'object')
+      ? (playerOrName.name || playerOrName.full_name || playerOrName.fullName || '')
+      : playerOrName;
+    const key = normContractName(name);
+    if (!key) return null;
+    const salary = idx.salaries[key] || null;
+    const recent = recentGoodContract(name, options);
+    const deal = (idx.deals && idx.deals[key]) || (recent && recent.deal) || null;
+    const years = salary && salary.yearsLeft != null && Number.isFinite(Number(salary.yearsLeft))
+      ? Number(salary.yearsLeft)
+      : (deal && deal.years != null && Number.isFinite(Number(deal.years)) ? Number(deal.years) : null);
+    let total = null;
+    if (salary && salary.guaranteed != null && Number.isFinite(Number(salary.guaranteed))
+      && Number(salary.guaranteed) > 0){
+      total = Number(salary.guaranteed);
+    } else if (years != null && salary && salary.y1 != null && Number.isFinite(Number(salary.y1))){
+      total = years * Number(salary.y1);
+    } else if (deal && deal.total != null && Number.isFinite(Number(deal.total))){
+      total = Number(deal.total);
+    }
+    const y1 = contractAnnualSalary(salary, recent || (deal ? {aav: deal.aav} : null));
+    if (years == null && total == null && y1 == null) return null;
+    return {
+      key,
+      years,
+      total,
+      y1,
+      team: salary && salary.team ? salary.team : null,
+      source: (salary && salary.source) || (deal && deal.source) || null
+    };
+  }
+
+  /* Round dollars to the hundred-thousand → "188.4M". */
+  function formatContractMillions(dollars){
+    const n = Number(dollars);
+    if (!Number.isFinite(n) || n < 0) return null;
+    const m = Math.round(n / 1e5) / 10;
+    return m.toFixed(1) + 'M';
+  }
+
+  function formatContractTerms(playerOrName, opts){
+    const terms = contractTerms(playerOrName, opts);
+    if (!terms) return null;
+    const mil = terms.total != null ? formatContractMillions(terms.total) : null;
+    if (terms.years != null && mil){
+      return {
+        terms,
+        label: terms.years + 'yr / ' + mil,
+        sortValue: terms.total
+      };
+    }
+    if (mil) return {terms, label: mil, sortValue: terms.total};
+    if (terms.years != null){
+      return {terms, label: terms.years + 'yr', sortValue: terms.years};
+    }
+    return null;
+  }
+
   global.TeamNeedsModel = {
     CORE, NON_STARTING, NON_REGULAR, DEFAULT_TAXI_YEARS,
     TAXI_ROSTER_OVR, TAXI_DEV_SOFT_CAP, TAXI_DEV_IDEAL, TAXI_DEV_HORIZON,
@@ -751,6 +814,7 @@
     inferLockOvr, taxiGrowthPerSeason, taxiDevEval,
     countTaxiDevStashes, taxiDevCapacity,
     recentGoodContract, contractSalaryMult, contractProfile, contractTradeMult,
+    contractTerms, formatContractMillions, formatContractTerms,
     contractsSnapshot,
     positions, eligibleForSlot, slotTier, optimize, candidateGain,
     ageBand, agePressure, youthUpgradeBonus, AGE_BAND_ORDER

@@ -344,6 +344,9 @@
     font-size:12.5px;line-height:1.4;color:#C9CDD8;max-width:340px;
   }
   table.lockin th.role{min-width:180px}
+  table.lockin td.contract{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;white-space:nowrap;color:#C9CDD8;
+  }
 
   #depthPanel{margin-top:16px}
   table.depth{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -471,7 +474,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-protect-stars';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-depth-contract';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1160,11 +1163,55 @@ function articleFor(word){
   return /^[aeiou]/i.test(String(word || '')) ? 'an' : 'a';
 }
 
+/*
+ * Sleeper sometimes stamps two rostered teammates as the same depth_chart_order
+ * (e.g. Tatum + Paul George both BOS PF #1). Within one fantasy roster, break
+ * ties by Lock OVR so Role never lists two players at the identical NBA spot.
+ */
+function buildEffectiveNbaDepthOrders(pids, distByPid){
+  const groups = new Map();
+  (pids || []).forEach(pid => {
+    const id = String(pid);
+    const p = (state.playerDb || {})[id] || (state.playerDb || {})[pid] || {};
+    const team = p.team || null;
+    if (!team || p.status === 'FA' || p.status === 'Inactive') return;
+    const slot = p.depth_chart_position
+      || ((p.fantasy_positions || [])[0])
+      || null;
+    if (!slot) return;
+    const key = String(team).toUpperCase() + '|' + String(slot).toUpperCase();
+    if (!groups.has(key)) groups.set(key, []);
+    const dist = distByPid && (distByPid[id] || distByPid[pid]);
+    const lockOvr = dist && dist.lockOvr != null ? Number(dist.lockOvr) : null;
+    const order = p.depth_chart_order != null ? Number(p.depth_chart_order) : null;
+    groups.get(key).push({id, order, lockOvr});
+  });
+  const effective = Object.create(null);
+  groups.forEach(list => {
+    list.sort((a, b) => {
+      const ao = Number.isFinite(a.order) ? a.order : 999;
+      const bo = Number.isFinite(b.order) ? b.order : 999;
+      if (ao !== bo) return ao - bo;
+      const al = Number.isFinite(a.lockOvr) ? a.lockOvr : -1;
+      const bl = Number.isFinite(b.lockOvr) ? b.lockOvr : -1;
+      if (bl !== al) return bl - al;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    list.forEach((row, i) => {
+      effective[row.id] = i + 1;
+    });
+  });
+  return effective;
+}
+
 /* Plain-English NBA role for the Basic dynasty table. */
-function nbaRoleSentence(pid, dist){
+function nbaRoleSentence(pid, dist, effectiveOrder){
   const p = (state.playerDb || {})[pid] || (state.playerDb || {})[String(pid)] || {};
   const team = p.team || null;
-  const order = p.depth_chart_order != null ? Number(p.depth_chart_order) : null;
+  const rawOrder = p.depth_chart_order != null ? Number(p.depth_chart_order) : null;
+  const order = effectiveOrder != null && Number.isFinite(Number(effectiveOrder))
+    ? Number(effectiveOrder)
+    : rawOrder;
   const slot = p.depth_chart_position
     || ((p.fantasy_positions || [])[0])
     || playerPos(pid);
@@ -1302,9 +1349,13 @@ function renderLockIn(t){
   if (basic && state.lockSort && advOnly[state.lockSort.key]){
     state.lockSort = {key: 'lockOvr', dir: 'desc'};
   }
-  if (!basic && state.lockSort && state.lockSort.key === 'role'){
+  if (!basic && state.lockSort && (state.lockSort.key === 'role' || state.lockSort.key === 'contract')){
     state.lockSort = {key: 'lockOvr', dir: 'desc'};
   }
+
+  const roleOrders = basic
+    ? buildEffectiveNbaDepthOrders(t.players || [], state.lockInByPid)
+    : null;
 
   const show = dists.slice().sort((a, b) => {
     const sort = state.lockSort || {key: 'lockOvr', dir: 'desc'};
@@ -1318,7 +1369,14 @@ function renderLockIn(t){
       if (key === 'lockOvr') return d.lockOvr != null ? d.lockOvr : d.lockScore;
       if (key === 'tradeScore') return d.tradeScore != null ? d.tradeScore : d.tradeStars;
       if (key === 'mean') return d.mean;
-      if (key === 'role') return nbaRoleSentence(d.pid, d);
+      if (key === 'role'){
+        const eff = roleOrders ? roleOrders[String(d.pid)] : null;
+        return nbaRoleSentence(d.pid, d, eff);
+      }
+      if (key === 'contract'){
+        const c = playerContractDisplay(d.pid);
+        return c && c.sortValue != null ? c.sortValue : null;
+      }
       if (key === 'stdev') return d.n ? d.stdev : null;
       if (key === 'ceiling') return d.ceiling;
       if (key === 'n') return d.n;
@@ -1351,6 +1409,7 @@ function renderLockIn(t){
       + (TS ? TS.thHtml('OVR', 'lockOvr', sortState) : '<th>OVR</th>')
       + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
       + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
+      + (TS ? TS.thHtml('Contract', 'contract', sortState, 'num') : '<th class="num">Contract</th>')
       + (TS ? TS.thHtml('Role', 'role', sortState, 'role') : '<th class="role">Role</th>')
       + '</tr>')
     : ('<tr>'
@@ -1370,11 +1429,13 @@ function renderLockIn(t){
   const rows = show.map(d => {
     const posCell = '<td class="pos">' + escapeHtml(playerPos(d.pid)) + '</td>';
     const nameCell = '<td class="name">' + escapeHtml(playerName(d.pid)) + '</td>';
+    const effOrder = roleOrders ? roleOrders[String(d.pid)] : null;
     if (d.missing){
       if (basic){
         return '<tr>' + posCell + nameCell
           + '<td class="num">—</td><td class="num">—</td><td class="num">—</td>'
-          + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d)) + '</td></tr>';
+          + contractCellHtml(d.pid)
+          + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d, effOrder)) + '</td></tr>';
       }
       return '<tr>' + posCell + nameCell
         + '<td class="num">—</td><td class="num">—</td>'
@@ -1453,7 +1514,8 @@ function renderLockIn(t){
 
     if (basic){
       return '<tr>' + posCell + nameCell + lockCell + tradeCell + avgCell
-        + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d)) + '</td></tr>';
+        + contractCellHtml(d.pid)
+        + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d, effOrder)) + '</td></tr>';
     }
 
     const sdTxt = d.n ? d.stdev.toFixed(1) : '—';
@@ -1469,8 +1531,11 @@ function renderLockIn(t){
   }).join('');
 
   const note = basic
-    ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Trade ★, season Avg, and an NBA '
+    ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Trade ★, season Avg, NBA '
+      + '<strong>Contract</strong> (years left / remaining total, nearest $0.1M), and an NBA '
       + '<strong>Role</strong> line from Sleeper depth chart + production tier. '
+      + 'When two rostered teammates share the same Sleeper depth stamp, Role ranks them by Lock OVR '
+      + 'so they are not both listed at the same spot. '
       + 'Switch to <strong>Adv stats</strong> for σ, ceiling, smash rates, and sample size. '
       + 'Showing all ' + show.length + ' rostered players'
       + (scored.length < show.length ? ' (' + (show.length - scored.length) + ' without dynasty samples yet)' : '')
@@ -1500,6 +1565,25 @@ function renderLockIn(t){
       renderLockIn(state.teamsByKey[state.selected] || t);
     });
   }
+}
+
+function playerContractDisplay(pid){
+  if (!window.TeamNeedsModel || typeof TeamNeedsModel.formatContractTerms !== 'function') return null;
+  return TeamNeedsModel.formatContractTerms(playerName(pid));
+}
+
+function contractCellHtml(pid){
+  const c = playerContractDisplay(pid);
+  if (!c || !c.label) return '<td class="num">—</td>';
+  const t = c.terms || {};
+  const title = [
+    t.years != null ? (t.years + ' year' + (t.years === 1 ? '' : 's') + ' left') : null,
+    t.total != null ? ('$' + Math.round(t.total).toLocaleString('en-US') + ' remaining') : null,
+    t.y1 != null ? ('$' + Math.round(t.y1).toLocaleString('en-US') + '/yr') : null,
+    t.team ? t.team : null
+  ].filter(Boolean).join(' · ');
+  return '<td class="num contract" title="' + escapeHtml(title) + '">'
+    + escapeHtml(c.label) + '</td>';
 }
 
 function depthRankValue(rec){
@@ -1532,19 +1616,26 @@ function buildDepthChart(team){
   const slots = TeamNeedsModel.parseSlots(state.league.roster_positions || []);
   if (!slots.length) return null;
 
-  const records = (team.players || []).map(pid => {
-    const rec = needsPlayerRecord(pid);
+  /* One row per player id — Sleeper can list taxi/IR ids in players[] already. */
+  const seenPid = new Set();
+  const records = [];
+  (team.players || []).forEach(pid => {
+    const id = String(pid);
+    if (seenPid.has(id)) return;
+    seenPid.add(id);
+    const rec = needsPlayerRecord(id);
     const lock = state.lockInByPid
-      ? (state.lockInByPid[pid] || state.lockInByPid[String(pid)])
+      ? (state.lockInByPid[id] || state.lockInByPid[pid])
       : null;
-    return Object.assign({}, rec, {
+    records.push(Object.assign({}, rec, {
+      id,
       lockOvr: lock && lock.lockOvr != null ? lock.lockOvr : null,
       tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null,
       rankVal: depthRankValue({
         lockOvr: lock && lock.lockOvr,
         metric: rec.metric
       })
-    });
+    }));
   });
 
   /* Same starting slots as Team Needs (e.g. PG SG G SF PF F C UTIL×3). */
@@ -1569,9 +1660,16 @@ function buildDepthChart(team){
         !used.has(String(r.id))
         && TeamNeedsModel.eligibleForSlot(b.slot, TeamNeedsModel.positions(r.positions))
       ).length;
-      return ca - cb || slots.indexOf(a.slot) - slots.indexOf(b.slot) || a.key.localeCompare(b.key);
+      /* Prefer scarce CORE slots before broad G/F/UTIL so two players
+         do not both look like the "same" primary spot. */
+      const ta = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(a.slot) : 0;
+      const tb = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(b.slot) : 0;
+      return ca - cb || tb - ta
+        || slots.indexOf(a.slot) - slots.indexOf(b.slot)
+        || a.key.localeCompare(b.key);
     });
     order.forEach(row => {
+      if (row.strings[stringIdx]) return;
       const pick = records
         .filter(r =>
           !used.has(String(r.id))
@@ -1585,7 +1683,19 @@ function buildDepthChart(team){
     });
   }
 
-  return {rows, slots, filled: used.size, roster: records.length};
+  /* Safety: never leave the same player in two cells. */
+  const claimed = new Set();
+  rows.forEach(row => {
+    for (let i = 0; i < row.strings.length; i++){
+      const p = row.strings[i];
+      if (!p) continue;
+      const id = String(p.id);
+      if (claimed.has(id)) row.strings[i] = null;
+      else claimed.add(id);
+    }
+  });
+
+  return {rows, slots, filled: claimed.size, roster: records.length};
 }
 
 function renderDepthChart(t){

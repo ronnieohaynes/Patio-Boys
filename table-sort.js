@@ -4,6 +4,7 @@
 
   function defaultDirForKey(key){
     if (key === 'name' || key === 'pos' || key === 'age' || key === 'fitLabel' || key === 'role') return 'asc';
+    if (key === 'contract') return 'desc';
     return 'desc';
   }
 

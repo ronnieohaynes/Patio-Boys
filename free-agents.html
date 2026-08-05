@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-protect-stars';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-depth-contract';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -329,9 +329,15 @@ function depthRankValue(rec){
 /* Same exclusive 10-slot × 3-string chart as Team Intel, ranked by Lock OVR. */
 function buildFaDepthChart(players, slots){
   if (!window.TeamNeedsModel || !slots || !slots.length) return null;
-  const records = (players || []).filter(Boolean).map(p => Object.assign({}, p, {
-    rankVal: depthRankValue(p)
-  }));
+  const seenPid = new Set();
+  const records = [];
+  (players || []).forEach(p => {
+    if (!p) return;
+    const id = String(p.id);
+    if (seenPid.has(id)) return;
+    seenPid.add(id);
+    records.push(Object.assign({}, p, {id, rankVal: depthRankValue(p)}));
+  });
   const rows = slots.map((slot, index) => {
     const same = slots.map((s, i) => ({s, i})).filter(x => x.s === slot);
     const label = same.length > 1
@@ -350,9 +356,14 @@ function buildFaDepthChart(players, slots){
         !used.has(String(r.id))
         && TeamNeedsModel.eligibleForSlot(b.slot, TeamNeedsModel.positions(r.positions))
       ).length;
-      return ca - cb || slots.indexOf(a.slot) - slots.indexOf(b.slot) || a.key.localeCompare(b.key);
+      const ta = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(a.slot) : 0;
+      const tb = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(b.slot) : 0;
+      return ca - cb || tb - ta
+        || slots.indexOf(a.slot) - slots.indexOf(b.slot)
+        || a.key.localeCompare(b.key);
     });
     order.forEach(row => {
+      if (row.strings[stringIdx]) return;
       const pick = records
         .filter(r =>
           !used.has(String(r.id))
@@ -365,6 +376,16 @@ function buildFaDepthChart(players, slots){
       used.add(String(pick.id));
     });
   }
+  const claimed = new Set();
+  rows.forEach(row => {
+    for (let i = 0; i < row.strings.length; i++){
+      const p = row.strings[i];
+      if (!p) continue;
+      const id = String(p.id);
+      if (claimed.has(id)) row.strings[i] = null;
+      else claimed.add(id);
+    }
+  });
   return {rows, slots};
 }
 
