@@ -1531,7 +1531,10 @@
       const mpg = mpgByPlayer[pid];
       if (mpg != null && Number.isFinite(mpg)) distMap[pid].avgMpg = mpg;
       const fpm = fpPerMinByPlayer[pid];
-      if (fpm != null && Number.isFinite(fpm)) distMap[pid].avgFpPerMin = fpm;
+      if (fpm != null && Number.isFinite(fpm)){
+        distMap[pid].avgFpPerMin = fpm;
+        distMap[pid].fpPerMinGrade = fpPerMinGrade(fpm);
+      }
     });
     return {
       distMap,
@@ -1627,6 +1630,44 @@
     };
   }
 
+  /* Absolute FP/min letter grades (Patio Boys scoring). Not curved.
+     Calibrated on 2025–26 box scores: ~1.00+ is star rate, ~0.85 solid
+     starter, ~0.75 average, below ~0.55 replacement/poor. */
+  const FP_PER_MIN_BANDS = [
+    {min: 1.20, grade: 'A+'},
+    {min: 1.10, grade: 'A'},
+    {min: 1.00, grade: 'A-'},
+    {min: 0.95, grade: 'B+'},
+    {min: 0.90, grade: 'B'},
+    {min: 0.85, grade: 'B-'},
+    {min: 0.80, grade: 'C+'},
+    {min: 0.75, grade: 'C'},
+    {min: 0.70, grade: 'C-'},
+    {min: 0.65, grade: 'D+'},
+    {min: 0.60, grade: 'D'},
+    {min: 0.55, grade: 'D-'},
+    {min: 0, grade: 'F'}
+  ];
+  function fpPerMinGrade(rate){
+    if (rate == null || rate === '') return null;
+    const x = Number(rate);
+    if (!Number.isFinite(x) || x < 0) return null;
+    for (let i = 0; i < FP_PER_MIN_BANDS.length; i++){
+      if (x >= FP_PER_MIN_BANDS[i].min) return FP_PER_MIN_BANDS[i].grade;
+    }
+    return 'F';
+  }
+  function fpPerMinGradeClass(grade){
+    const map = {
+      'A+': 'grade-ap', A: 'grade-a', 'A-': 'grade-am',
+      'B+': 'grade-bp', B: 'grade-b', 'B-': 'grade-bm',
+      'C+': 'grade-cp', C: 'grade-c', 'C-': 'grade-cm',
+      'D+': 'grade-dp', D: 'grade-d', 'D-': 'grade-dm',
+      F: 'grade-f'
+    };
+    return map[grade] || 'grade-pending';
+  }
+
   /* Absolute Max Points barometer: score/500 → traditional school letter.
      100% = A+ territory · 90% = A- · 80% = B- · 70% = C- · 60% = D- · below = F.
      Grades are NOT curved vs the league. */
@@ -1671,6 +1712,9 @@
     LOCK_OVR_ANCHORS,
     TRADE_STAR_BANDS,
     MAX_POINTS_BAROMETER,
+    FP_PER_MIN_BANDS,
+    fpPerMinGrade,
+    fpPerMinGradeClass,
     LOCK_SIT_BLEND,
     SIT_MULT_MIN,
     SIT_MULT_MAX,
