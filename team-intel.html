@@ -386,6 +386,9 @@
   table.depth td.slot-taxi{
     background:color-mix(in srgb, var(--green) 8%, transparent);
   }
+  table.depth td.slot-top8{
+    background:color-mix(in srgb, var(--gold) 6%, transparent);
+  }
 
   /* trade intel */
   .trade-row{
@@ -477,7 +480,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-taxi-drops';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-top8';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1590,7 +1593,7 @@ function contractCellHtml(pid){
     + escapeHtml(c.label) + '</td>';
 }
 
-const DEPTH_STRINGS = 2;
+const DEPTH_TOP8 = 8;
 const DEPTH_TAXI_SPOTS = 2;
 
 function depthRankValue(rec){
@@ -1602,8 +1605,9 @@ function depthRankValue(rec){
 
 function depthCellHtml(player, opts){
   const options = opts || {};
+  const extra = options.taxi ? ' slot-taxi' : (options.top8 ? ' slot-top8' : '');
   if (!player){
-    return '<td class="slot-empty' + (options.taxi ? ' slot-taxi' : '') + '">—</td>';
+    return '<td class="slot-empty' + extra + '">—</td>';
   }
   const stars = (window.LockInDist && LockInDist.formatStarsHtml && player.tradeStars != null)
     ? LockInDist.formatStarsHtml(player.tradeStars, {className: 'trade-stars'})
@@ -1615,7 +1619,8 @@ function depthCellHtml(player, opts){
     ? '<span>' + Number(player.metric).toFixed(1) + ' proj</span>'
     : '';
   const meta = [ovr, proj].filter(Boolean).join('<span style="opacity:.35"> · </span>');
-  return '<td' + (options.taxi ? ' class="slot-taxi"' : '') + '>'
+  const cls = options.taxi ? 'slot-taxi' : (options.top8 ? 'slot-top8' : '');
+  return '<td' + (cls ? ' class="' + cls + '"' : '') + '>'
     + '<span class="slot-name">' + escapeHtml(player.name) + '</span>'
     + (meta ? '<span class="slot-meta">' + meta + '</span>' : '')
     + '</td>';
@@ -1679,7 +1684,7 @@ function buildDepthChart(team){
     }));
   });
 
-  /* Position rows: 1st + 2nd string only. */
+  /* Position rows: 1st string only (legal starters). */
   const rows = slots.map((slot, index) => {
     const same = slots
       .map((s, i) => ({s, i}))
@@ -1687,52 +1692,45 @@ function buildDepthChart(team){
     const label = same.length > 1
       ? (slot + ' ' + (same.findIndex(x => x.i === index) + 1))
       : slot;
-    return {key: slot + '#' + index, slot, label, strings: [null, null]};
+    return {key: slot + '#' + index, slot, label, starter: null};
   });
 
-  const used = new Set();
-  for (let stringIdx = 0; stringIdx < DEPTH_STRINGS; stringIdx++){
-    const order = rows.slice().sort((a, b) => {
-      const ca = records.filter(r =>
-        !used.has(String(r.id))
-        && TeamNeedsModel.eligibleForSlot(a.slot, TeamNeedsModel.positions(r.positions))
-      ).length;
-      const cb = records.filter(r =>
-        !used.has(String(r.id))
-        && TeamNeedsModel.eligibleForSlot(b.slot, TeamNeedsModel.positions(r.positions))
-      ).length;
-      const ta = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(a.slot) : 0;
-      const tb = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(b.slot) : 0;
-      return ca - cb || tb - ta
-        || slots.indexOf(a.slot) - slots.indexOf(b.slot)
-        || a.key.localeCompare(b.key);
-    });
-    order.forEach(row => {
-      if (row.strings[stringIdx]) return;
-      const pick = records
-        .filter(r =>
-          !used.has(String(r.id))
-          && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
-        )
-        .sort((a, b) => b.rankVal - a.rankVal
-          || String(a.name).localeCompare(String(b.name)))[0];
-      if (!pick) return;
-      row.strings[stringIdx] = pick;
-      used.add(String(pick.id));
-    });
-  }
-
-  /* Safety: never leave the same player in two string cells. */
   const claimed = new Set();
-  rows.forEach(row => {
-    for (let i = 0; i < row.strings.length; i++){
-      const p = row.strings[i];
-      if (!p) continue;
-      const id = String(p.id);
-      if (claimed.has(id)) row.strings[i] = null;
-      else claimed.add(id);
-    }
+  const order = rows.slice().sort((a, b) => {
+    const ca = records.filter(r =>
+      !claimed.has(String(r.id))
+      && TeamNeedsModel.eligibleForSlot(a.slot, TeamNeedsModel.positions(r.positions))
+    ).length;
+    const cb = records.filter(r =>
+      !claimed.has(String(r.id))
+      && TeamNeedsModel.eligibleForSlot(b.slot, TeamNeedsModel.positions(r.positions))
+    ).length;
+    const ta = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(a.slot) : 0;
+    const tb = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(b.slot) : 0;
+    return ca - cb || tb - ta
+      || slots.indexOf(a.slot) - slots.indexOf(b.slot)
+      || a.key.localeCompare(b.key);
   });
+  order.forEach(row => {
+    const pick = records
+      .filter(r =>
+        !claimed.has(String(r.id))
+        && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
+      )
+      .sort((a, b) => b.rankVal - a.rankVal
+        || String(a.name).localeCompare(String(b.name)))[0];
+    if (!pick) return;
+    row.starter = pick;
+    claimed.add(String(pick.id));
+  });
+
+  /* Top 8: next best remaining by Lock OVR (not position-tied). */
+  const top8 = records
+    .filter(r => !claimed.has(String(r.id)))
+    .sort((a, b) => b.rankVal - a.rankVal
+      || String(a.name).localeCompare(String(b.name)))
+    .slice(0, DEPTH_TOP8);
+  top8.forEach(p => claimed.add(String(p.id)));
 
   /* Taxi column: 2 league spots — developmental / taxi-eligible leftovers. */
   const remaining = records.filter(r => !claimed.has(String(r.id)));
@@ -1749,7 +1747,6 @@ function buildDepthChart(team){
       || (b.lockOvr || 0) - (a.lockOvr || 0)
       || String(a.name).localeCompare(String(b.name));
   });
-  /* If still short of 2 and taxi-eligible kids remain, fill from them. */
   const taxiPool = taxiRanked.slice();
   if (taxiPool.length < taxiSpotCap){
     remaining.filter(r =>
@@ -1768,6 +1765,8 @@ function buildDepthChart(team){
 
   return {
     rows,
+    top8,
+    top8Spots: DEPTH_TOP8,
     taxi,
     taxiSpots: taxiSpotCap,
     chartIds: claimed,
@@ -1809,20 +1808,25 @@ function renderDepthChart(t){
     return;
   }
 
+  const top8N = (pack.top8 || []).length;
   const taxiFilled = (pack.taxi || []).length;
-  tag.textContent = pack.slots.length + ' slots · 1st–2nd · Taxi '
-    + taxiFilled + '/' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
+  tag.textContent = pack.slots.length + ' starters · Top '
+    + top8N + '/' + (pack.top8Spots || DEPTH_TOP8)
+    + ' · Taxi ' + taxiFilled + '/' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
     + ' · Lock OVR';
-  const head = '<tr><th>Pos</th><th>1st string</th><th>2nd string</th><th>Taxi</th></tr>';
+  const head = '<tr><th>Pos</th><th>1st string</th><th>Top 8</th><th>Taxi</th></tr>';
   const rowHtml = pack.rows.map((row, i) => {
+    const top8Player = (pack.top8 || [])[i] || null;
     const taxiPlayer = (pack.taxi || [])[i] || null;
-    /* Only the first taxiSpots rows host a taxi cell; rest stay empty. */
+    const top8Cell = i < (pack.top8Spots || DEPTH_TOP8)
+      ? depthCellHtml(top8Player, {top8: true})
+      : '<td class="slot-empty slot-top8">—</td>';
     const taxiCell = i < (pack.taxiSpots || DEPTH_TAXI_SPOTS)
       ? depthCellHtml(taxiPlayer, {taxi: true})
       : '<td class="slot-empty slot-taxi">—</td>';
     return '<tr><td class="pos">' + escapeHtml(row.label) + '</td>'
-      + depthCellHtml(row.strings[0])
-      + depthCellHtml(row.strings[1])
+      + depthCellHtml(row.starter)
+      + top8Cell
       + taxiCell
       + '</tr>';
   }).join('');
@@ -1831,9 +1835,11 @@ function renderDepthChart(t){
   body.innerHTML = '<table class="depth"><thead>' + head + '</thead><tbody>' + rowHtml + '</tbody></table>'
     + '<p class="lineup-foot">Same ' + pack.slots.length + ' starting slots as Team Needs ('
     + escapeHtml(pack.slots.join(', '))
-    + '). <strong>1st–2nd string</strong> by Lock OVR (exclusive). '
+    + '). <strong>1st string</strong> = legal starters by Lock OVR. '
+    + '<strong>Top 8</strong> = the next ' + (pack.top8Spots || DEPTH_TOP8)
+    + ' best remaining (overall, not tied to Pos). '
     + '<strong>Taxi</strong> holds up to ' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
-    + ' developmental / taxi-eligible stashes (not tied to the Pos label). '
+    + ' developmental / taxi-eligible stashes. '
     + (offN
       ? (offN + ' player' + (offN === 1 ? '' : 's') + ' off the chart → ranked drop candidates in Roster Moves. ')
       : 'Full chart coverage — no off-chart drops. ')
@@ -2433,7 +2439,7 @@ function renderRosterMoves(t){
     + '<div class="moves-col"><h3>Free agents to add</h3>' + faHtml + '</div>'
     + '</div>'
     + '<p class="moves-foot">Drop candidates are everyone <strong>off the depth chart</strong> '
-    + '(not 1st string, 2nd string, or the ' + DEPTH_TAXI_SPOTS + ' taxi spots), ranked by dynasty value — '
+    + '(not 1st string, Top 8, or the ' + DEPTH_TAXI_SPOTS + ' taxi spots), ranked by dynasty value — '
     + '<strong>#1</strong> should be dropped first. '
     + 'Taxi on the chart is for under-' + targetOvr
     + ' Lock developmental stashes (soft cap ~'

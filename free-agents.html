@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-taxi-drops';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-top8';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -317,8 +317,8 @@ const SORT_KEY_TO_SELECT = {
 
 const ADD_GAIN = 0.5;
 const ADD_PROJ_EDGE = 0.5;
-const STRING_LABELS = ['1st string', '2nd string'];
-const FA_DEPTH_STRINGS = 2;
+const STRING_LABELS = ['1st string', 'Top 8'];
+const FA_DEPTH_TOP8 = 8;
 
 function depthRankValue(rec){
   /* Depth / drop ranking by Lock OVR — off-chart fodder surfaces as drop targets. */
@@ -327,7 +327,7 @@ function depthRankValue(rec){
   return -1;
 }
 
-/* Same exclusive chart as Team Intel: 1st–2nd string only (taxi is Intel-side). */
+/* Align with Team Intel: 1st string starters + next Top 8 overall. */
 function buildFaDepthChart(players, slots){
   if (!window.TeamNeedsModel || !slots || !slots.length) return null;
   const seenPid = new Set();
@@ -344,66 +344,69 @@ function buildFaDepthChart(players, slots){
     const label = same.length > 1
       ? (slot + ' ' + (same.findIndex(x => x.i === index) + 1))
       : slot;
-    return {key: slot + '#' + index, slot, label, strings: [null, null]};
+    return {key: slot + '#' + index, slot, label, starter: null};
   });
-  const used = new Set();
-  for (let stringIdx = 0; stringIdx < FA_DEPTH_STRINGS; stringIdx++){
-    const order = rows.slice().sort((a, b) => {
-      const ca = records.filter(r =>
-        !used.has(String(r.id))
-        && TeamNeedsModel.eligibleForSlot(a.slot, TeamNeedsModel.positions(r.positions))
-      ).length;
-      const cb = records.filter(r =>
-        !used.has(String(r.id))
-        && TeamNeedsModel.eligibleForSlot(b.slot, TeamNeedsModel.positions(r.positions))
-      ).length;
-      const ta = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(a.slot) : 0;
-      const tb = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(b.slot) : 0;
-      return ca - cb || tb - ta
-        || slots.indexOf(a.slot) - slots.indexOf(b.slot)
-        || a.key.localeCompare(b.key);
-    });
-    order.forEach(row => {
-      if (row.strings[stringIdx]) return;
-      const pick = records
-        .filter(r =>
-          !used.has(String(r.id))
-          && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
-        )
-        .sort((a, b) => b.rankVal - a.rankVal
-          || String(a.name).localeCompare(String(b.name)))[0];
-      if (!pick) return;
-      row.strings[stringIdx] = pick;
-      used.add(String(pick.id));
-    });
-  }
   const claimed = new Set();
-  rows.forEach(row => {
-    for (let i = 0; i < row.strings.length; i++){
-      const p = row.strings[i];
-      if (!p) continue;
-      const id = String(p.id);
-      if (claimed.has(id)) row.strings[i] = null;
-      else claimed.add(id);
-    }
+  const order = rows.slice().sort((a, b) => {
+    const ca = records.filter(r =>
+      !claimed.has(String(r.id))
+      && TeamNeedsModel.eligibleForSlot(a.slot, TeamNeedsModel.positions(r.positions))
+    ).length;
+    const cb = records.filter(r =>
+      !claimed.has(String(r.id))
+      && TeamNeedsModel.eligibleForSlot(b.slot, TeamNeedsModel.positions(r.positions))
+    ).length;
+    const ta = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(a.slot) : 0;
+    const tb = TeamNeedsModel.slotTier ? TeamNeedsModel.slotTier(b.slot) : 0;
+    return ca - cb || tb - ta
+      || slots.indexOf(a.slot) - slots.indexOf(b.slot)
+      || a.key.localeCompare(b.key);
   });
-  return {rows, slots};
+  order.forEach(row => {
+    const pick = records
+      .filter(r =>
+        !claimed.has(String(r.id))
+        && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
+      )
+      .sort((a, b) => b.rankVal - a.rankVal
+        || String(a.name).localeCompare(String(b.name)))[0];
+    if (!pick) return;
+    row.starter = pick;
+    claimed.add(String(pick.id));
+  });
+  const top8 = records
+    .filter(r => !claimed.has(String(r.id)))
+    .sort((a, b) => b.rankVal - a.rankVal
+      || String(a.name).localeCompare(String(b.name)))
+    .slice(0, FA_DEPTH_TOP8);
+  top8.forEach(p => claimed.add(String(p.id)));
+  return {rows, top8, slots, chartIds: claimed};
 }
 
 function findDepthFit(chart, playerId){
   if (!chart || !chart.rows) return null;
   const pid = String(playerId);
-  for (let stringIdx = 0; stringIdx < FA_DEPTH_STRINGS; stringIdx++){
-    for (const row of chart.rows){
-      const p = row.strings[stringIdx];
-      if (p && String(p.id) === pid){
-        return {
-          stringIdx,
-          stringLabel: STRING_LABELS[stringIdx],
-          slot: row.slot,
-          label: row.label
-        };
-      }
+  for (const row of chart.rows){
+    const p = row.starter;
+    if (p && String(p.id) === pid){
+      return {
+        stringIdx: 0,
+        stringLabel: '1st string',
+        slot: row.slot,
+        label: row.label
+      };
+    }
+  }
+  const top8 = chart.top8 || [];
+  for (let i = 0; i < top8.length; i++){
+    const p = top8[i];
+    if (p && String(p.id) === pid){
+      return {
+        stringIdx: 1,
+        stringLabel: 'Top 8',
+        slot: 'TOP8',
+        label: 'Top 8 #' + (i + 1)
+      };
     }
   }
   return null;
@@ -677,10 +680,10 @@ function scoreAgentsForTeam(team){
       detail = 'Taxi full — only if cutting a taxi/regular spot';
     } else if (gate.dev && gate.dev.readyNow && taxiEligibleFa(a, taxiYears)){
       detail = 'Already rosterable (Lock ≥' + targetOvr + ') — active roster, not taxi';
-    } else if (depthFit && depthFit.stringIdx === 2 && projEdge > 0){
+    } else if (depthFit && depthFit.stringIdx === 1 && projEdge > 0 && !shouldAdd){
       detail = weak
         ? ('Only if cutting ' + weak.name)
-        : 'Fringe third-string depth';
+        : 'Fringe Top 8 depth';
     } else if (fit.slot && fit.gain > 0.05){
       detail = 'Slight ' + fit.slot + ' edge — not enough to add';
     }
@@ -694,7 +697,7 @@ function scoreAgentsForTeam(team){
         - (taxiStash && devCap.overCap ? 80 : 0))
       : (fit.gain * 5
         + Math.max(0, projEdge)
-        + (depthFit && depthFit.stringIdx === 2 ? 2 : 0));
+        + (depthFit && depthFit.stringIdx === 1 ? 2 : 0));
 
     return {
       ...a,
