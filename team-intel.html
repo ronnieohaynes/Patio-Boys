@@ -480,7 +480,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-per30';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-age-ovr';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1475,8 +1475,8 @@ function renderLockIn(t){
     ? ('<tr>'
       + (TS ? TS.thHtml('Pos', 'pos', sortState) : '<th>Pos</th>')
       + (TS ? TS.thHtml('Name', 'name', sortState) : '<th>Name</th>')
-      + (TS ? TS.thHtml('Age', 'age', sortState, 'num') : '<th class="num">Age</th>')
       + (TS ? TS.thHtml('OVR', 'lockOvr', sortState) : '<th>OVR</th>')
+      + (TS ? TS.thHtml('Age', 'age', sortState, 'num') : '<th class="num">Age</th>')
       + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
       + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
       + (TS ? TS.thHtml('Contract', 'contract', sortState, 'num') : '<th class="num">Contract</th>')
@@ -1485,8 +1485,8 @@ function renderLockIn(t){
     : ('<tr>'
       + (TS ? TS.thHtml('Pos', 'pos', sortState) : '<th>Pos</th>')
       + (TS ? TS.thHtml('Name', 'name', sortState) : '<th>Name</th>')
-      + (TS ? TS.thHtml('Age', 'age', sortState, 'num') : '<th class="num">Age</th>')
       + (TS ? TS.thHtml('OVR', 'lockOvr', sortState) : '<th>OVR</th>')
+      + (TS ? TS.thHtml('Age', 'age', sortState, 'num') : '<th class="num">Age</th>')
       + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
       + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
       + (TS ? TS.thHtml('Min', 'avgMpg', sortState, 'num') : '<th class="num">Min</th>')
@@ -1508,13 +1508,15 @@ function renderLockIn(t){
     const effOrder = roleOrders ? roleOrders[String(d.pid)] : null;
     if (d.missing){
       if (basic){
-        return '<tr>' + posCell + nameCell + ageCell
-          + '<td class="num">—</td><td class="num">—</td><td class="num">—</td>'
+        return '<tr>' + posCell + nameCell
+          + '<td class="num">—</td>' + ageCell
+          + '<td class="num">—</td><td class="num">—</td>'
           + contractCellHtml(d.pid)
           + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d, effOrder)) + '</td></tr>';
       }
-      return '<tr>' + posCell + nameCell + ageCell
-        + '<td class="num">—</td><td class="num">—</td>'
+      return '<tr>' + posCell + nameCell
+        + '<td class="num">—</td>' + ageCell
+        + '<td class="num">—</td>'
         + '<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>'
         + marks.map(() => '<td class="num">—</td>').join('')
         + '<td class="num">0</td></tr>';
@@ -1618,15 +1620,16 @@ function renderLockIn(t){
       + fpmTxt + '</td>';
 
     if (basic){
-      return '<tr>' + posCell + nameCell + ageCell + lockCell + tradeCell + avgCell
+      return '<tr>' + posCell + nameCell + lockCell + ageCell + tradeCell + avgCell
         + contractCellHtml(d.pid)
         + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d, effOrder)) + '</td></tr>';
     }
 
     const sdTxt = d.n ? d.stdev.toFixed(1) : '—';
     const ceilTxt = d.ceiling != null && Number.isFinite(d.ceiling) ? d.ceiling.toFixed(1) : '—';
-    return '<tr>' + posCell + nameCell + ageCell
+    return '<tr>' + posCell + nameCell
       + lockCell
+      + ageCell
       + tradeCell
       + avgCell
       + mpgCell
@@ -1640,7 +1643,7 @@ function renderLockIn(t){
   }).join('');
 
   const note = basic
-    ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Trade ★, Age, season Avg, NBA '
+    ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Age, Trade ★, season Avg, NBA '
       + '<strong>Contract</strong> (years left / remaining total, nearest $0.1M), and an NBA '
       + '<strong>Role</strong> line from Sleeper depth chart + production tier. '
       + 'Lock blends smash bases — vets <strong>60% '
