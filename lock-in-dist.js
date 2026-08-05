@@ -8,7 +8,7 @@
 
   const DEFAULT_MARKS = [30, 40, 50];
   const LOCK_SLOTS = 10;
-  const GAMELOG_FIELDS = ['pts', 'reb', 'oreb', 'ast', 'stl', 'blk', 'to', 'fgmi', 'ftmi', 'tpm'];
+  const GAMELOG_FIELDS = ['pts', 'reb', 'oreb', 'ast', 'stl', 'blk', 'to', 'fgmi', 'ftmi', 'tpm', 'min'];
 
   /* Abramowitz & Stegun normal CDF (good enough for hit-rate display). */
   function normalCdf(z){
@@ -109,7 +109,8 @@
     return obj;
   }
 
-  /* Score every ESPN box-score line for a Sleeper season year. */
+  /* Score every ESPN box-score line for a Sleeper season year.
+     Returns {samplesByPlayer, per36ByPlayer} where per36 is total FP / total min × 36. */
   function buildSamplesFromGamelogs(statsSeason, scoring){
     const snap = gamelogSnapshot();
     if (!snap || !snap.seasons) return null;
@@ -117,19 +118,28 @@
     const byPid = snap.seasons[seasonKey];
     if (!byPid) return null;
     const fields = snap.fields || GAMELOG_FIELDS;
-    const out = {};
+    const samplesByPlayer = {};
+    const per36ByPlayer = {};
     Object.keys(byPid).forEach(pid => {
       const games = byPid[pid] || [];
       const scored = [];
+      let fpSum = 0;
+      let minSum = 0;
       for (let i = 0; i < games.length; i++){
         const obj = rowFromGamelogFields(games[i], fields);
         const v = scoreGame(obj, scoring);
         if (v == null || !Number.isFinite(v)) continue;
         scored.push(v);
+        fpSum += v;
+        const mins = obj && Number(obj.min);
+        if (Number.isFinite(mins) && mins > 0) minSum += mins;
       }
-      if (scored.length) out[pid] = scored;
+      if (scored.length){
+        samplesByPlayer[pid] = scored;
+        if (minSum > 0) per36ByPlayer[pid] = (fpSum / minSum) * 36;
+      }
     });
-    return out;
+    return {samplesByPlayer, per36ByPlayer};
   }
 
   /* Full-season FP/G from Sleeper season totals (matches Sleeper app averages). */
@@ -1462,21 +1472,24 @@
     const useMarks = marks && marks.length ? marks : DEFAULT_MARKS;
     const scoreSettings = scoring || {};
 
-    const boxSamples = buildSamplesFromGamelogs(String(statsSeason), scoreSettings);
-    const usingBox = !!(boxSamples && Object.keys(boxSamples).length);
+    const boxPack = buildSamplesFromGamelogs(String(statsSeason), scoreSettings);
+    const usingBox = !!(boxPack && boxPack.samplesByPlayer
+      && Object.keys(boxPack.samplesByPlayer).length);
 
     let seasonStats = null;
     let weeklyResults = [];
     let samplesByPlayer;
     let weeksFound = 0;
     let sampleSource = 'weekly';
+    let per36ByPlayer = {};
 
     if (usingBox){
       seasonStats = await fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
         .then(r => r.ok ? r.json() : null)
         .catch(() => null);
-      samplesByPlayer = boxSamples;
-      weeksFound = Object.keys(boxSamples).reduce((m, pid) => Math.max(m, boxSamples[pid].length), 0);
+      samplesByPlayer = boxPack.samplesByPlayer;
+      per36ByPlayer = boxPack.per36ByPlayer || {};
+      weeksFound = Object.keys(samplesByPlayer).reduce((m, pid) => Math.max(m, samplesByPlayer[pid].length), 0);
       sampleSource = 'boxscore';
     } else {
       const weeks = Array.from({length: 25}, (_, i) => i + 1);
@@ -1499,6 +1512,10 @@
 
     const seasonAvgByPid = seasonStats ? buildSeasonAvgMap(seasonStats, scoreSettings) : {};
     const distMap = buildDistMap(samplesByPlayer, useMarks, seasonAvgByPid);
+    Object.keys(distMap).forEach(pid => {
+      const p36 = per36ByPlayer[pid];
+      if (p36 != null && Number.isFinite(p36)) distMap[pid].avgPer36 = p36;
+    });
     return {
       distMap,
       statsSeason: String(statsSeason),

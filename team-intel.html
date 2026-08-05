@@ -480,7 +480,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-boxscores';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-age-per36';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1405,7 +1405,7 @@ function renderLockIn(t){
   }).join('') + '</div>');
 
   /* If user was sorting an Adv-only column, fall back for Basic. */
-  const advOnly = {stdev:1, ceiling:1, n:1};
+  const advOnly = {stdev:1, ceiling:1, n:1, avgPer36:1};
   marks.forEach(m => { advOnly['hit:' + m] = 1; });
   if (basic && state.lockSort && advOnly[state.lockSort.key]){
     state.lockSort = {key: 'lockOvr', dir: 'desc'};
@@ -1427,9 +1427,14 @@ function renderLockIn(t){
       if (d.missing) return null;
       if (key === 'pos') return playerPos(d.pid);
       if (key === 'name') return playerName(d.pid);
+      if (key === 'age'){
+        const a = playerAge(d.pid);
+        return a === '—' ? null : Number(a);
+      }
       if (key === 'lockOvr') return d.lockOvr != null ? d.lockOvr : d.lockScore;
       if (key === 'tradeScore') return d.tradeScore != null ? d.tradeScore : d.tradeStars;
       if (key === 'mean') return d.mean;
+      if (key === 'avgPer36') return d.avgPer36;
       if (key === 'role'){
         const eff = roleOrders ? roleOrders[String(d.pid)] : null;
         return nbaRoleSentence(d.pid, d, eff);
@@ -1467,6 +1472,7 @@ function renderLockIn(t){
     ? ('<tr>'
       + (TS ? TS.thHtml('Pos', 'pos', sortState) : '<th>Pos</th>')
       + (TS ? TS.thHtml('Name', 'name', sortState) : '<th>Name</th>')
+      + (TS ? TS.thHtml('Age', 'age', sortState, 'num') : '<th class="num">Age</th>')
       + (TS ? TS.thHtml('OVR', 'lockOvr', sortState) : '<th>OVR</th>')
       + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
       + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
@@ -1476,9 +1482,11 @@ function renderLockIn(t){
     : ('<tr>'
       + (TS ? TS.thHtml('Pos', 'pos', sortState) : '<th>Pos</th>')
       + (TS ? TS.thHtml('Name', 'name', sortState) : '<th>Name</th>')
+      + (TS ? TS.thHtml('Age', 'age', sortState, 'num') : '<th class="num">Age</th>')
       + (TS ? TS.thHtml('OVR', 'lockOvr', sortState) : '<th>OVR</th>')
       + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
       + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
+      + (TS ? TS.thHtml('/36', 'avgPer36', sortState, 'num') : '<th class="num">/36</th>')
       + (TS ? TS.thHtml('\u03c3', 'stdev', sortState, 'num') : '<th class="num">\u03c3</th>')
       + (TS ? TS.thHtml('Ceil', 'ceiling', sortState, 'num') : '<th class="num">Ceil</th>')
       + marks.map(m => TS
@@ -1490,17 +1498,18 @@ function renderLockIn(t){
   const rows = show.map(d => {
     const posCell = '<td class="pos">' + escapeHtml(playerPos(d.pid)) + '</td>';
     const nameCell = '<td class="name">' + escapeHtml(playerName(d.pid)) + '</td>';
+    const ageCell = '<td class="num age">' + playerAge(d.pid) + '</td>';
     const effOrder = roleOrders ? roleOrders[String(d.pid)] : null;
     if (d.missing){
       if (basic){
-        return '<tr>' + posCell + nameCell
+        return '<tr>' + posCell + nameCell + ageCell
           + '<td class="num">—</td><td class="num">—</td><td class="num">—</td>'
           + contractCellHtml(d.pid)
           + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d, effOrder)) + '</td></tr>';
       }
-      return '<tr>' + posCell + nameCell
+      return '<tr>' + posCell + nameCell + ageCell
         + '<td class="num">—</td><td class="num">—</td>'
-        + '<td class="num">—</td><td class="num">—</td><td class="num">—</td>'
+        + '<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>'
         + marks.map(() => '<td class="num">—</td>').join('')
         + '<td class="num">0</td></tr>';
     }
@@ -1589,19 +1598,23 @@ function renderLockIn(t){
       : '<td class="num">—</td>';
     const avgTxt = d.mean != null && Number.isFinite(d.mean) ? d.mean.toFixed(1) : '—';
     const avgCell = '<td class="num" title="' + escapeHtml(avgTitle) + '">' + avgTxt + '</td>';
+    const per36Txt = d.avgPer36 != null && Number.isFinite(d.avgPer36) ? d.avgPer36.toFixed(1) : '—';
+    const per36Cell = '<td class="num" title="Fantasy points per 36 minutes (box-score FP ÷ minutes × 36)">'
+      + per36Txt + '</td>';
 
     if (basic){
-      return '<tr>' + posCell + nameCell + lockCell + tradeCell + avgCell
+      return '<tr>' + posCell + nameCell + ageCell + lockCell + tradeCell + avgCell
         + contractCellHtml(d.pid)
         + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d, effOrder)) + '</td></tr>';
     }
 
     const sdTxt = d.n ? d.stdev.toFixed(1) : '—';
     const ceilTxt = d.ceiling != null && Number.isFinite(d.ceiling) ? d.ceiling.toFixed(1) : '—';
-    return '<tr>' + posCell + nameCell
+    return '<tr>' + posCell + nameCell + ageCell
       + lockCell
       + tradeCell
       + avgCell
+      + per36Cell
       + '<td class="num">' + sdTxt + '</td>'
       + '<td class="num">' + ceilTxt + '</td>'
       + hitCells
@@ -1609,7 +1622,7 @@ function renderLockIn(t){
   }).join('');
 
   const note = basic
-    ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Trade ★, season Avg, NBA '
+    ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Trade ★, Age, season Avg, NBA '
       + '<strong>Contract</strong> (years left / remaining total, nearest $0.1M), and an NBA '
       + '<strong>Role</strong> line from Sleeper depth chart + production tier. '
       + 'Lock blends smash bases — vets <strong>60% '
@@ -1637,8 +1650,8 @@ function renderLockIn(t){
       + ' (young 1.12 +1 · prime 1.04 · decline 0.80; FA ~0.80; crowded wings/depth can fall to ~0.70), then '
       + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
       + 'Lock OVR applies ~45% of the same situation gap so offseason adds move dynasty value, not only Trade. '
-      + '<strong>Avg / σ / Ceil / hits</strong> still describe '
-      + escapeHtml(String(state.statsSeason)) + ' box scores only — hover OVR for the blend math. '
+      + '<strong>Avg · /36 · σ · Ceil · hits</strong> still describe '
+      + escapeHtml(String(state.statsSeason)) + ' box scores only (/36 = FP ÷ minutes × 36) — hover OVR for the blend math. '
       + 'Showing all ' + show.length + ' rostered players'
       + (scored.length < show.length ? ' (' + (show.length - scored.length) + ' without dynasty samples yet)' : '')
       + '.</p>');

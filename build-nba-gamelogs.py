@@ -32,7 +32,8 @@ UA = {
 }
 
 # Compact field order stored per game. Client expands to scoring keys.
-FIELDS = ["pts", "reb", "oreb", "ast", "stl", "blk", "to", "fgmi", "ftmi", "tpm"]
+# `min` is decimal minutes (e.g. 29.97 for 29:58) for per-36 FP.
+FIELDS = ["pts", "reb", "oreb", "ast", "stl", "blk", "to", "fgmi", "ftmi", "tpm", "min"]
 
 # Sleeper NBA season year → ESPN season year (ESPN uses ending calendar year).
 # Sleeper 2025 = 2025-26 NBA = ESPN 2026.
@@ -86,6 +87,25 @@ def to_int(cell: str | None) -> int:
         return int(float(str(cell).replace("+", "")))
     except ValueError:
         return 0
+
+
+def parse_minutes(cell: str | None) -> float:
+    """ESPN MIN is often '30' or '29:58'."""
+    if cell is None:
+        return 0.0
+    s = str(cell).strip()
+    if not s or s in ("-", "DNP", "NWT", "0", "00", "0:00"):
+        return 0.0
+    if ":" in s:
+        left, _, right = s.partition(":")
+        try:
+            return int(left) + int(right) / 60.0
+        except ValueError:
+            return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
 
 
 def load_sleeper_name_map() -> dict[str, str]:
@@ -152,10 +172,10 @@ def list_event_ids(espn_season: int) -> list[str]:
     return out
 
 
-def parse_boxscore(payload: dict) -> list[tuple[str, str, list[int]]]:
+def parse_boxscore(payload: dict) -> list[tuple[str, str, list]]:
     """Return list of (espn_athlete_id, display_name, field row)."""
     box = payload.get("boxscore") or {}
-    rows: list[tuple[str, str, list[int]]] = []
+    rows: list[tuple[str, str, list]] = []
     for team_block in box.get("players") or []:
         for group in team_block.get("statistics") or []:
             labels = [str(x).upper() for x in (group.get("labels") or [])]
@@ -172,17 +192,16 @@ def parse_boxscore(payload: dict) -> list[tuple[str, str, list[int]]]:
                 stats = ath.get("stats") or []
                 if not espn_id or ath.get("didNotPlay"):
                     continue
-                # Skip DNP / empty minutes when present.
-                if "MIN" in idx:
-                    mins = str(stats[idx["MIN"]]) if idx["MIN"] < len(stats) else ""
-                    if mins in ("", "-", "0", "00", "0:00"):
-                        continue
 
                 def cell(lab: str) -> str | None:
                     i = idx.get(lab)
                     if i is None or i >= len(stats):
                         return None
                     return stats[i]
+
+                minutes = parse_minutes(cell("MIN")) if "MIN" in idx else 0.0
+                if minutes <= 0:
+                    continue
 
                 fgm, fga = parse_made_att(cell("FG"))
                 ftm, fta = parse_made_att(cell("FT"))
@@ -198,15 +217,16 @@ def parse_boxscore(payload: dict) -> list[tuple[str, str, list[int]]]:
                     max(0, fga - fgm),
                     max(0, fta - ftm),
                     tpm,
+                    round(minutes, 2),
                 ]
-                # Ignore pure empty lines.
-                if sum(row) == 0:
+                # Ignore pure empty counting lines (minutes alone still kept above).
+                if sum(row[:-1]) == 0:
                     continue
                 rows.append((espn_id, name, row))
     return rows
 
 
-def fetch_game_rows(game_id: str) -> list[tuple[str, str, list[int]]]:
+def fetch_game_rows(game_id: str) -> list[tuple[str, str, list]]:
     url = (
         "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/"
         f"summary?event={game_id}"
@@ -307,8 +327,9 @@ def main() -> None:
             "seasonMeta": season_meta,
             "elapsedSec": round(time.time() - t0, 1),
             "note": (
-                "Rows are [pts,reb,oreb,ast,stl,blk,to,fgmi,ftmi,tpm]. "
-                "Site scores live under league settings (dd/td/40+ derived)."
+                "Rows are [pts,reb,oreb,ast,stl,blk,to,fgmi,ftmi,tpm,min]. "
+                "Site scores live under league settings (dd/td/40+ derived); "
+                "min enables FP per 36."
             ),
         },
     }
