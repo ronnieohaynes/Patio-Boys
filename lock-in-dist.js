@@ -715,7 +715,7 @@
     return {mult, why, profile: salary || buyout || deal || null};
   }
 
-  /* tradeScore = LockOVR × age × injury × contract (+1 young bump). */
+  /* tradeScore = LockOVR × age × injury × contract × situation (+1 young bump). */
   function tradeScoreFromOvr(ovr, meta){
     const o = Number(ovr);
     if (!Number.isFinite(o)) return null;
@@ -726,9 +726,244 @@
     const cm = info.contractMult != null && Number.isFinite(Number(info.contractMult))
       ? Number(info.contractMult)
       : 1;
-    let score = o * am * im * cm;
+    const sm = info.situationMult != null && Number.isFinite(Number(info.situationMult))
+      ? Number(info.situationMult)
+      : 1;
+    let score = o * am * im * cm * sm;
     if (band === 'young') score += 1;
     return score;
+  }
+
+  /* ---- Franchise situation / offseason competition ----
+     Sleeper depth charts lag on rookies; FA + draft adds still steal minutes.
+     Situation moves Trade ★ fully and Lock OVR partially (LOCK_SIT_BLEND). */
+  const LOCK_SIT_BLEND = 0.45; /* fraction of situation gap applied to Lock OVR */
+  const SIT_MULT_MIN = 0.70;
+  const SIT_MULT_MAX = 1.06;
+  const SIT_FA_MULT = 0.80;
+
+  function fantasyPosSet(p){
+    const out = new Set();
+    const raw = (p && (p.fantasy_positions || p.fantasyPositions)) || [];
+    raw.forEach(pos => {
+      const s = String(pos || '').toUpperCase();
+      if (s && s !== 'DEF') out.add(s);
+    });
+    return out;
+  }
+
+  function isNbaSkater(p){
+    if (!p || typeof p !== 'object') return false;
+    const team = p.team;
+    if (!team || String(team).length !== 3) return false;
+    const pos = fantasyPosSet(p);
+    if (!pos.size) return false;
+    if (pos.size === 1 && pos.has('DEF')) return false;
+    return true;
+  }
+
+  /* Wings share SF/PF/SG traffic; guards share backcourt; PF↔C for true bigs.
+     Pure centers do not bury SF/SG minutes the way AD (PF) or AJ (PF/SF) do. */
+  function positionsCompete(aSet, bSet){
+    if (!aSet || !bSet || !aSet.size || !bSet.size) return false;
+    for (const x of aSet) if (bSet.has(x)) return true;
+    const has = (s, arr) => arr.some(p => s.has(p));
+    if (has(aSet, ['PG', 'SG', 'G']) && has(bSet, ['PG', 'SG', 'G'])) return true;
+    if (has(aSet, ['SF', 'SG', 'PF', 'F']) && has(bSet, ['SF', 'SG', 'PF', 'F'])) return true;
+    if (has(aSet, ['C']) && has(bSet, ['C'])) return true;
+    if ((has(aSet, ['PF']) && has(bSet, ['C'])) || (has(bSet, ['PF']) && has(aSet, ['C']))) return true;
+    return false;
+  }
+
+  function isPureCenter(posSet){
+    return !!(posSet && posSet.has('C') && !posSet.has('PF') && !posSet.has('F') && !posSet.has('SF'));
+  }
+
+  function isWingPrimary(posSet){
+    if (!posSet || !posSet.size) return false;
+    if (posSet.has('C') && !posSet.has('PF') && !posSet.has('SF') && !posSet.has('F')) return false;
+    return posSet.has('SF') || posSet.has('SG') || posSet.has('PF') || posSet.has('F');
+  }
+
+  function shortPlayerLabel(p){
+    if (!p) return '?';
+    const last = p.last_name || p.lastName || '';
+    const first = p.first_name || p.firstName || '';
+    if (last) return last;
+    return playerDisplayName(p, '') || '?';
+  }
+
+  /* Provisional OVR for teammates missing from distMap (e.g. undrafted rookies). */
+  function competitionOvrForPlayer(pid, p, distMap, opts){
+    const id = String(pid);
+    const d = distMap && (distMap[id] || distMap[pid]);
+    if (d && d.lockOvrProd != null && Number.isFinite(Number(d.lockOvrProd))){
+      return Number(d.lockOvrProd);
+    }
+    if (d && d.lockOvr != null && Number.isFinite(Number(d.lockOvr))){
+      return Number(d.lockOvr);
+    }
+    const options = opts || {};
+    const rookieNames = options.rookieNames || rookieNamesFromSnapshot(options.twoKSnapshot);
+    const isRookie = isRookiePlayer(p, id, {
+      rookieIds: options.rookieIds,
+      rookieNames
+    });
+    const proj = projFromMap(options.projById, id);
+    if (isRookie){
+      const comp = rookieValueFloor(p, null, options.twoKSnapshot);
+      const base = blendRookieBase(proj, comp);
+      if (base == null) return null;
+      return clampRookieOvr(ovrFromSmashBase(base), false);
+    }
+    if (proj != null){
+      const o = ovrFromSmashBase(proj);
+      return o != null ? o : null;
+    }
+    return null;
+  }
+
+  function buildNbaTeamIndex(playerDb){
+    const byTeam = new Map();
+    Object.keys(playerDb || {}).forEach(pid => {
+      const p = playerDb[pid];
+      if (!isNbaSkater(p)) return;
+      const team = String(p.team).toUpperCase();
+      if (!byTeam.has(team)) byTeam.set(team, []);
+      byTeam.get(team).push({id: String(pid), p});
+    });
+    return byTeam;
+  }
+
+  /* Pressure from quality teammates at overlapping slots — rookies with null
+     depth still count (AJ Dybantsa vs Bilal). */
+  function competitionPressure(selfPid, selfP, selfOvr, teammates, strengthOf){
+    const selfPos = fantasyPosSet(selfP);
+    const selfDepth = selfP.depth_chart_order != null ? Number(selfP.depth_chart_order) : null;
+    let pressure = 0;
+    const notes = [];
+    (teammates || []).forEach(row => {
+      if (!row || String(row.id) === String(selfPid)) return;
+      const tp = row.p;
+      if (!positionsCompete(selfPos, fantasyPosSet(tp))) return;
+      const status = String(tp.status || '').toUpperCase();
+      const twoWay = status === 'TWO-WAY' || status === 'TWO_WAY';
+      const str = strengthOf(row.id, tp);
+      if (str == null || !Number.isFinite(str)) return;
+
+      let w = 0;
+      if (str >= 90) w = 0.22;
+      else if (str >= 85) w = 0.16;
+      else if (str >= 80) w = 0.12;
+      else if (str >= 74) w = 0.08;
+      else if (str >= 68) w = 0.05;
+      else if (str >= 62) w = 0.025;
+      else w = 0.01;
+
+      const gap = str - selfOvr;
+      if (gap >= 12) w *= 1.35;
+      else if (gap >= 6) w *= 1.15;
+      else if (gap <= -10) w *= 0.28;
+      else if (gap <= -5) w *= 0.48;
+
+      const years = yearsExpOfPlayer(tp);
+      const tDepth = tp.depth_chart_order != null ? Number(tp.depth_chart_order) : null;
+      const tPos = fantasyPosSet(tp);
+      /* Lottery / undrafted-on-chart rookies still push vets down. */
+      if (years === 0){
+        if (tDepth == null || tDepth > 2) w *= 1.2;
+        if (str >= 70) w = Math.max(w, 0.10);
+      }
+      if (tDepth != null && selfDepth != null){
+        if (tDepth < selfDepth) w *= 1.2;
+        else if (tDepth > selfDepth + 1) w *= 0.42;
+      }
+      if (tDepth === 1 && selfDepth === 1) w *= 1.06;
+      if (twoWay) w *= 0.4;
+      /* Pure C vs wing-primary: limited minute overlap (Ayton ≠ Bilal). */
+      if (isPureCenter(tPos) && isWingPrimary(selfPos) && !selfPos.has('C')) w *= 0.2;
+      if (isPureCenter(selfPos) && isWingPrimary(tPos) && !tPos.has('C')) w *= 0.2;
+
+      pressure += w;
+      if (w >= 0.075) notes.push(shortPlayerLabel(tp));
+    });
+    return {pressure, notes: notes.slice(0, 4)};
+  }
+
+  function isClearAlpha(selfPid, selfOvr, selfP, teammates, strengthOf){
+    const selfPos = fantasyPosSet(selfP);
+    const selfDepth = selfP.depth_chart_order != null ? Number(selfP.depth_chart_order) : null;
+    if (selfDepth != null && selfDepth > 1) return false;
+    let bestOther = null;
+    (teammates || []).forEach(row => {
+      if (!row || String(row.id) === String(selfPid)) return;
+      if (!positionsCompete(selfPos, fantasyPosSet(row.p))) return;
+      const str = strengthOf(row.id, row.p);
+      if (str == null) return;
+      if (bestOther == null || str > bestOther) bestOther = str;
+    });
+    if (bestOther == null) return true;
+    return selfOvr >= bestOther + 3;
+  }
+
+  function situationAdjust(pid, p, prodOvr, teamIndex, strengthOf){
+    const ovr = Number(prodOvr);
+    if (!Number.isFinite(ovr)){
+      return {mult: 1, why: '', pressure: 0, notes: [], kind: 'none'};
+    }
+    if (!isNbaSkater(p)){
+      return {
+        mult: SIT_FA_MULT,
+        why: 'Free agent / no NBA roster ×' + SIT_FA_MULT.toFixed(2),
+        pressure: 0,
+        notes: [],
+        kind: 'fa'
+      };
+    }
+    const team = String(p.team).toUpperCase();
+    const teammates = teamIndex.get(team) || [];
+    const {pressure, notes} = competitionPressure(pid, p, ovr, teammates, strengthOf);
+    const depth = p.depth_chart_order != null ? Number(p.depth_chart_order) : null;
+    const alpha = isClearAlpha(pid, ovr, p, teammates, strengthOf);
+
+    let mult = 1;
+    let kind = 'neutral';
+    if (alpha && pressure < 0.18){
+      mult = 1.04;
+      kind = 'alpha';
+    } else {
+      if (depth != null && depth >= 4) mult *= 0.86;
+      else if (depth != null && depth >= 3) mult *= 0.91;
+      /* Crowding curve with diminishing returns — offseason adds move value
+         without flooring every crowded roster at the minimum. */
+      const damp = 1 - Math.exp(-Math.max(0, pressure) * 1.05);
+      mult *= 1 - damp * 0.28;
+      if (damp >= 0.28 || (depth != null && depth >= 3)) kind = 'crowded';
+    }
+    mult = Math.max(SIT_MULT_MIN, Math.min(SIT_MULT_MAX, mult));
+    mult = Math.round(mult * 1000) / 1000;
+
+    let why = '';
+    if (kind === 'alpha'){
+      why = 'Clear usage path ×' + mult.toFixed(2);
+    } else if (kind === 'crowded' || mult < 0.97){
+      why = 'Roster competition'
+        + (notes.length ? ' (' + notes.join(', ') + ')' : '')
+        + ' ×' + mult.toFixed(2);
+    } else if (mult !== 1){
+      why = 'Situation ×' + mult.toFixed(2);
+    }
+    return {mult, why, pressure, notes, kind};
+  }
+
+  function applySituationToLockOvr(prodOvr, sitMult){
+    const o = Number(prodOvr);
+    const m = Number(sitMult);
+    if (!Number.isFinite(o)) return null;
+    if (!Number.isFinite(m) || m === 1) return Math.round(o);
+    const blended = 1 + (m - 1) * LOCK_SIT_BLEND;
+    const n = Math.round(o * blended);
+    return Math.max(LOCK_OVR_FLOOR, Math.min(LOCK_OVR_CEIL, n));
   }
 
   function projFromMap(projById, pid){
@@ -744,15 +979,17 @@
 
   /* Mutates each dist with lockBase / lockOvr / lockTier / tradeScore / tradeStars.
      OVR is smash (multi-season blend for non-rookies) or rookie proj+comp.
-     Trade stars layer age + injury. */
+     Trade stars layer age + injury + contract + franchise situation. */
   function attachLockValues(distMap, opts){
     const options = opts || {};
     const playerDb = options.playerDb || {};
     const projById = options.projById || null;
     const priorDistMap = options.priorDistMap || null;
     const rookieNames = options.rookieNames || rookieNamesFromSnapshot(options.twoKSnapshot);
+    const skipSituation = options.skipSituation === true;
     let count = 0;
 
+    /* Pass 1: production Lock OVR (no situation yet). */
     Object.keys(distMap || {}).forEach(pid => {
       const d = distMap[pid];
       if (!d) return;
@@ -824,6 +1061,7 @@
       if (base == null || !Number.isFinite(base)){
         d.lockBase = null;
         d.lockOvr = null;
+        d.lockOvrProd = null;
         d.lockTier = null;
         d.lockTierLabel = null;
         d.lockScore = null;
@@ -832,6 +1070,8 @@
         d.tradeScore = null;
         d.tradeStars = null;
         d.lockBlend = null;
+        d.tradeSituationMult = null;
+        d.tradeSituationNote = null;
         d.rookieComp = comp;
         d.rookieCompPeak = peakComp;
         d.rookieEarlyMult = earlyMult;
@@ -840,20 +1080,8 @@
       }
 
       const rawOvr = ovrFromSmashBase(base);
-      const ovr = isRookie ? clampRookieOvr(rawOvr, !thin) : rawOvr;
-      const tier = lockOvrTier(ovr);
+      const prodOvr = isRookie ? clampRookieOvr(rawOvr, !thin) : rawOvr;
       const band = lockAgeBand(p.age, isRookie);
-      const injuryStatus = p.injury_status || p.injuryStatus || '';
-      const displayName = playerDisplayName(p, pid);
-      const contractAdj = contractTradeAdjust(displayName, ovr);
-      const tradeScore = tradeScoreFromOvr(ovr, {
-        ageBand: band,
-        age: p.age,
-        isRookie,
-        injuryStatus,
-        contractMult: contractAdj.mult
-      });
-      const tradeStars = tradeStarsFromScore(tradeScore);
 
       d.lockBase = base;
       d.lockBaseSource = baseSource;
@@ -865,28 +1093,79 @@
         }
         : null;
       d.lockAgeBand = band;
-      d.lockOvr = ovr;
-      d.lockTier = tier.key;
-      d.lockTierLabel = tier.label;
-      d.lockScore = ovr;
+      d.lockOvrProd = prodOvr;
+      d.lockOvr = prodOvr; /* overwritten in pass 2 when situation applies */
       d.lockStars = null;
       d.lockPct = null;
-      d.tradeScore = tradeScore;
-      d.tradeStars = tradeStars;
-      d.tradeAgeMult = AGE_MULT[band] || 0.95;
-      d.tradeInjuryMult = injuryStatusMult(injuryStatus);
-      d.tradeContractMult = contractAdj.mult;
-      d.tradeContractNote = contractAdj.why || null;
-      d.contractTier = (contractAdj.profile && contractAdj.profile.tier)
-        || (contractAdj.profile && contractAdj.profile.recentDeal ? 'mid' : null);
-      d.contractBuyout = !!(contractAdj.why && /buyout/i.test(contractAdj.why));
       d.rookieComp = comp;
       d.rookieCompPeak = peakComp;
       d.rookieEarlyMult = earlyMult;
       d.rookieRankFloor = rankFloor;
       d.rookieProj = proj;
       d.rookieOvrCapped = isRookie && thin && rawOvr > ROOKIE_LOCK_OVR_CAP;
+      d._lockMeta = {isRookie, band, p, thin, rawOvr};
       count++;
+    });
+
+    const teamIndex = skipSituation ? null : buildNbaTeamIndex(playerDb);
+    const strengthOpts = {
+      projById,
+      rookieIds: options.rookieIds,
+      rookieNames,
+      twoKSnapshot: options.twoKSnapshot
+    };
+    const strengthOf = (id, pl) => competitionOvrForPlayer(id, pl, distMap, strengthOpts);
+
+    /* Pass 2: franchise situation → Lock damp + Trade mult. */
+    Object.keys(distMap || {}).forEach(pid => {
+      const d = distMap[pid];
+      if (!d || d.lockOvrProd == null) return;
+      const meta = d._lockMeta || {};
+      const p = meta.p || playerDb[pid] || playerDb[String(pid)] || {};
+      const isRookie = !!meta.isRookie;
+      const band = meta.band || lockAgeBand(p.age, isRookie);
+      const prodOvr = Number(d.lockOvrProd);
+      const injuryStatus = p.injury_status || p.injuryStatus || '';
+
+      let sit = {mult: 1, why: '', pressure: 0, notes: [], kind: 'none'};
+      if (!skipSituation && teamIndex){
+        sit = situationAdjust(pid, p, prodOvr, teamIndex, strengthOf);
+      }
+
+      const ovr = applySituationToLockOvr(prodOvr, sit.mult);
+      const tier = lockOvrTier(ovr);
+      const displayName = playerDisplayName(p, pid);
+      const contractAdj = contractTradeAdjust(displayName, ovr);
+      const tradeScore = tradeScoreFromOvr(prodOvr, {
+        ageBand: band,
+        age: p.age,
+        isRookie,
+        injuryStatus,
+        contractMult: contractAdj.mult,
+        situationMult: sit.mult
+      });
+      const tradeStars = tradeStarsFromScore(tradeScore);
+
+      d.lockOvr = ovr;
+      d.lockTier = tier.key;
+      d.lockTierLabel = tier.label;
+      d.lockScore = ovr;
+      d.tradeScore = tradeScore;
+      d.tradeStars = tradeStars;
+      d.tradeAgeMult = AGE_MULT[band] || 0.95;
+      d.tradeInjuryMult = injuryStatusMult(injuryStatus);
+      d.tradeContractMult = contractAdj.mult;
+      d.tradeContractNote = contractAdj.why || null;
+      d.tradeSituationMult = sit.mult;
+      d.tradeSituationNote = sit.why || null;
+      d.tradeSituationKind = sit.kind || null;
+      d.tradeSituationPressure = sit.pressure != null
+        ? Math.round(sit.pressure * 1000) / 1000
+        : null;
+      d.contractTier = (contractAdj.profile && contractAdj.profile.tier)
+        || (contractAdj.profile && contractAdj.profile.recentDeal ? 'mid' : null);
+      d.contractBuyout = !!(contractAdj.why && /buyout/i.test(contractAdj.why));
+      delete d._lockMeta;
     });
     return count;
   }
@@ -1057,6 +1336,10 @@
     LOCK_OVR_ANCHORS,
     TRADE_STAR_BANDS,
     MAX_POINTS_BAROMETER,
+    LOCK_SIT_BLEND,
+    SIT_MULT_MIN,
+    SIT_MULT_MAX,
+    SIT_FA_MULT,
     AGE_MULT,
     ROOKIE_PROJ_W,
     ROOKIE_COMP_W,
@@ -1110,6 +1393,14 @@
     formatStarsHtml,
     tradeStarsFromScore,
     tradeScoreFromOvr,
+    fantasyPosSet,
+    isNbaSkater,
+    positionsCompete,
+    competitionOvrForPlayer,
+    buildNbaTeamIndex,
+    competitionPressure,
+    situationAdjust,
+    applySituationToLockOvr,
     attachLockValues,
     loadSeasonDistMap,
     fetchLockValueIndex
