@@ -235,7 +235,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-nopath-drop';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fa-proj0';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -473,7 +473,10 @@ function makeRecord(pid, playerDb, projById, lockDist){
     name,
     positions,
     pos: posLabel(positions),
-    metric: projById.get(String(pid)) ?? null,
+    metric: (window.LockInDist && typeof LockInDist.readProjection === 'function')
+      ? LockInDist.readProjection(projById, pid, p)
+      : ((window.LockInDist && typeof LockInDist.playerHasNbaTeam === 'function'
+        && !LockInDist.playerHasNbaTeam(p)) ? 0 : (projById.get(String(pid)) ?? null)),
     age: p.age ?? null,
     nbaTeam: p.team || 'FA',
     injuryStatus: p.injury_status || null,
@@ -958,6 +961,10 @@ async function load(){
         });
         if (matched) projById.set(id, total);
       });
+    }
+
+    if (window.LockInDist && typeof LockInDist.zeroUnsignedProjections === 'function'){
+      LockInDist.zeroUnsignedProjections(projById, playerDb);
     }
 
     const userById = {};

@@ -428,8 +428,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260802';
-  ['2k-ratings-snapshot.js','team-needs.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fa-proj0';
+  ['2k-ratings-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -934,6 +934,9 @@ async function loadWaiverWire(){
     }
 
     state.projMaps = maps;
+    if (window.LockInDist && typeof LockInDist.zeroUnsignedProjections === 'function' && maps && maps.byId){
+      LockInDist.zeroUnsignedProjections(maps.byId, playerDb);
+    }
     const playerByName = new Map();
     Object.entries(playerDb).forEach(([pid, p]) => {
       const name = p && (p.full_name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim());
@@ -1001,10 +1004,15 @@ function flashNote(html){
 function rosterPlayerRecord(pid){
   const p = (state.playerDb || {})[pid] || {};
   const name = p.full_name || ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || ('Player ' + pid);
+  const raw = state.projMaps.byId.get(String(pid)) ?? null;
+  const metric = (window.LockInDist && typeof LockInDist.projectionForPlayer === 'function')
+    ? LockInDist.projectionForPlayer(raw, p)
+    : ((window.LockInDist && typeof LockInDist.playerHasNbaTeam === 'function'
+      && !LockInDist.playerHasNbaTeam(p)) ? 0 : raw);
   return {
     id:String(pid), name,
     positions:p.fantasy_positions || [p.position].filter(Boolean),
-    metric:state.projMaps.byId.get(String(pid)) ?? null,
+    metric,
     age:p.age || null
   };
 }

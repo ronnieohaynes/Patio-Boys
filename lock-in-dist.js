@@ -754,12 +754,66 @@
 
   function isNbaSkater(p){
     if (!p || typeof p !== 'object') return false;
-    const team = p.team;
-    if (!team || String(team).length !== 3) return false;
+    if (!playerHasNbaTeam(p)) return false;
     const pos = fantasyPosSet(p);
     if (!pos.size) return false;
     if (pos.size === 1 && pos.has('DEF')) return false;
     return true;
+  }
+
+  /* True when Sleeper has a real NBA club code (not FA / empty). */
+  function playerHasNbaTeam(p){
+    if (!p || typeof p !== 'object') return false;
+    const raw = p.team != null ? p.team
+      : (p.nbaTeam != null ? p.nbaTeam
+        : (p.nba_team != null ? p.nba_team : null));
+    if (raw == null || raw === '') return false;
+    const t = String(raw).trim().toUpperCase();
+    if (!t || t === 'FA' || t === 'FREE' || t === 'NONE' || t === 'NULL') return false;
+    return t.length === 3;
+  }
+
+  /* Fantasy FP/G projection. No NBA roster → 0 until signed. */
+  function projectionForPlayer(raw, player){
+    if (!playerHasNbaTeam(player)) return 0;
+    if (raw == null || raw === '') return null;
+    const v = Number(raw);
+    return Number.isFinite(v) ? v : null;
+  }
+
+  /* Force every unsigned player to 0 in a proj map (Map or plain object). */
+  function zeroUnsignedProjections(projById, playerDb){
+    if (!projById || !playerDb) return 0;
+    let n = 0;
+    const setZero = (pid) => {
+      const id = String(pid);
+      if (typeof projById.set === 'function'){
+        const cur = projById.get(id);
+        if (cur === 0) return;
+        projById.set(id, 0);
+      } else {
+        if (projById[id] === 0) return;
+        projById[id] = 0;
+      }
+      n++;
+    };
+    Object.keys(playerDb).forEach(pid => {
+      if (!playerHasNbaTeam(playerDb[pid])) setZero(pid);
+    });
+    const keys = typeof projById.keys === 'function'
+      ? Array.from(projById.keys())
+      : Object.keys(projById);
+    keys.forEach(pid => {
+      const p = playerDb[pid] || playerDb[String(pid)];
+      if (p && !playerHasNbaTeam(p)) setZero(pid);
+    });
+    return n;
+  }
+
+  /* Read proj for UI / optimizer: unsigned always 0. */
+  function readProjection(projById, pid, player){
+    if (!playerHasNbaTeam(player)) return 0;
+    return projFromMap(projById, pid);
   }
 
   /* Wings share SF/PF/SG traffic; guards share backcourt; PF↔C for true bigs.
@@ -809,7 +863,7 @@
       rookieIds: options.rookieIds,
       rookieNames
     });
-    const proj = projFromMap(options.projById, id);
+    const proj = lockProjFromMap(options.projById, id, p);
     if (isRookie){
       const comp = rookieValueFloor(p, null, options.twoKSnapshot);
       const base = blendRookieBase(proj, comp);
@@ -977,6 +1031,13 @@
     return Number.isFinite(v) && v > 0 ? v : null;
   }
 
+  /* Lock blend input: unsigned players contribute no upcoming proj (null),
+     while UI/optimizer still show projectionForPlayer → 0. */
+  function lockProjFromMap(projById, pid, player){
+    if (!playerHasNbaTeam(player)) return null;
+    return projFromMap(projById, pid);
+  }
+
   /* Mutates each dist with lockBase / lockOvr / lockTier / tradeScore / tradeStars.
      OVR is smash (multi-season blend for non-rookies) or rookie proj+comp.
      Trade stars layer age + injury + contract + franchise situation. */
@@ -998,7 +1059,7 @@
         rookieIds: options.rookieIds,
         rookieNames
       });
-      const proj = projFromMap(projById, pid);
+      const proj = lockProjFromMap(projById, pid, p);
       const peakComp = isRookie ? rookieCompPeak(p) : null;
       const earlyComp = isRookie ? rookieCompFloor(p) : null;
       const rankFloor = isRookie ? rookieRankFloor(p, null, options.twoKSnapshot) : null;
@@ -1251,15 +1312,19 @@
       : null;
 
     const seedIds = new Set([...playerIds, ...rookieIds].map(String));
+    if (projById && playerDb) zeroUnsignedProjections(projById, playerDb);
     seedIds.forEach(id => {
       if (distMap[id]) return;
       const p = playerDb[id] || playerDb[String(id)] || {};
-      const proj = projFromMap(projById, id);
+      const proj = lockProjFromMap(projById, id, p);
       const rookie = isRookiePlayer(p, id, {rookieIds, rookieNames});
       const earlyComp = rookie ? rookieCompFloor(p) : null;
       const rankFloor = rookie ? rookieRankFloor(p, null, options.twoKSnapshot) : null;
       const comp = rookie ? rookieValueFloor(p, null, options.twoKSnapshot) : null;
-      const seed = rookie ? blendRookieBase(proj, comp) : proj;
+      /* Unsigned: no upcoming proj seed (UI shows 0 via zeroUnsignedProjections). */
+      const seed = !playerHasNbaTeam(p)
+        ? null
+        : (rookie ? blendRookieBase(proj, comp) : proj);
       let source = 'proj';
       if (rookie){
         if (proj != null && earlyComp != null) source = 'rookie-proj-early';
@@ -1395,6 +1460,12 @@
     tradeScoreFromOvr,
     fantasyPosSet,
     isNbaSkater,
+    playerHasNbaTeam,
+    projectionForPlayer,
+    zeroUnsignedProjections,
+    readProjection,
+    lockProjFromMap,
+    projFromMap,
     positionsCompete,
     competitionOvrForPlayer,
     buildNbaTeamIndex,

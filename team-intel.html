@@ -480,7 +480,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-situation';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fa-proj0';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -800,7 +800,8 @@ async function loadPlayerDb(){
   state.playerDb = await r.json();
 }
 
-/* Upcoming-season projections (per-game averages) scored with league settings. */
+/* Upcoming-season projections (per-game averages) scored with league settings.
+   Unsigned NBA free agents are forced to 0 until they sign. */
 async function loadProjections(){
   const scoring = state.league.scoring_settings || {};
   const season = state.league.season;
@@ -819,6 +820,27 @@ async function loadProjections(){
   });
   if (!byId.size) throw new Error('No usable projection stats for league scoring');
   state.projById = byId;
+  applyUnsignedProjZeros();
+}
+
+function applyUnsignedProjZeros(){
+  if (!state.projById || !state.playerDb) return;
+  if (window.LockInDist && typeof LockInDist.zeroUnsignedProjections === 'function'){
+    LockInDist.zeroUnsignedProjections(state.projById, state.playerDb);
+  }
+}
+
+function playerProj(pid){
+  const id = String(pid);
+  const p = (state.playerDb || {})[id] || (state.playerDb || {})[pid] || {};
+  if (window.LockInDist && typeof LockInDist.readProjection === 'function'){
+    return LockInDist.readProjection(state.projById, id, p);
+  }
+  if (window.LockInDist && typeof LockInDist.playerHasNbaTeam === 'function'
+    && !LockInDist.playerHasNbaTeam(p)) return 0;
+  if (!state.projById) return null;
+  const v = state.projById.get(id);
+  return v != null && Number.isFinite(Number(v)) ? Number(v) : null;
 }
 
 /* e.g. 16/18 · 2T — active cap vs taxi stash (not raw Sleeper players.length). */
@@ -1120,6 +1142,7 @@ function pct1(rate){
    still seed from early-career comps / draft-rank bands. */
 function refreshLockValues(){
   if (!state.lockInByPid || !window.LockInDist) return false;
+  applyUnsignedProjZeros();
   const L = LockInDist;
   const snap = window.TWO_K_SNAPSHOT || null;
   const rookieNames = L.rookieNamesFromSnapshot(snap);
@@ -1132,19 +1155,21 @@ function refreshLockValues(){
         const id = String(pid);
         if (state.lockInByPid[id] || state.lockInByPid[pid]) return;
         const p = (state.playerDb || {})[id] || (state.playerDb || {})[pid] || {};
-        const proj = state.projById && state.projById.get(id);
+        const hasTeam = typeof L.playerHasNbaTeam === 'function' ? L.playerHasNbaTeam(p) : !!p.team;
+        /* Unsigned: no upcoming proj (shows 0). Rookies may still seed from comps. */
+        const proj = hasTeam && state.projById ? state.projById.get(id) : null;
         const isRookie = L.isRookiePlayer(p, id, {rookieNames, rookieIds});
         let seed = null;
         let source = 'proj';
         if (isRookie && typeof L.rookieValueFloor === 'function'){
           const floor = L.rookieValueFloor(p, null, snap);
-          seed = L.blendRookieBase(proj, floor);
+          seed = L.blendRookieBase(hasTeam ? proj : null, floor);
           if (seed != null){
-            if (proj != null && floor != null) source = 'rookie-proj-early';
+            if (hasTeam && proj != null && floor != null) source = 'rookie-proj-early';
             else if (floor != null) source = 'rookie-comp-rank';
             else source = 'rookie-proj';
           }
-        } else if (proj != null && Number.isFinite(proj)){
+        } else if (hasTeam && proj != null && Number.isFinite(proj) && Number(proj) > 0){
           seed = proj;
         }
         if (seed == null || !Number.isFinite(Number(seed))) return;
@@ -1580,6 +1605,7 @@ function renderLockIn(t){
       + ' / 20% proj</strong>; sophomores <strong>75/25</strong>; rookies unchanged. '
       + 'Franchise <strong>situation</strong> (FA status + teammate competition, including rookies not yet on the depth chart) '
       + 'haircuts Trade ★ fully and Lock OVR partially. '
+      + 'Players with <strong>no NBA team</strong> project <strong>0</strong> FP/G until signed. '
       + 'When two rostered teammates share the same Sleeper depth stamp, Role ranks them by Lock OVR '
       + 'so they are not both listed at the same spot. '
       + 'Switch to <strong>Adv stats</strong> for σ, ceiling, smash rates, and sample size. '
@@ -1589,7 +1615,7 @@ function renderLockIn(t){
     : ('<p class="lineup-foot"><strong>Lock OVR</strong> maps a blended smash base to 50–99 (absolute curve). '
       + 'Vets: 60% last-season smash · 20% prior-season smash'
       + (state.priorStatsSeason ? (' (' + escapeHtml(String(state.priorStatsSeason)) + ')') : '')
-      + ' · 20% next-year proj (renormalized if a leg is missing). '
+      + ' · 20% next-year proj (renormalized if a leg is missing; unsigned NBA FAs contribute 0 proj / skipped in blend). '
       + 'Sophomores (1 year exp): 75% last · 25% proj. Rookies stay on Y1 proj + early-career comps, '
       + 'capped at Lock ' + ((window.LockInDist && LockInDist.ROOKIE_LOCK_OVR_CAP) || 82)
       + ' until they have smash samples. '
@@ -1933,12 +1959,16 @@ function renderDepthChart(t){
 
 function needsPlayerRecord(pid){
   const p = (state.playerDb || {})[pid] || {};
-  const proj = state.projById ? state.projById.get(String(pid)) : null;
+  const unsigned = window.LockInDist && typeof LockInDist.playerHasNbaTeam === 'function'
+    ? !LockInDist.playerHasNbaTeam(p)
+    : !p.team;
+  const proj = playerProj(pid);
   return {
     id: String(pid),
     name: playerName(pid),
     positions: p.fantasy_positions || [p.position].filter(Boolean),
-    metric: proj != null ? proj : (state.ceilings ? state.ceilings[pid] : null),
+    /* Unsigned NBA FAs project 0 until signed — do not fall back to ceilings. */
+    metric: unsigned ? 0 : (proj != null ? proj : (state.ceilings ? state.ceilings[pid] : null)),
     age: p.age || null
   };
 }
@@ -2051,7 +2081,7 @@ async function loadFreeAgents(){
     if (!(p.active === true || (!!p.team && p.active !== false))) return;
     const name = playerName(pid);
     if (!name || name.indexOf('Player ') === 0) return;
-    const metric = state.projById ? state.projById.get(String(pid)) : null;
+    const metric = playerProj(pid);
     const isRookie = ROOKIE_NAMES.has(
       String(name).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '')
@@ -2710,9 +2740,11 @@ async function loadAwards(){
 
   const tasks = [
     playerDbPromise,
-    loadProjections().catch(e => {
+    Promise.all([playerDbPromise, loadProjections().catch(e => {
       state.projError = e.message || String(e);
       console.warn('Team Intel: projections failed.', e);
+    })]).then(() => {
+      applyUnsignedProjZeros();
     }).finally(() => { state.projSettled = true; }),
     ceilingsPromise,
     prevSeasonsPromise.then(prev => loadTrades(prev)).catch(e => console.warn('Team Intel: trades failed.', e)),

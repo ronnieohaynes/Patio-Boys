@@ -161,8 +161,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260802';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fa-proj0';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -514,14 +514,22 @@ function attachOvr(pick){
 function makeBoardPlayer(pid, playerDb, projMaps, histById, sleeperMaps){
   const p = playerDb[pid] || {};
   const name = playerName(p);
-  const metric = (projMaps.byId.get(String(pid))
+  const rawMetric = (projMaps.byId.get(String(pid))
     ?? projMaps.byName.get(normalizeName(name))
     ?? null);
-  const sleeperMetric = sleeperMaps
+  const metric = (window.LockInDist && typeof LockInDist.projectionForPlayer === 'function')
+    ? LockInDist.projectionForPlayer(rawMetric, p)
+    : ((window.LockInDist && typeof LockInDist.playerHasNbaTeam === 'function'
+      && !LockInDist.playerHasNbaTeam(p)) ? 0 : rawMetric);
+  const rawSleeper = sleeperMaps
     ? (sleeperMaps.byId.get(String(pid))
       ?? sleeperMaps.byName.get(normalizeName(name))
       ?? null)
     : null;
+  const sleeperMetric = (window.LockInDist && typeof LockInDist.projectionForPlayer === 'function')
+    ? LockInDist.projectionForPlayer(rawSleeper, p)
+    : ((window.LockInDist && typeof LockInDist.playerHasNbaTeam === 'function'
+      && !LockInDist.playerHasNbaTeam(p)) ? 0 : rawSleeper);
   const histMetric = histById && histById.get(String(pid)) != null
     ? histById.get(String(pid)) : null;
   return attachOvr({

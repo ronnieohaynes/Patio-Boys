@@ -407,7 +407,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260805-nopath-drop';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260805-fa-proj0';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -798,14 +798,22 @@ function makePlayer(pid, playerDb, projMaps, lockDist, histById, sleeperMaps){
   const p = playerDb[pid] || {};
   const name = playerName(p);
   const hit = RATINGS_BY_NAME.get(normalizeName(name));
-  const metric = (projMaps.byId.get(String(pid))
+  const rawMetric = (projMaps.byId.get(String(pid))
     ?? projMaps.byName.get(normalizeName(name))
     ?? null);
-  const sleeperMetric = sleeperMaps
+  const metric = (window.LockInDist && typeof LockInDist.projectionForPlayer === 'function')
+    ? LockInDist.projectionForPlayer(rawMetric, p)
+    : ((window.LockInDist && typeof LockInDist.playerHasNbaTeam === 'function'
+      && !LockInDist.playerHasNbaTeam(p)) ? 0 : rawMetric);
+  const rawSleeper = sleeperMaps
     ? (sleeperMaps.byId.get(String(pid))
       ?? sleeperMaps.byName.get(normalizeName(name))
       ?? null)
     : null;
+  const sleeperMetric = (window.LockInDist && typeof LockInDist.projectionForPlayer === 'function')
+    ? LockInDist.projectionForPlayer(rawSleeper, p)
+    : ((window.LockInDist && typeof LockInDist.playerHasNbaTeam === 'function'
+      && !LockInDist.playerHasNbaTeam(p)) ? 0 : rawSleeper);
   const histMetric = histById && histById.get(String(pid)) != null
     ? histById.get(String(pid)) : null;
   const lock = lockDist && (lockDist[pid] || lockDist[String(pid)]) || null;
@@ -1575,6 +1583,12 @@ async function load(){
       })
     ]);
     const lockDist = lockPack.distMap || {};
+    if (window.LockInDist && typeof LockInDist.zeroUnsignedProjections === 'function'){
+      LockInDist.zeroUnsignedProjections(projMaps.byId, playerDb);
+      if (sleeperMaps && sleeperMaps.byId){
+        LockInDist.zeroUnsignedProjections(sleeperMaps.byId, playerDb);
+      }
+    }
     state.maxMetricLabel = 'lock ceiling (mean+1\u03c3, ' + lockPack.statsSeason + ')';
     state.lockStatsSeason = lockPack.statsSeason;
 
