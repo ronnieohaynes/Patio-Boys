@@ -2423,7 +2423,7 @@ function renderRosterMoves(t){
 
   const dropsHtml = drops.length
     ? '<ul class="moves">' + drops.map(c => moveLi(c, 'drop')).join('') + '</ul>'
-    : '<p class="pending" style="margin:0">Everyone fits on the depth chart (1st / 2nd / taxi) — no drop fodder.</p>';
+    : '<p class="pending" style="margin:0">Everyone fits on the depth chart (1st / Top 8 / taxi) — no drop fodder.</p>';
 
   const faHtml = pack.fa.length
     ? '<ul class="moves">' + pack.fa.map(a => moveLi(a, a.taxiStash ? 'taxi' : 'fa')).join('') + '</ul>'
