@@ -517,7 +517,9 @@ const CEILING_BOOST = {
   franchise:0, superstar:0, allnba:0, allstar:0,
   allstar_prospect:0, prospect:0, starter:0, role:0
 };
-const INJURY_PRONE = {
+const INJURY_PRONE = (window.LockInDist && LockInDist.INJURY_PRONE)
+  ? LockInDist.INJURY_PRONE
+  : {
   zionwilliamson:0.86, kawhileonard:0.88, anthonydavis:0.90, joelembiid:0.87,
   kristapsporzingis:0.88, jamorant:0.91, kyrieirving:0.92, brandoningram:0.92,
   jonathanisaac:0.84, lonzoball:0.83, bensimmons:0.82, paulgeorge:0.90,
@@ -540,6 +542,12 @@ function ageBand(p){
 }
 function ageMultiplier(p){ return AGE_MULT[ageBand(p)] || 1.0; }
 function injuryMult(p){
+  if (window.LockInDist && typeof LockInDist.injuryTradeMult === 'function'){
+    return LockInDist.injuryTradeMult(
+      (p && (p.injuryStatus || p.injury_status)) || '',
+      (p && p.name) || p
+    );
+  }
   let m = INJURY_PRONE[normalizeName(p && p.name)];
   if (m == null) m = 1;
   /* Live Sleeper tags ignored in offseason (May–Sep); chronic list still applies. */

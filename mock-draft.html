@@ -428,7 +428,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260807-off-inj';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260807-inj-prone';
   ['2k-ratings-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -697,9 +697,10 @@ const CEILING_BOOST = {
   role: 0
 };
 
-/* Injury-prone slip (multipliers < 1). Slight ding only — stars stay stars, just slide a spot or two.
-   Includes chronic missers + Darryn Peterson's college availability flags from ESPN. */
-const INJURY_PRONE = {
+/* Injury-prone slip — prefer LockInDist.INJURY_PRONE (shared with Trade ★). */
+const INJURY_PRONE = (window.LockInDist && LockInDist.INJURY_PRONE)
+  ? LockInDist.INJURY_PRONE
+  : {
   zionwilliamson: 0.86,
   kawhileonard: 0.88,
   anthonydavis: 0.90,
@@ -723,6 +724,12 @@ const INJURY_PRONE = {
 
 function injuryMult(p){
   if (!p) return 1;
+  if (window.LockInDist && typeof LockInDist.injuryTradeMult === 'function'){
+    return LockInDist.injuryTradeMult(
+      p.injuryStatus || p.injury_status || '',
+      p.name || p
+    );
+  }
   let m = INJURY_PRONE[normalizeName(p.name)];
   if (m == null) m = 1;
   /* Live Sleeper tags ignored in offseason (May–Sep); chronic list still applies. */

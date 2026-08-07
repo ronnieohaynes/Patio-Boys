@@ -641,6 +641,49 @@
     return 1;
   }
 
+  /* Chronic injury-prone slip (same list as Mock Draft). Stars stay stars —
+     just slide a spot or two. Applied to Trade ★ year-round. */
+  const INJURY_PRONE = {
+    zionwilliamson: 0.86,
+    kawhileonard: 0.88,
+    anthonydavis: 0.90,
+    joelembiid: 0.87,
+    kristapsporzingis: 0.88,
+    jamorant: 0.91,
+    kyrieirving: 0.92,
+    brandoningram: 0.92,
+    jonathanisaac: 0.84,
+    lonzoball: 0.83,
+    bensimmons: 0.82,
+    paulgeorge: 0.90,
+    jamalmurray: 0.93,
+    tylerherro: 0.94,
+    scoothenderson: 0.93,
+    darrynpeterson: 0.93,
+    keeganmurray: 0.95,
+    jalenwilliams: 0.95,
+    chetholmgren: 0.94
+  };
+
+  function injuryProneMult(nameOrKey){
+    if (nameOrKey && typeof nameOrKey === 'object'){
+      const p = nameOrKey;
+      const n = p.name || p.full_name || sleeperPlayerName(p) || '';
+      const key = normalizePlayerName(n);
+      const m = INJURY_PRONE[key];
+      return m != null && Number.isFinite(Number(m)) ? Number(m) : 1;
+    }
+    const key = normalizePlayerName(nameOrKey);
+    if (!key) return 1;
+    const m = INJURY_PRONE[key];
+    return m != null && Number.isFinite(Number(m)) ? Number(m) : 1;
+  }
+
+  /* Chronic prone × live Sleeper tag (tag ignored in offseason). */
+  function injuryTradeMult(status, nameOrKey, opts){
+    return injuryProneMult(nameOrKey) * injuryStatusMult(status, opts);
+  }
+
   /* Piecewise-linear absolute curve; clamps to [50, 99]. */
   function ovrFromSmashBase(base){
     const b = Number(base);
@@ -805,7 +848,8 @@
     return {mult, why, profile: salary || buyout || deal || null};
   }
 
-  /* tradeScore = LockOVR × age × injury × contract × situation (+1 young bump). */
+  /* tradeScore = LockOVR × age × injury × contract × situation (+1 young bump).
+     Injury = chronic INJURY_PRONE × live Sleeper tag (tag ignored offseason). */
   function tradeScoreFromOvr(ovr, meta){
     const o = Number(ovr);
     if (!Number.isFinite(o)) return null;
@@ -816,7 +860,9 @@
       ignoreInjuryStatus: info.ignoreInjuryStatus,
       offseason: info.offseason
     };
-    const im = injuryStatusMult(info.injuryStatus, injOpts);
+    const im = info.injuryMult != null && Number.isFinite(Number(info.injuryMult))
+      ? Number(info.injuryMult)
+      : injuryTradeMult(info.injuryStatus, info.name || info.player, injOpts);
     const cm = info.contractMult != null && Number.isFinite(Number(info.contractMult))
       ? Number(info.contractMult)
       : 1;
@@ -1491,11 +1537,20 @@
       const displayName = playerDisplayName(p, pid);
       const contractAdj = contractTradeAdjust(displayName, ovr);
       const tradeBaseOvr = unsigned ? LOCK_OVR_FLOOR : prodOvr;
+      const injOpts = {
+        ignoreInjuryStatus: options.ignoreInjuryStatus,
+        offseason: options.offseason
+      };
+      const proneMult = injuryProneMult(displayName);
+      const statusMult = injuryStatusMult(injuryStatus, injOpts);
+      const injuryMult = proneMult * statusMult;
       const tradeScore = tradeScoreFromOvr(tradeBaseOvr, {
         ageBand: band,
         age: p.age,
         isRookie,
+        name: displayName,
         injuryStatus,
+        injuryMult,
         ignoreInjuryStatus: options.ignoreInjuryStatus,
         offseason: options.offseason,
         contractMult: contractAdj.mult,
@@ -1511,10 +1566,9 @@
       d.tradeScore = tradeScore;
       d.tradeStars = tradeStars;
       d.tradeAgeMult = AGE_MULT[band] || 1.0;
-      d.tradeInjuryMult = injuryStatusMult(injuryStatus, {
-        ignoreInjuryStatus: options.ignoreInjuryStatus,
-        offseason: options.offseason
-      });
+      d.tradeInjuryMult = injuryMult;
+      d.tradeInjuryProneMult = proneMult;
+      d.tradeInjuryStatusMult = statusMult;
       d.tradeContractMult = contractAdj.mult;
       d.tradeContractNote = contractAdj.why || null;
       d.tradeSituationMult = sit.mult;
@@ -1874,7 +1928,10 @@
     matchRookieIdsByName,
     lockAgeBand,
     isNbaOffseason,
+    INJURY_PRONE,
     injuryStatusMult,
+    injuryProneMult,
+    injuryTradeMult,
     ovrFromSmashBase,
     ovrFromPercentile,
     lockOvrTier,
