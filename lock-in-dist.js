@@ -814,27 +814,19 @@
   }
 
   /* ---- Franchise situation / offseason competition ----
-     Situation bites when:
-       • same (or adjacent) depth-chart slot is crowded with similar talent
-       • the player is not clearly best at that position
-       • multiple stars compete for the same role (e.g. two PF1s)
-     Cross-position stars do not auto-haircut — a PF/wing is not docked for
-     PG teammates (Deni vs Morant/Dame). Fantasy eligibility alone (SG tag on
-     a PF) must not invent backcourt competition.
+     Each player is graded only at their NBA depth-chart primary slot
+     (multi-eligible fantasy tags are ignored for competition).
+     Situation bites when that same primary slot is crowded with similar
+     talent, the player is not clearly best there, or multiple stars share
+     the role (e.g. two PF1s). Adjacent/cross-position stars do not auto-
+     haircut — a PF is not docked for SF/SG/PG teammates.
      Situation moves Trade ★ fully and Lock OVR partially (LOCK_SIT_BLEND). */
   const LOCK_SIT_BLEND = 0.45; /* fraction of situation gap applied to Lock OVR */
   const SIT_MULT_MIN = 0.70;
   const SIT_MULT_MAX = 1.06;
   const SIT_FA_MULT = 0.80;
-  /* Same primary = full weight; adjacent minute pools share a lighter haircut. */
-  const POS_ADJACENT = {
-    PG: ['SG'],
-    SG: ['PG', 'SF'],
-    SF: ['SG', 'PF'],
-    PF: ['SF', 'C'],
-    C: ['PF'],
-    G: ['PG', 'SG'],
-    F: ['SF', 'PF']
+  const VALID_PRIMARY_POS = {
+    PG: 1, SG: 1, SF: 1, PF: 1, C: 1, G: 1, F: 1
   };
   const CLEAR_POS_MARGIN = 4; /* OVR gap to count as clearly best at the slot */
 
@@ -848,16 +840,13 @@
     return out;
   }
 
-  /* NBA depth-chart slot when present; else infer a primary from eligibility.
-     Prefer specific positions over generic G/F so multi-eligible wings (PF/SF/SG)
-     are not treated as point guards. */
+  /* NBA depth-chart primary only. Fantasy multi-eligibility never expands the
+     role — a PF/SF/SG listed player who is PF1 is just a PF for situation. */
   function nbaPrimaryPos(p){
     if (!p || typeof p !== 'object') return null;
     const depth = String(p.depth_chart_position || '').trim().toUpperCase();
-    if (depth && (POS_ADJACENT[depth] || depth === 'G' || depth === 'F' || depth === 'C'
-      || depth === 'PG' || depth === 'SG' || depth === 'SF' || depth === 'PF')){
-      return depth;
-    }
+    if (depth && VALID_PRIMARY_POS[depth]) return depth;
+    /* Fallback only when Sleeper has no depth slot yet (rookies, etc.). */
     const set = fantasyPosSet(p);
     if (!set.size) return null;
     if (set.has('PG') && !set.has('SF') && !set.has('PF') && !set.has('C') && !set.has('F')) return 'PG';
@@ -872,16 +861,15 @@
     return null;
   }
 
-  /* 1 = same role, ~0.4 = adjacent minute pool, 0 = no real competition. */
+  /* Same depth-chart primary only. G/F are aliases for their specific slots.
+     No adjacent SF↔PF / PG↔SG spillover from multi-position eligibility. */
   function positionOverlapWeight(aPos, bPos){
     if (!aPos || !bPos) return 0;
     const a = String(aPos).toUpperCase();
     const b = String(bPos).toUpperCase();
     if (a === b) return 1;
-    if ((a === 'G' && (b === 'PG' || b === 'SG')) || (b === 'G' && (a === 'PG' || a === 'SG'))) return 0.85;
-    if ((a === 'F' && (b === 'SF' || b === 'PF')) || (b === 'F' && (a === 'SF' || a === 'PF'))) return 0.85;
-    const adj = POS_ADJACENT[a] || [];
-    if (adj.indexOf(b) >= 0) return 0.4;
+    if ((a === 'G' && (b === 'PG' || b === 'SG')) || (b === 'G' && (a === 'PG' || a === 'SG'))) return 1;
+    if ((a === 'F' && (b === 'SF' || b === 'PF')) || (b === 'F' && (a === 'SF' || a === 'PF'))) return 1;
     return 0;
   }
 
@@ -1025,8 +1013,7 @@
     return byTeam;
   }
 
-  /* Pressure from quality teammates in the same / adjacent depth-chart role.
-     Rookies with null depth still count when their primary overlaps. */
+  /* Pressure from quality teammates at the same depth-chart primary only. */
   function competitionPressure(selfPid, selfP, selfOvr, teammates, strengthOf){
     const selfPrimary = nbaPrimaryPos(selfP);
     const selfDepth = selfP.depth_chart_order != null ? Number(selfP.depth_chart_order) : null;
@@ -1061,19 +1048,15 @@
 
       const years = yearsExpOfPlayer(tp);
       const tDepth = tp.depth_chart_order != null ? Number(tp.depth_chart_order) : null;
-      const tPrimary = nbaPrimaryPos(tp);
-      /* Lottery / undrafted-on-chart rookies still push overlapping vets down. */
+      /* Lottery / undrafted-on-chart rookies still push same-slot vets down. */
       if (years === 0){
         if (tDepth == null || tDepth > 2) w *= 1.2;
         if (str >= 70) w = Math.max(w, 0.10);
       }
-      if (tDepth != null && selfDepth != null && selfPrimary && tPrimary && selfPrimary === tPrimary){
+      if (tDepth != null && selfDepth != null){
         if (tDepth < selfDepth) w *= 1.2;
         else if (tDepth > selfDepth + 1) w *= 0.42;
         if (tDepth === 1 && selfDepth === 1) w *= 1.12; /* two #1s at same slot */
-      } else if (tDepth != null && selfDepth != null && overlap < 1){
-        /* Adjacent roles: depth order matters less than role overlap. */
-        if (tDepth > selfDepth + 1) w *= 0.55;
       }
       if (twoWay) w *= 0.4;
 
@@ -1081,10 +1064,10 @@
       pressure += w;
       if (w >= 0.075) notes.push(shortPlayerLabel(tp));
     });
-    return {pressure, notes: notes.slice(0, 4)};
+    return {pressure, notes: notes.slice(0, 4), primary: selfPrimary};
   }
 
-  /* Clear alpha = depth ≤1 and clearly best among overlapping roles. */
+  /* Clear alpha = depth ≤1 and clearly best at the same primary slot. */
   function isClearAlpha(selfPid, selfOvr, selfP, teammates, strengthOf){
     const selfDepth = selfP.depth_chart_order != null ? Number(selfP.depth_chart_order) : null;
     if (selfDepth != null && selfDepth > 1) return false;
