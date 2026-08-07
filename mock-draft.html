@@ -428,7 +428,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260807-inj-prone';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260807-prime-10';
   ['2k-ratings-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -613,7 +613,7 @@ function realSearchRank(p){
    Sources: ESPN post–summer-league top 11 + lottery comps; 2K OVR for established star tiers. */
 const AGE_BAND_ORDER = { young: 0, prime: 1, unknown: 2, decline: 3 };
 /* Soft age curve — primes aren't punished; decline still fades. */
-const AGE_MULT = { young: 1.10, prime: 1.05, decline: 0.9, unknown: 1.0 };
+const AGE_MULT = { young: 1.10, prime: 1.0, decline: 0.9, unknown: 1.0 };
 
 /* ESPN post–summer league top 11 (Kram) + Woo comps. */
 const ESPN_ROOKIE_OUTLOOK = {

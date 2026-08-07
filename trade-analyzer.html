@@ -407,7 +407,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260807-off-inj';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260807-prime-10';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -462,7 +462,7 @@ const TWO_K = window.TWO_K_SNAPSHOT || {rookies:[], ratings:[]};
 const RATINGS_BY_NAME = new Map((TWO_K.ratings || []).map(p => [normalizeName(p.name), p]));
 const ROOKIE_NAMES = new Set((TWO_K.rookies || []).map(p => normalizeName(p.name)));
 
-const AGE_MULT = { young: 1.10, prime: 1.05, decline: 0.9, unknown: 1.0 };
+const AGE_MULT = { young: 1.10, prime: 1.0, decline: 0.9, unknown: 1.0 };
 /* ESPN post–summer league top 11 (Kram) + Woo lottery comps — floors are the
    comparison-derived FP proxy used when Sleeper year-1 proj is thin/missing. */
 const ESPN_ROOKIE_OUTLOOK = {

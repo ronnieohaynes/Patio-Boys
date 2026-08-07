@@ -317,7 +317,7 @@
   const BLEND_SOPH = {last: 0.75, proj: 0.25};
   const LOCK_OVR_FLOOR = 50;
   const LOCK_OVR_CEIL = 99;
-  const AGE_MULT = { young: 1.10, prime: 1.05, decline: 0.9, unknown: 1.0 };
+  const AGE_MULT = { young: 1.10, prime: 1.0, decline: 0.9, unknown: 1.0 };
   const ROOKIE_PROJ_W = 0.5;
   const ROOKIE_COMP_W = 0.5;
   /* Peak-comp floors describe prime comps (Brown/Booker/etc). Lock OVR for

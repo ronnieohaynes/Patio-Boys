@@ -585,7 +585,7 @@
   }
 
   /* —— Dynasty value (same formula as Trade Analyzer) —— */
-  const AGE_MULT = { young: 1.10, prime: 1.05, decline: 0.9, unknown: 1.0 };
+  const AGE_MULT = { young: 1.10, prime: 1.0, decline: 0.9, unknown: 1.0 };
   const ESPN_ROOKIE_OUTLOOK = {
     ajdybantsa:{floor:45}, darrynpeterson:{floor:44}, cameronboozer:{floor:24},
     calebwilson:{floor:18}, braydenburries:{floor:16}, mikelbrownjr:{floor:15},
