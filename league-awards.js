@@ -585,7 +585,7 @@
   }
 
   /* —— Dynasty value (same formula as Trade Analyzer) —— */
-  const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
+  const AGE_MULT = { young: 1.10, prime: 1.05, decline: 0.9, unknown: 1.0 };
   const ESPN_ROOKIE_OUTLOOK = {
     ajdybantsa:{floor:45}, darrynpeterson:{floor:44}, cameronboozer:{floor:24},
     calebwilson:{floor:18}, braydenburries:{floor:16}, mikelbrownjr:{floor:15},
@@ -735,7 +735,7 @@
       if (status === 'out' || status === 'ir' || status === 'injured reserve') inj *= 0.94;
       else if (status === 'doubtful') inj *= 0.96;
       else if (status === 'questionable') inj *= 0.98;
-      const age = AGE_MULT[ageBand(rec)] || 0.95;
+      const age = AGE_MULT[ageBand(rec)] || 1.0;
       if (base == null) return 0;
       let v = base * age;
       if (ageBand(rec) === 'young') v += 1;

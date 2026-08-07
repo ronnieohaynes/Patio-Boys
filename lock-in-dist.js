@@ -317,7 +317,7 @@
   const BLEND_SOPH = {last: 0.75, proj: 0.25};
   const LOCK_OVR_FLOOR = 50;
   const LOCK_OVR_CEIL = 99;
-  const AGE_MULT = { young: 1.12, prime: 1.04, decline: 0.8, unknown: 0.95 };
+  const AGE_MULT = { young: 1.10, prime: 1.05, decline: 0.9, unknown: 1.0 };
   const ROOKIE_PROJ_W = 0.5;
   const ROOKIE_COMP_W = 0.5;
   /* Peak-comp floors describe prime comps (Brown/Booker/etc). Lock OVR for
@@ -800,7 +800,7 @@
     if (!Number.isFinite(o)) return null;
     const info = meta || {};
     const band = info.ageBand || lockAgeBand(info.age, info.isRookie);
-    const am = AGE_MULT[band] || 0.95;
+    const am = AGE_MULT[band] || 1.0;
     const im = injuryStatusMult(info.injuryStatus);
     const cm = info.contractMult != null && Number.isFinite(Number(info.contractMult))
       ? Number(info.contractMult)
@@ -1442,7 +1442,7 @@
       d.lockScore = ovr;
       d.tradeScore = tradeScore;
       d.tradeStars = tradeStars;
-      d.tradeAgeMult = AGE_MULT[band] || 0.95;
+      d.tradeAgeMult = AGE_MULT[band] || 1.0;
       d.tradeInjuryMult = injuryStatusMult(injuryStatus);
       d.tradeContractMult = contractAdj.mult;
       d.tradeContractNote = contractAdj.why || null;
