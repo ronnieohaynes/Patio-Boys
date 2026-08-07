@@ -622,7 +622,18 @@
     return 'decline';
   }
 
-  function injuryStatusMult(status){
+  /* NBA regular season ~ mid-Oct through mid-Apr. Live Sleeper tags (DTD/Out)
+     are noise in the offseason and should not move Trade ★. */
+  function isNbaOffseason(now){
+    const d = now instanceof Date ? now : new Date();
+    const m = d.getUTCMonth(); /* 0 = Jan */
+    return m >= 4 && m <= 8; /* May–September */
+  }
+
+  function injuryStatusMult(status, opts){
+    const options = opts || {};
+    if (options.ignoreInjuryStatus === true) return 1;
+    if (options.offseason === true || (options.offseason !== false && isNbaOffseason())) return 1;
     const s = String(status || '').toLowerCase();
     if (s === 'out' || s === 'ir' || s === 'injured reserve') return 0.94;
     if (s === 'doubtful') return 0.96;
@@ -801,7 +812,11 @@
     const info = meta || {};
     const band = info.ageBand || lockAgeBand(info.age, info.isRookie);
     const am = AGE_MULT[band] || 1.0;
-    const im = injuryStatusMult(info.injuryStatus);
+    const injOpts = {
+      ignoreInjuryStatus: info.ignoreInjuryStatus,
+      offseason: info.offseason
+    };
+    const im = injuryStatusMult(info.injuryStatus, injOpts);
     const cm = info.contractMult != null && Number.isFinite(Number(info.contractMult))
       ? Number(info.contractMult)
       : 1;
@@ -1481,6 +1496,8 @@
         age: p.age,
         isRookie,
         injuryStatus,
+        ignoreInjuryStatus: options.ignoreInjuryStatus,
+        offseason: options.offseason,
         contractMult: contractAdj.mult,
         situationMult: sit.mult
       });
@@ -1494,7 +1511,10 @@
       d.tradeScore = tradeScore;
       d.tradeStars = tradeStars;
       d.tradeAgeMult = AGE_MULT[band] || 1.0;
-      d.tradeInjuryMult = injuryStatusMult(injuryStatus);
+      d.tradeInjuryMult = injuryStatusMult(injuryStatus, {
+        ignoreInjuryStatus: options.ignoreInjuryStatus,
+        offseason: options.offseason
+      });
       d.tradeContractMult = contractAdj.mult;
       d.tradeContractNote = contractAdj.why || null;
       d.tradeSituationMult = sit.mult;
@@ -1853,6 +1873,7 @@
     isRookiePlayer,
     matchRookieIdsByName,
     lockAgeBand,
+    isNbaOffseason,
     injuryStatusMult,
     ovrFromSmashBase,
     ovrFromPercentile,

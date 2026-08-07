@@ -407,7 +407,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260807-sit-noboost';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260807-off-inj';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -542,6 +542,11 @@ function ageMultiplier(p){ return AGE_MULT[ageBand(p)] || 1.0; }
 function injuryMult(p){
   let m = INJURY_PRONE[normalizeName(p && p.name)];
   if (m == null) m = 1;
+  /* Live Sleeper tags ignored in offseason (May–Sep); chronic list still applies. */
+  const offseason = (window.LockInDist && typeof LockInDist.isNbaOffseason === 'function')
+    ? LockInDist.isNbaOffseason()
+    : (function(){ const mo = new Date().getUTCMonth(); return mo >= 4 && mo <= 8; })();
+  if (offseason) return m;
   const status = String(p && (p.injuryStatus || p.injury_status) || '').toLowerCase();
   if (status === 'out' || status === 'ir' || status === 'injured reserve') m *= 0.94;
   else if (status === 'doubtful') m *= 0.96;

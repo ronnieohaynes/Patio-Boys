@@ -731,10 +731,14 @@
       }
       let inj = INJURY_PRONE[key];
       if (inj == null) inj = 1;
-      const status = String(rec.injuryStatus || '').toLowerCase();
-      if (status === 'out' || status === 'ir' || status === 'injured reserve') inj *= 0.94;
-      else if (status === 'doubtful') inj *= 0.96;
-      else if (status === 'questionable') inj *= 0.98;
+      /* Live tags ignored May–Sep; chronic INJURY_PRONE list still applies. */
+      const inOffseason = (function(){ const mo = new Date().getUTCMonth(); return mo >= 4 && mo <= 8; })();
+      if (!inOffseason){
+        const status = String(rec.injuryStatus || '').toLowerCase();
+        if (status === 'out' || status === 'ir' || status === 'injured reserve') inj *= 0.94;
+        else if (status === 'doubtful') inj *= 0.96;
+        else if (status === 'questionable') inj *= 0.98;
+      }
       const age = AGE_MULT[ageBand(rec)] || 1.0;
       if (base == null) return 0;
       let v = base * age;

@@ -494,7 +494,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260807-sit-noboost';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260807-off-inj';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1701,7 +1701,7 @@ function renderLockIn(t){
       + 'capped at Lock ' + ((window.LockInDist && LockInDist.ROOKIE_LOCK_OVR_CAP) || 82)
       + ' until they have smash samples. '
       + '<strong>Trade ★</strong> = prod OVR × age × injury × contract × situation'
-      + ' (young 1.10 +1 · prime 1.05 · decline 0.90 · unknown 1.00; FA ~0.80; same-slot crowding can fall to ~0.70), then '
+      + ' (young 1.10 +1 · prime 1.05 · decline 0.90 · unknown 1.00; live injury tags ignored in offseason; FA ~0.80; same-slot crowding can fall to ~0.70), then '
       + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
       + 'Lock OVR applies ~45% of the same situation gap so offseason adds move dynasty value, not only Trade. '
       + '<strong>Avg · Min · FP/m · /30 · /36 · σ · Ceil · hits</strong> still describe '
