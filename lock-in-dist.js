@@ -823,7 +823,7 @@
      Situation moves Trade ★ fully and Lock OVR partially (LOCK_SIT_BLEND). */
   const LOCK_SIT_BLEND = 0.45; /* fraction of situation gap applied to Lock OVR */
   const SIT_MULT_MIN = 0.70;
-  const SIT_MULT_MAX = 1.06;
+  const SIT_MULT_MAX = 1.00; /* no free boost for being alone at a primary */
   const SIT_FA_MULT = 0.80;
   const VALID_PRIMARY_POS = {
     PG: 1, SG: 1, SF: 1, PF: 1, C: 1, G: 1, F: 1
@@ -1105,24 +1105,31 @@
 
     let mult = 1;
     let kind = 'neutral';
-    if (alpha && pressure < 0.18){
-      mult = 1.04;
-      kind = 'alpha';
-    } else {
-      if (depth != null && depth >= 4) mult *= 0.86;
-      else if (depth != null && depth >= 3) mult *= 0.91;
-      /* Crowding curve with diminishing returns — offseason adds move value
-         without flooring every crowded roster at the minimum. */
+    /* Uncrowded at your primary = ×1.00 (no ding, no free boost).
+       The old +4% "clear usage path" fired for almost every depth-chart #1
+       once competition was primary-only, inflating Trade ★ league-wide. */
+    if (depth != null && depth >= 4){
+      mult *= 0.86;
+      kind = 'crowded';
+    } else if (depth != null && depth >= 3){
+      mult *= 0.91;
+      kind = 'crowded';
+    }
+    if (!(alpha && pressure < 0.18)){
+      /* Crowding curve — offseason adds move value without flooring everyone. */
       const damp = 1 - Math.exp(-Math.max(0, pressure) * 1.05);
       mult *= 1 - damp * 0.28;
       if (damp >= 0.28 || (depth != null && depth >= 3)) kind = 'crowded';
+    } else if (kind === 'neutral' && pressure > 0 && alpha){
+      /* Clearly best at a contested primary — note only, no Trade boost. */
+      kind = 'alpha';
     }
     mult = Math.max(SIT_MULT_MIN, Math.min(SIT_MULT_MAX, mult));
     mult = Math.round(mult * 1000) / 1000;
 
     let why = '';
-    if (kind === 'alpha'){
-      why = 'Clear usage path ×' + mult.toFixed(2);
+    if (kind === 'alpha' && mult === 1){
+      why = 'Clear primary path';
     } else if (kind === 'crowded' || mult < 0.97){
       why = 'Roster competition'
         + (notes.length ? ' (' + notes.join(', ') + ')' : '')
