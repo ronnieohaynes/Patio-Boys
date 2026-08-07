@@ -814,12 +814,29 @@
   }
 
   /* ---- Franchise situation / offseason competition ----
-     Sleeper depth charts lag on rookies; FA + draft adds still steal minutes.
+     Situation bites when:
+       • same (or adjacent) depth-chart slot is crowded with similar talent
+       • the player is not clearly best at that position
+       • multiple stars compete for the same role (e.g. two PF1s)
+     Cross-position stars do not auto-haircut — a PF/wing is not docked for
+     PG teammates (Deni vs Morant/Dame). Fantasy eligibility alone (SG tag on
+     a PF) must not invent backcourt competition.
      Situation moves Trade ★ fully and Lock OVR partially (LOCK_SIT_BLEND). */
   const LOCK_SIT_BLEND = 0.45; /* fraction of situation gap applied to Lock OVR */
   const SIT_MULT_MIN = 0.70;
   const SIT_MULT_MAX = 1.06;
   const SIT_FA_MULT = 0.80;
+  /* Same primary = full weight; adjacent minute pools share a lighter haircut. */
+  const POS_ADJACENT = {
+    PG: ['SG'],
+    SG: ['PG', 'SF'],
+    SF: ['SG', 'PF'],
+    PF: ['SF', 'C'],
+    C: ['PF'],
+    G: ['PG', 'SG'],
+    F: ['SF', 'PF']
+  };
+  const CLEAR_POS_MARGIN = 4; /* OVR gap to count as clearly best at the slot */
 
   function fantasyPosSet(p){
     const out = new Set();
@@ -829,6 +846,69 @@
       if (s && s !== 'DEF') out.add(s);
     });
     return out;
+  }
+
+  /* NBA depth-chart slot when present; else infer a primary from eligibility.
+     Prefer specific positions over generic G/F so multi-eligible wings (PF/SF/SG)
+     are not treated as point guards. */
+  function nbaPrimaryPos(p){
+    if (!p || typeof p !== 'object') return null;
+    const depth = String(p.depth_chart_position || '').trim().toUpperCase();
+    if (depth && (POS_ADJACENT[depth] || depth === 'G' || depth === 'F' || depth === 'C'
+      || depth === 'PG' || depth === 'SG' || depth === 'SF' || depth === 'PF')){
+      return depth;
+    }
+    const set = fantasyPosSet(p);
+    if (!set.size) return null;
+    if (set.has('PG') && !set.has('SF') && !set.has('PF') && !set.has('C') && !set.has('F')) return 'PG';
+    if (set.has('C') && !set.has('PF') && !set.has('SF') && !set.has('SG') && !set.has('F')) return 'C';
+    if (set.has('PF')) return 'PF';
+    if (set.has('SF')) return 'SF';
+    if (set.has('SG')) return 'SG';
+    if (set.has('PG')) return 'PG';
+    if (set.has('C')) return 'C';
+    if (set.has('G')) return 'G';
+    if (set.has('F')) return 'F';
+    return null;
+  }
+
+  /* 1 = same role, ~0.4 = adjacent minute pool, 0 = no real competition. */
+  function positionOverlapWeight(aPos, bPos){
+    if (!aPos || !bPos) return 0;
+    const a = String(aPos).toUpperCase();
+    const b = String(bPos).toUpperCase();
+    if (a === b) return 1;
+    if ((a === 'G' && (b === 'PG' || b === 'SG')) || (b === 'G' && (a === 'PG' || a === 'SG'))) return 0.85;
+    if ((a === 'F' && (b === 'SF' || b === 'PF')) || (b === 'F' && (a === 'SF' || a === 'PF'))) return 0.85;
+    const adj = POS_ADJACENT[a] || [];
+    if (adj.indexOf(b) >= 0) return 0.4;
+    return 0;
+  }
+
+  function playersCompeteWeight(aP, bP){
+    return positionOverlapWeight(nbaPrimaryPos(aP), nbaPrimaryPos(bP));
+  }
+
+  /* Legacy helper: fantasy-set overlap. Prefer playersCompeteWeight for situation. */
+  function positionsCompete(aSet, bSet){
+    if (!aSet || !bSet || !aSet.size || !bSet.size) return false;
+    for (const x of aSet) if (bSet.has(x)) return true;
+    const has = (s, arr) => arr.some(p => s.has(p));
+    if (has(aSet, ['PG', 'SG', 'G']) && has(bSet, ['PG', 'SG', 'G'])) return true;
+    if (has(aSet, ['SF', 'SG', 'PF', 'F']) && has(bSet, ['SF', 'SG', 'PF', 'F'])) return true;
+    if (has(aSet, ['C']) && has(bSet, ['C'])) return true;
+    if ((has(aSet, ['PF']) && has(bSet, ['C'])) || (has(bSet, ['PF']) && has(aSet, ['C']))) return true;
+    return false;
+  }
+
+  function isPureCenter(posSet){
+    return !!(posSet && posSet.has('C') && !posSet.has('PF') && !posSet.has('F') && !posSet.has('SF'));
+  }
+
+  function isWingPrimary(posSet){
+    if (!posSet || !posSet.size) return false;
+    if (posSet.has('C') && !posSet.has('PF') && !posSet.has('SF') && !posSet.has('F')) return false;
+    return posSet.has('SF') || posSet.has('SG') || posSet.has('PF') || posSet.has('F');
   }
 
   function isNbaSkater(p){
@@ -895,29 +975,6 @@
     return projFromMap(projById, pid);
   }
 
-  /* Wings share SF/PF/SG traffic; guards share backcourt; PF↔C for true bigs.
-     Pure centers do not bury SF/SG minutes the way AD (PF) or AJ (PF/SF) do. */
-  function positionsCompete(aSet, bSet){
-    if (!aSet || !bSet || !aSet.size || !bSet.size) return false;
-    for (const x of aSet) if (bSet.has(x)) return true;
-    const has = (s, arr) => arr.some(p => s.has(p));
-    if (has(aSet, ['PG', 'SG', 'G']) && has(bSet, ['PG', 'SG', 'G'])) return true;
-    if (has(aSet, ['SF', 'SG', 'PF', 'F']) && has(bSet, ['SF', 'SG', 'PF', 'F'])) return true;
-    if (has(aSet, ['C']) && has(bSet, ['C'])) return true;
-    if ((has(aSet, ['PF']) && has(bSet, ['C'])) || (has(bSet, ['PF']) && has(aSet, ['C']))) return true;
-    return false;
-  }
-
-  function isPureCenter(posSet){
-    return !!(posSet && posSet.has('C') && !posSet.has('PF') && !posSet.has('F') && !posSet.has('SF'));
-  }
-
-  function isWingPrimary(posSet){
-    if (!posSet || !posSet.size) return false;
-    if (posSet.has('C') && !posSet.has('PF') && !posSet.has('SF') && !posSet.has('F')) return false;
-    return posSet.has('SF') || posSet.has('SG') || posSet.has('PF') || posSet.has('F');
-  }
-
   function shortPlayerLabel(p){
     if (!p) return '?';
     const last = p.last_name || p.lastName || '';
@@ -968,17 +1025,18 @@
     return byTeam;
   }
 
-  /* Pressure from quality teammates at overlapping slots — rookies with null
-     depth still count (AJ Dybantsa vs Bilal). */
+  /* Pressure from quality teammates in the same / adjacent depth-chart role.
+     Rookies with null depth still count when their primary overlaps. */
   function competitionPressure(selfPid, selfP, selfOvr, teammates, strengthOf){
-    const selfPos = fantasyPosSet(selfP);
+    const selfPrimary = nbaPrimaryPos(selfP);
     const selfDepth = selfP.depth_chart_order != null ? Number(selfP.depth_chart_order) : null;
     let pressure = 0;
     const notes = [];
     (teammates || []).forEach(row => {
       if (!row || String(row.id) === String(selfPid)) return;
       const tp = row.p;
-      if (!positionsCompete(selfPos, fantasyPosSet(tp))) return;
+      const overlap = playersCompeteWeight(selfP, tp);
+      if (!(overlap > 0)) return;
       const status = String(tp.status || '').toUpperCase();
       const twoWay = status === 'TWO-WAY' || status === 'TWO_WAY';
       const str = strengthOf(row.id, tp);
@@ -994,49 +1052,52 @@
       else w = 0.01;
 
       const gap = str - selfOvr;
+      /* Similar talent at the slot crowds harder; clear underdogs barely register. */
       if (gap >= 12) w *= 1.35;
       else if (gap >= 6) w *= 1.15;
+      else if (Math.abs(gap) <= 4) w *= 1.12; /* all-around-the-same-level logjam */
       else if (gap <= -10) w *= 0.28;
       else if (gap <= -5) w *= 0.48;
 
       const years = yearsExpOfPlayer(tp);
       const tDepth = tp.depth_chart_order != null ? Number(tp.depth_chart_order) : null;
-      const tPos = fantasyPosSet(tp);
-      /* Lottery / undrafted-on-chart rookies still push vets down. */
+      const tPrimary = nbaPrimaryPos(tp);
+      /* Lottery / undrafted-on-chart rookies still push overlapping vets down. */
       if (years === 0){
         if (tDepth == null || tDepth > 2) w *= 1.2;
         if (str >= 70) w = Math.max(w, 0.10);
       }
-      if (tDepth != null && selfDepth != null){
+      if (tDepth != null && selfDepth != null && selfPrimary && tPrimary && selfPrimary === tPrimary){
         if (tDepth < selfDepth) w *= 1.2;
         else if (tDepth > selfDepth + 1) w *= 0.42;
+        if (tDepth === 1 && selfDepth === 1) w *= 1.12; /* two #1s at same slot */
+      } else if (tDepth != null && selfDepth != null && overlap < 1){
+        /* Adjacent roles: depth order matters less than role overlap. */
+        if (tDepth > selfDepth + 1) w *= 0.55;
       }
-      if (tDepth === 1 && selfDepth === 1) w *= 1.06;
       if (twoWay) w *= 0.4;
-      /* Pure C vs wing-primary: limited minute overlap (Ayton ≠ Bilal). */
-      if (isPureCenter(tPos) && isWingPrimary(selfPos) && !selfPos.has('C')) w *= 0.2;
-      if (isPureCenter(selfPos) && isWingPrimary(tPos) && !tPos.has('C')) w *= 0.2;
 
+      w *= overlap;
       pressure += w;
       if (w >= 0.075) notes.push(shortPlayerLabel(tp));
     });
     return {pressure, notes: notes.slice(0, 4)};
   }
 
+  /* Clear alpha = depth ≤1 and clearly best among overlapping roles. */
   function isClearAlpha(selfPid, selfOvr, selfP, teammates, strengthOf){
-    const selfPos = fantasyPosSet(selfP);
     const selfDepth = selfP.depth_chart_order != null ? Number(selfP.depth_chart_order) : null;
     if (selfDepth != null && selfDepth > 1) return false;
     let bestOther = null;
     (teammates || []).forEach(row => {
       if (!row || String(row.id) === String(selfPid)) return;
-      if (!positionsCompete(selfPos, fantasyPosSet(row.p))) return;
+      if (!(playersCompeteWeight(selfP, row.p) > 0)) return;
       const str = strengthOf(row.id, row.p);
       if (str == null) return;
       if (bestOther == null || str > bestOther) bestOther = str;
     });
     if (bestOther == null) return true;
-    return selfOvr >= bestOther + 3;
+    return selfOvr >= bestOther + CLEAR_POS_MARGIN;
   }
 
   function situationAdjust(pid, p, prodOvr, teamIndex, strengthOf){
@@ -1821,6 +1882,9 @@
     lockProjFromMap,
     projFromMap,
     positionsCompete,
+    nbaPrimaryPos,
+    positionOverlapWeight,
+    playersCompeteWeight,
     competitionOvrForPlayer,
     buildNbaTeamIndex,
     competitionPressure,
