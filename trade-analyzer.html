@@ -407,8 +407,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-flex-mono';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-pickval';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -774,8 +774,10 @@ const FINDER_FAIR_HARD = 0.62;
 const state = {
   teams: [],
   playersById: new Map(),
+  picksById: new Map(),
   sendA: new Set(),
   sendB: new Set(),
+  draftPickRoundBases: null,
   maxMetricLabel: 'Proj',
   mode: 'analyze',
   finderDir: 'shop', /* shop = available on your roster; want = acquire from others */
@@ -799,12 +801,23 @@ function starsHtml(n){
 }
 
 function tradeValHtml(p){
-  const score = Number(p.dynasty);
+  const score = Number(p.dynasty != null ? p.dynasty : p.tradeScore);
   const scoreTxt = Number.isFinite(score) ? score.toFixed(1) : '—';
   const ovrTxt = p.lockOvr != null ? ('OVR ' + p.lockOvr) : '';
   return starsHtml(p.tradeStars)
     + '<span class="score">' + scoreTxt + '</span>'
     + (ovrTxt ? '<span class="ovr-mini">' + ovrTxt + '</span>' : '');
+}
+
+function assetById(id){
+  const key = String(id);
+  if (state.playersById.has(key)) return state.playersById.get(key);
+  if (state.picksById && state.picksById.has(key)) return state.picksById.get(key);
+  return null;
+}
+
+function assetsFromSet(sendSet){
+  return [...sendSet].map(id => assetById(id)).filter(Boolean);
 }
 
 function makePlayer(pid, playerDb, projMaps, lockDist, histById, sleeperMaps){
@@ -888,15 +901,15 @@ function analyze(){
   const aName = teamA.displayName;
   const bName = teamB.displayName;
 
-  const fromA = [...state.sendA].map(id => state.playersById.get(id)).filter(Boolean);
-  const fromB = [...state.sendB].map(id => state.playersById.get(id)).filter(Boolean);
+  const fromA = assetsFromSet(state.sendA);
+  const fromB = assetsFromSet(state.sendB);
   if (!fromA.length && !fromB.length){
     result.hidden = true;
     return;
   }
 
-  const valueToA = fromB.reduce((s, p) => s + p.dynasty, 0);
-  const valueToB = fromA.reduce((s, p) => s + p.dynasty, 0);
+  const valueToA = fromB.reduce((s, p) => s + (Number(p.dynasty) || 0), 0);
+  const valueToB = fromA.reduce((s, p) => s + (Number(p.dynasty) || 0), 0);
   const high = Math.max(valueToA, valueToB, 0.01);
   const low = Math.min(valueToA, valueToB);
   const ratio = low / high;
@@ -908,8 +921,16 @@ function analyze(){
 
   const afterA = new Set(teamA.playerIds);
   const afterB = new Set(teamB.playerIds);
-  fromA.forEach(p => { afterA.delete(p.id); afterB.add(p.id); });
-  fromB.forEach(p => { afterB.delete(p.id); afterA.add(p.id); });
+  fromA.forEach(p => {
+    if (p.kind === 'pick') return;
+    afterA.delete(p.id);
+    afterB.add(p.id);
+  });
+  fromB.forEach(p => {
+    if (p.kind === 'pick') return;
+    afterB.delete(p.id);
+    afterA.add(p.id);
+  });
 
   const beforeStandings = state.teams.map(t => {
     const mp = maxPointsForIds(t.playerIds);
@@ -1000,12 +1021,18 @@ function analyze(){
 
   function sideHtml(title, color, receives, value, maxDelta){
     const items = receives.length
-      ? '<ul>' + receives.map(p =>
-        '<li><span>' + escapeHtml(p.name)
-          + (p.ceilClass && p.ceilClass !== 'role'
-            ? '<span class="ceil">' + escapeHtml(ceilingLabel(p.ceilClass)) + '</span>' : '')
-          + '</span><span class="dv">' + tradeValHtml(p) + '</span></li>'
-      ).join('') + '</ul>'
+      ? '<ul>' + receives.map(p => {
+        const label = p.kind === 'pick'
+          ? (p.label || ((p.season || '') + ' ' + (window.DraftPickValue
+            ? DraftPickValue.roundOrdinal(p.round) : (p.round + 'th'))))
+          : p.name;
+        const extra = p.kind === 'pick'
+          ? (p.viaTrade ? '<span class="ceil">via trade</span>' : '<span class="ceil">pick</span>')
+          : (p.ceilClass && p.ceilClass !== 'role'
+            ? '<span class="ceil">' + escapeHtml(ceilingLabel(p.ceilClass)) + '</span>' : '');
+        return '<li><span>' + escapeHtml(label) + extra
+          + '</span><span class="dv">' + tradeValHtml(p) + '</span></li>';
+      }).join('') + '</ul>'
       : '<p class="empty-note">Nothing incoming</p>';
     return '<div class="side-card" style="--team-color:' + color + '">'
       + '<h4>' + escapeHtml(title) + ' gets</h4>'
@@ -1099,8 +1126,12 @@ function renderLists(){
   function listHtml(team, sendSet, side){
     if (!team) return '<p class="empty-note" style="padding:14px">Select a team</p>';
     const players = team.playerIds.map(id => state.playersById.get(id)).filter(Boolean)
-      .sort((a, b) => b.dynasty - a.dynasty);
-    return players.map(p => {
+      .sort((a, b) => (b.dynasty || 0) - (a.dynasty || 0));
+    const picks = (team.picks || []).slice()
+      .sort((a, b) => (b.dynasty || 0) - (a.dynasty || 0)
+        || Number(a.season) - Number(b.season)
+        || a.round - b.round);
+    const playerRows = players.map(p => {
       const checked = sendSet.has(p.id) ? ' checked' : '';
       const sel = sendSet.has(p.id) ? ' selected' : '';
       return '<label class="player-row' + sel + '">'
@@ -1116,6 +1147,25 @@ function renderLists(){
         + '</div></span>'
         + '<span class="val">' + tradeValHtml(p) + '</span></label>';
     }).join('');
+    const pickRows = picks.map(p => {
+      const checked = sendSet.has(p.id) ? ' checked' : '';
+      const sel = sendSet.has(p.id) ? ' selected' : '';
+      const orig = teamById(p.originalRosterId);
+      const via = p.viaTrade
+        ? ('via ' + ((orig && orig.displayName) || ('R' + p.originalRosterId)))
+        : 'own pick';
+      const bandBit = p.band && p.band !== 'mid' ? (' · ' + p.band) : '';
+      return '<label class="player-row' + sel + '" title="' + escapeHtml(p.note || '') + '">'
+        + '<input type="checkbox" data-side="' + side + '" value="' + escapeHtml(p.id) + '"' + checked + '>'
+        + '<span><span class="name">' + escapeHtml(p.label || (p.season + ' pick')) + '</span>'
+        + '<span class="ceil">pick</span>'
+        + '<div class="meta">' + escapeHtml(via + bandBit) + '</div></span>'
+        + '<span class="val">' + tradeValHtml(p) + '</span></label>';
+    }).join('');
+    if (!playerRows && !pickRows){
+      return '<p class="empty-note" style="padding:14px">No assets</p>';
+    }
+    return playerRows + pickRows;
   }
 
   document.getElementById('listA').innerHTML = listHtml(teamA, state.sendA, 'A');
@@ -1161,7 +1211,9 @@ function setMode(mode){
       + 'Click an offer to load it in Analyze.';
     renderFinder();
   } else {
-    lede.innerHTML = 'Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
+    lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending. '
+      + 'Player value is <strong>Trade ★</strong> (Lock OVR × age × injury × contract × situation). '
+      + 'Picks use 16-keeper fringe medians × year/slot/quality. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
   }
 }
 
@@ -1609,6 +1661,7 @@ async function load(){
     users.forEach(u => { userById[u.user_id] = u; });
 
     state.playersById = new Map();
+    state.picksById = new Map();
     state.teams = rosters.map((r, i) => {
       const u = userById[r.owner_id] || {};
       const raw = (u.metadata && u.metadata.team_name) || u.display_name || ('Roster ' + r.roster_id);
@@ -1623,19 +1676,77 @@ async function load(){
         if (!state.playersById.has(pid)){
           state.playersById.set(pid, makePlayer(pid, playerDb, projMaps, lockDist, histPack.avgById, sleeperMaps));
         }
-      });      return {
+      });
+      const s = r.settings || {};
+      const wins = s.wins || 0;
+      const losses = s.losses || 0;
+      const ties = s.ties || 0;
+      const rawPf = (s.fpts || 0) + (s.fpts_decimal || 0) / 100;
+      return {
         rosterId: r.roster_id,
         key,
         displayName: raw,
         color: TEAM_COLORS[key] || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
         manager: u.display_name || '',
-        playerIds: uniq
+        playerIds: uniq,
+        wins, losses, ties, rawPf,
+        picks: []
       };
-    }).sort((a, b) => {
+    });
+    /* Standings rank for next-draft slot mult (W then PF). */
+    state.teams.slice().sort((a, b) => b.wins - a.wins || b.rawPf - a.rawPf)
+      .forEach((t, i) => { t.standingsRank = i + 1; });
+    /* Max Pts proxy for team-quality rank. */
+    state.teams.forEach(t => {
+      t.maxPts = maxPointsForIds(t.playerIds).total;
+    });
+    state.teams.sort((a, b) => {
       if (a.key === MY_TEAM || a.displayName === MY_TEAM) return -1;
       if (b.key === MY_TEAM || b.displayName === MY_TEAM) return 1;
       return a.displayName.localeCompare(b.displayName);
     });
+
+    if (window.DraftPickValue){
+      try {
+        const [tradedRes, draftsRes] = await Promise.all([
+          fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/traded_picks'),
+          fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/drafts')
+        ]);
+        const traded = tradedRes.ok ? await tradedRes.json() : [];
+        const drafts = draftsRes.ok ? await draftsRes.json() : [];
+        const tradeScoreByPid = {};
+        state.playersById.forEach((p, id) => {
+          if (p.tradeScore != null) tradeScoreByPid[id] = Number(p.tradeScore);
+          else if (p.dynasty != null) tradeScoreByPid[id] = Number(p.dynasty);
+        });
+        const pickPack = DraftPickValue.valueLeaguePicks({
+          league,
+          rosters,
+          tradedPicks: traded,
+          drafts,
+          teams: state.teams,
+          tradeScoreByPid
+        });
+        state.draftPickRoundBases = pickPack.roundBases;
+        state.picksById = new Map();
+        state.teams.forEach(t => {
+          const owned = pickPack.byOwner[Number(t.rosterId)]
+            || pickPack.byOwner[String(t.rosterId)]
+            || [];
+          t.picks = owned.map(p => {
+            const row = Object.assign({}, p, {
+              name: p.label,
+              kind: 'pick',
+              dynasty: p.tradeScore
+            });
+            state.picksById.set(String(row.id), row);
+            return row;
+          });
+        });
+      } catch (pickErr){
+        console.warn('Trade Analyzer: draft pick values failed.', pickErr);
+      }
+    }
 
     const selA = document.getElementById('teamA');
     const selB = document.getElementById('teamB');
@@ -1668,8 +1779,14 @@ async function load(){
       status.textContent = 'Consensus projections unavailable (' + projError
         + '). Rookie Lock OVR may fall back to Sleeper/comps; smash samples still drive most Trade stars.';
     } else {
+      const baseBits = state.draftPickRoundBases
+        ? (' · pick bases '
+          + [1, 2, 3, 4, 5].filter(r => state.draftPickRoundBases[r] != null)
+            .map(r => r + '=' + Number(state.draftPickRoundBases[r]).toFixed(0)).join('/'))
+        : '';
       status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
-        + 'Trade value = Lock OVR × age × injury · ' + (lockPack.scored || 0)
+        + 'Players = Lock OVR × age × injury · picks = 16-keeper fringe medians × slot/quality'
+        + baseBits + ' · ' + (lockPack.scored || 0)
         + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
     }
     onTeamChange();
