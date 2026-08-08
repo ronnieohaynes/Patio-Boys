@@ -1,7 +1,8 @@
 /* Patio Boys transaction ledger.
    Fetches completed trades + waivers/FA claims across the league chain,
    resolves drafted picks to players, and grades with Lock OVR / Trade ★
-   as of that season (tradeScore-at-time). Roster-fit uses lockBase (smash FP). */
+   as of that season (tradeScore-at-time). Future unresolved picks use
+   DraftPickValue (16-keeper fringe). Roster-fit uses lockBase (smash FP). */
 (function(global){
   'use strict';
 
@@ -432,24 +433,121 @@
     };
   }
 
+  function roundOrdinal(n){
+    if (global.DraftPickValue && typeof DraftPickValue.roundOrdinal === 'function'){
+      return DraftPickValue.roundOrdinal(n);
+    }
+    const r = Number(n);
+    if (r === 1) return '1st';
+    if (r === 2) return '2nd';
+    if (r === 3) return '3rd';
+    if (Number.isFinite(r)) return r + 'th';
+    return String(n);
+  }
+
   function assetLabel(asset){
     if (asset.kind === 'player') return asset.name;
     if (asset.resolvedPid){
-      return 'Rd ' + asset.round + ' (' + asset.season + ') → ' + asset.name;
+      return roundOrdinal(asset.round) + ' (' + asset.season + ') → ' + asset.name;
     }
-    return 'Rd ' + asset.round + ' pick (' + asset.season + ')';
+    return (asset.season || '') + ' ' + roundOrdinal(asset.round);
+  }
+
+  /* Current-league pick Trade ★ context (16-keeper fringe medians × slot/quality). */
+  function buildPickValueContext(seasonPack, maps){
+    const D = global.DraftPickValue;
+    if (!D || !seasonPack) return null;
+    const rosterMap = seasonPack.rosterMap || {};
+    const finalRosters = seasonPack.finalRosters || {};
+    const teams = Object.keys(rosterMap).map(rid => {
+      const meta = rosterMap[rid] || {};
+      const ids = (finalRosters[rid] || []).map(String);
+      return {
+        rosterId: meta.rosterId != null ? meta.rosterId : rid,
+        displayName: meta.displayName || ('Roster ' + rid),
+        players: ids,
+        playerIds: ids,
+        wins: 0,
+        losses: 0,
+        ties: 0
+      };
+    });
+    if (!teams.length) return null;
+
+    const tradeScoreByPid = {};
+    if (maps && typeof maps.valueForPid === 'function'){
+      teams.forEach(t => {
+        (t.players || []).forEach(pid => {
+          const v = maps.valueForPid(pid);
+          if (v != null && Number.isFinite(Number(v)) && Number(v) > 0){
+            tradeScoreByPid[String(pid)] = Number(v);
+          }
+        });
+      });
+    }
+
+    D.assignQualityRanks(teams, tradeScoreByPid);
+    const league = seasonPack.league || {};
+    const rounds = Number(league.settings && league.settings.draft_rounds) || 5;
+    const fringe = D.fringeMediansByRound(
+      teams.map(t => t.players || []),
+      tradeScoreByPid,
+      {rounds}
+    );
+    const seasonNum = Number(league.season || seasonPack.season);
+    const draftDone = league.status === 'in_season' || league.status === 'complete'
+      || (seasonPack.draftId && league.status !== 'pre_draft');
+    const nextDraftSeason = String(
+      Number.isFinite(seasonNum) && draftDone ? seasonNum + 1 : (seasonNum || seasonPack.season)
+    );
+    return {
+      roundBases: fringe.bases,
+      nextDraftSeason,
+      teamsByRosterId: D.buildTeamIndex(teams),
+      teamCount: teams.length,
+      standingsMeaningful: D.standingsMeaningful(teams),
+      useStandingsForNext: D.standingsMeaningful(teams)
+    };
+  }
+
+  function valueUnresolvedPick(asset, pickValueCtx){
+    const D = global.DraftPickValue;
+    if (!D || !pickValueCtx || !asset) return null;
+    const valued = D.valuePick({
+      season: asset.season,
+      round: asset.round,
+      originalRosterId: asset.originalRosterId
+    }, pickValueCtx);
+    if (!valued || valued.tradeScore == null || !Number.isFinite(Number(valued.tradeScore))){
+      return null;
+    }
+    return valued;
   }
 
   /* Trades: tradeScore-at-time fairness (no roster-fit).
+     Unresolved future picks use DraftPickValue (fringe medians × slot/quality).
      When asset counts differ, blend total haul with per-asset average so
      2-for-1 / 3-for-1 deals aren't graded on volume alone. */
-  function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason){
+  function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason, pickValueCtx){
     const sideVals = sides.map(side => {
       let graded = 0;
       let gradedCount = 0;
       let pendingPicks = 0;
+      let valuedPicks = 0;
       const assets = (side.assets || []).map(a => {
         if (a.kind === 'pick' && !a.resolvedPid){
+          const pickVal = valueUnresolvedPick(a, pickValueCtx);
+          if (pickVal){
+            valuedPicks++;
+            return Object.assign({}, a, {
+              dynasty: pickVal.tradeScore,
+              tradeStars: pickVal.tradeStars,
+              graded: true,
+              pickValued: true,
+              pickNote: pickVal.note || '',
+              label: assetLabel(a)
+            });
+          }
           pendingPicks++;
           return Object.assign({}, a, {
             dynasty: null, tradeStars: null, graded: false, label: assetLabel(a)
@@ -477,12 +575,14 @@
         dynastyIn: graded,
         assetCount: gradedCount,
         avgDynasty: gradedCount > 0 ? graded / gradedCount : 0,
-        pendingPicks
+        pendingPicks,
+        valuedPicks
       };
     });
 
     const gradedSides = sideVals.filter(s => s.assets.some(a => a.graded));
     const pendingPicks = sideVals.reduce((n, s) => n + s.pendingPicks, 0);
+    const valuedPicks = sideVals.reduce((n, s) => n + (s.valuedPicks || 0), 0);
     const a = sideVals[0] || { dynastyIn: 0, assetCount: 0, avgDynasty: 0, team: null };
     const b = sideVals[1] || { dynastyIn: 0, assetCount: 0, avgDynasty: 0, team: null };
     if (gradedSides.length < 2){
@@ -491,6 +591,7 @@
         grade: null,
         pending: true,
         pendingPicks,
+        valuedPicks,
         reason: pendingPicks ? 'Waiting on undrafted picks' : 'Not enough graded assets',
         valueA: a.dynastyIn || 0,
         valueB: b.dynastyIn || 0,
@@ -521,20 +622,28 @@
     const ratio = uneven ? (0.5 * ratioTotal + 0.5 * ratioAvg) : ratioTotal;
     const grade = fairnessGrade(ratio);
     const winner = scoreA === scoreB ? null : (scoreA > scoreB ? a.team : b.team);
+    const reasonBits = [];
+    if (valuedPicks){
+      reasonBits.push(valuedPicks + ' future pick' + (valuedPicks === 1 ? '' : 's')
+        + ' valued via 16-keeper fringe');
+    }
+    if (pendingPicks){
+      reasonBits.push(pendingPicks + ' pick' + (pendingPicks === 1 ? '' : 's')
+        + ' still unvalued');
+    }
+    if (uneven){
+      reasonBits.push('Uneven haul (' + a.assetCount + ' vs ' + b.assetCount
+        + ') — fairness blends total + avg trade score');
+    }
     return {
       sides: sideVals,
       grade,
       ratio,
       pending: pendingPicks > 0,
       pendingPicks,
+      valuedPicks,
       uneven,
-      reason: pendingPicks
-        ? 'Grade uses resolved players only; ' + pendingPicks + ' pick'
-          + (pendingPicks === 1 ? '' : 's') + ' still open'
-        : (uneven
-          ? ('Uneven haul (' + a.assetCount + ' vs ' + b.assetCount
-            + ') — fairness blends total + avg trade score')
-          : null),
+      reason: reasonBits.length ? reasonBits.join(' · ') : null,
       valueA: a.dynastyIn,
       valueB: b.dynastyIn,
       avgA: a.avgDynasty,
@@ -786,6 +895,12 @@
       mapsBySeason[season] = await loadLockValueMaps(scoring, season, playerDb, ids);
     }));
 
+    onProgress('Building draft-pick Trade ★ context…');
+    const pickValueCtx = buildPickValueContext(
+      seasons[0],
+      mapsBySeason[String(currentSeason)] || mapsBySeason[seasons[0].season] || null
+    );
+
     onProgress('Grading transactions…');
     const rows = unique.map(tx => {
       const rosterMap = tx.rosterMap || {};
@@ -849,7 +964,8 @@
           maps,
           playerDb,
           asOf,
-          currentSeason
+          currentSeason,
+          pickValueCtx
         );
 
         return {
@@ -958,6 +1074,8 @@
     loadLockValueMaps,
     fairnessGrade,
     netToGrade,
-    franchiseKey
+    franchiseKey,
+    buildPickValueContext,
+    gradeTrade
   };
 })(typeof window !== 'undefined' ? window : globalThis);
