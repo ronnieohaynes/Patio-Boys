@@ -97,6 +97,79 @@
       null;
   }
 
+  /* Lazy-load the ~1.4MB ESPN box-score snapshot so HQ tabs stay responsive.
+     Pages should NOT sync document.write this file on boot.
+     Same-origin HQ iframes share one parse via window.top.NBA_GAMELOGS. */
+  let _gamelogLoading = null;
+  function parentGamelogHost(){
+    try {
+      if (typeof window === 'undefined') return null;
+      if (window.top && window.top !== window) return window.top;
+    } catch (e) { /* cross-origin */ }
+    return typeof window !== 'undefined' ? window : null;
+  }
+  function ensureGamelogsLoaded(opts){
+    const existing = gamelogSnapshot();
+    if (existing) return Promise.resolve(existing);
+    const host = parentGamelogHost();
+    if (host && host.NBA_GAMELOGS){
+      if (typeof window !== 'undefined') window.NBA_GAMELOGS = host.NBA_GAMELOGS;
+      return Promise.resolve(host.NBA_GAMELOGS);
+    }
+    if (host && host.__PB_GAMELOG_LOADING){
+      return host.__PB_GAMELOG_LOADING.then(snap => {
+        if (typeof window !== 'undefined' && snap) window.NBA_GAMELOGS = snap;
+        return snap;
+      });
+    }
+    if (_gamelogLoading) return _gamelogLoading;
+    const options = opts || {};
+    if (typeof document === 'undefined'){
+      return Promise.reject(new Error('gamelog snapshot unavailable'));
+    }
+    let bust = options.cacheBust;
+    if (bust == null && typeof location !== 'undefined'){
+      try { bust = new URLSearchParams(location.search).get('nocache') || '20260808-uiresp'; }
+      catch (e) { bust = '20260808-uiresp'; }
+    }
+    const src = options.scriptUrl || 'nba-gamelogs-snapshot.js';
+    const url = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(bust || '1');
+    let resolveLoad;
+    let rejectLoad;
+    const loadPromise = new Promise((resolve, reject) => {
+      resolveLoad = resolve;
+      rejectLoad = reject;
+    });
+    /* Publish before appendChild so sibling HQ iframes join this load. */
+    _gamelogLoading = loadPromise;
+    if (host) host.__PB_GAMELOG_LOADING = loadPromise;
+
+    const s = document.createElement('script');
+    s.src = url;
+    s.async = true;
+    s.onload = function(){
+      const snap = (host && host.NBA_GAMELOGS) || gamelogSnapshot();
+      if (snap){
+        if (host) host.NBA_GAMELOGS = snap;
+        if (typeof window !== 'undefined') window.NBA_GAMELOGS = snap;
+        if (typeof global !== 'undefined') global.NBA_GAMELOGS = snap;
+        resolveLoad(snap);
+      } else {
+        _gamelogLoading = null;
+        if (host && host.__PB_GAMELOG_LOADING === loadPromise) host.__PB_GAMELOG_LOADING = null;
+        rejectLoad(new Error('nba-gamelogs-snapshot.js loaded without NBA_GAMELOGS'));
+      }
+    };
+    s.onerror = function(){
+      _gamelogLoading = null;
+      if (host && host.__PB_GAMELOG_LOADING === loadPromise) host.__PB_GAMELOG_LOADING = null;
+      rejectLoad(new Error('Failed to load ' + url));
+    };
+    (host && host.document && host.document.head ? host.document.head : document.head)
+      .appendChild(s);
+    return loadPromise;
+  }
+
   /* Expand one compact box-score row ([pts,reb,...]) into a scoring object. */
   function rowFromGamelogFields(row, fields){
     const cols = fields && fields.length ? fields : GAMELOG_FIELDS;
@@ -1608,6 +1681,9 @@
     const useMarks = marks && marks.length ? marks : DEFAULT_MARKS;
     const scoreSettings = scoring || {};
 
+    try { await ensureGamelogsLoaded(); }
+    catch (e) { /* fall back to Sleeper weekly samples */ }
+
     const boxPack = buildSamplesFromGamelogs(String(statsSeason), scoreSettings);
     const usingBox = !!(boxPack && boxPack.samplesByPlayer
       && Object.keys(boxPack.samplesByPlayer).length);
@@ -1964,6 +2040,8 @@
     nbaRoleSentence,
     attachLockValues,
     loadSeasonDistMap,
-    fetchLockValueIndex
+    fetchLockValueIndex,
+    ensureGamelogsLoaded,
+    gamelogSnapshot
   };
 })(window);

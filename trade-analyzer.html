@@ -407,13 +407,27 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-mismatch';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'].forEach(function(src){
-    document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
-  });
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-uiresp';
+  /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
+  var files = ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
+  var i = 0;
+  function next(){
+    if (i >= files.length){
+      window.dispatchEvent(new Event('pb-deps-ready'));
+      return;
+    }
+    var s = document.createElement('script');
+    s.src = files[i++] + '?v=' + encodeURIComponent(v);
+    s.onload = function(){ setTimeout(next, 0); };
+    s.onerror = function(){ setTimeout(next, 0); };
+    document.head.appendChild(s);
+  }
+  next();
 })();
 </script>
 <script>
+window.addEventListener('pb-deps-ready', function pbTradeMain(){
+window.removeEventListener('pb-deps-ready', pbTradeMain);
 const LEAGUE_ID = '1350649177381552128';
 const MY_TEAM = 'Freakonomics';
 const MAX_TOP_N = 10;
@@ -1419,13 +1433,18 @@ function finderRuling(ratio, delta, softCaution){
   return 'allow';
 }
 
+function yieldToMain(){
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
 function counterpartPool(team, excludeIds){
   const skip = new Set((excludeIds || []).map(String));
   const players = (team.playerIds || []).map(id => state.playersById.get(String(id))).filter(Boolean)
     .filter(p => !skip.has(String(p.id)) && finderValue(p) > 0);
+  /* Cap pick pool — full 15×3yr inventory explodes 2/3-for-1 search space. */
   const picks = (team.picks || []).filter(p =>
     p && !skip.has(String(p.id)) && finderValue(p) > 0
-  );
+  ).sort((a, b) => finderValue(b) - finderValue(a)).slice(0, 8);
   return players.concat(picks).sort((a, b) => finderValue(b) - finderValue(a));
 }
 
@@ -1492,25 +1511,28 @@ function packagesMatchingValue(giver, targetVal, opts){
     out.push(pack);
   }
 
+  /* Trim pool before combinations — keeps Finder off the main-thread cliff. */
+  const trimmed = pool.slice(0, 18);
+
   /* 1-for-1 */
-  pool.forEach(p => consider([p]));
+  trimmed.forEach(p => consider([p]));
 
   /* 2-for-1 */
-  const n2 = Math.min(pool.length, 14);
-  for (let i = 0; i < Math.min(pool.length, 12); i++){
+  const n2 = Math.min(trimmed.length, 10);
+  for (let i = 0; i < n2; i++){
     for (let j = i + 1; j < n2; j++){
-      consider([pool[i], pool[j]]);
+      consider([trimmed[i], trimmed[j]]);
     }
   }
 
   /* 3-for-1 mismatched piles */
-  const n3 = Math.min(pool.length, 10);
+  const n3 = Math.min(trimmed.length, 7);
   for (let i = 0; i < n3; i++){
     for (let j = i + 1; j < n3; j++){
       for (let k = j + 1; k < n3; k++){
-        const a = pool[i];
-        const b = pool[j];
-        const c = pool[k];
+        const a = trimmed[i];
+        const b = trimmed[j];
+        const c = trimmed[k];
         /* Skip piles where the top chip already overshoots badly alone. */
         if (finderValue(a) > targetVal * 1.05) continue;
         consider([a, b, c]);
@@ -1544,6 +1566,24 @@ function buildFinderOffers(){
 
   const groups = [];
 
+  function offerFromPack(counterparty, youSend, youGet, pack, sendVal, getVal){
+    return {
+      counterparty,
+      youSend,
+      youGet,
+      sendVal,
+      getVal,
+      ratio: pack.ratio,
+      delta: Math.abs(sendVal - getVal),
+      ruling: pack.ruling,
+      grade: pack.grade,
+      kind: pack.kind,
+      score: pack.score,
+      softCaution: pack.softCaution,
+      mismatchNote: pack.mismatchNote
+    };
+  }
+
   if (state.finderDir === 'shop'){
     /* Shopping a player on MY roster — other teams offer pieces for him. */
     const mineIds = new Set((mine.playerIds || []).map(String));
@@ -1559,21 +1599,9 @@ function buildFinderOffers(){
       if (!packs.length) return;
       groups.push({
         team: other,
-        offers: packs.map(pack => ({
-          counterparty: other,
-          youSend: [anchor],
-          youGet: pack.assets || pack.players,
-          sendVal: targetVal,
-          getVal: pack.sendVal,
-          ratio: pack.ratio,
-          delta: Math.abs(pack.sendVal - targetVal),
-          ruling: pack.ruling,
-          grade: pack.grade,
-          kind: pack.kind,
-          score: pack.score,
-          softCaution: pack.softCaution,
-          mismatchNote: pack.mismatchNote
-        }))
+        offers: packs.map(pack => offerFromPack(
+          other, [anchor], pack.assets || pack.players, pack, targetVal, pack.sendVal
+        ))
       });
     });
   } else {
@@ -1589,26 +1617,28 @@ function buildFinderOffers(){
     if (!packs.length) return [];
     groups.push({
       team: owner,
-      offers: packs.map(pack => ({
-        counterparty: owner,
-        youSend: pack.assets || pack.players,
-        youGet: [anchor],
-        sendVal: pack.sendVal,
-        getVal: targetVal,
-        ratio: pack.ratio,
-        delta: Math.abs(pack.sendVal - targetVal),
-        ruling: pack.ruling,
-        grade: pack.grade,
-        kind: pack.kind,
-        score: pack.score,
-        softCaution: pack.softCaution,
-        mismatchNote: pack.mismatchNote
-      }))
+      offers: packs.map(pack => offerFromPack(
+        owner, pack.assets || pack.players, [anchor], pack, pack.sendVal, targetVal
+      ))
     });
   }
 
   groups.forEach(g => g.offers.sort((a, b) => b.score - a.score));
   groups.sort((a, b) => (b.offers[0] ? b.offers[0].score : 0) - (a.offers[0] ? a.offers[0].score : 0));
+  return groups;
+}
+
+/* Async Finder rebuild so selecting a player doesn't freeze HQ. */
+let finderBuildToken = 0;
+async function buildFinderOffersAsync(){
+  const token = ++finderBuildToken;
+  const mine = finderTeam();
+  const anchor = state.finderPlayerId ? state.playersById.get(String(state.finderPlayerId)) : null;
+  if (!mine || !anchor) return [];
+  await yieldToMain();
+  if (token !== finderBuildToken) return null;
+  const groups = buildFinderOffers();
+  if (token !== finderBuildToken) return null;
   return groups;
 }
 
@@ -1676,14 +1706,17 @@ function renderFinderPlayerList(){
   });
 }
 
-function renderFinderResults(){
+async function renderFinderResults(){
   const root = document.getElementById('finderResults');
-  const groups = buildFinderOffers();
-  state.finderOffers = groups;
   if (!state.finderPlayerId){
+    state.finderOffers = [];
     root.innerHTML = '<div class="finder-empty">Select a player to generate packages.</div>';
     return;
   }
+  root.innerHTML = '<div class="finder-empty">Scanning packages\u2026</div>';
+  const groups = await buildFinderOffersAsync();
+  if (groups == null) return; /* superseded by a newer selection */
+  state.finderOffers = groups;
   if (!groups.length){
     root.innerHTML = '<div class="finder-empty">No packages within fairness bands (ratio ≥ '
       + FINDER_FAIR_HARD + '). Try another player.</div>';
@@ -1938,6 +1971,49 @@ async function load(){
       return a.displayName.localeCompare(b.displayName);
     });
 
+    await yieldToMain();
+
+    const selA = document.getElementById('teamA');
+    const selB = document.getElementById('teamB');
+    const opts = state.teams.map(t =>
+      '<option value="' + escapeHtml(String(t.rosterId)) + '">' + escapeHtml(t.displayName)
+      + (t.key === MY_TEAM || t.displayName === MY_TEAM ? ' (you)' : '')
+      + (t.manager ? ' · ' + escapeHtml(t.manager) : '')
+      + '</option>'
+    ).join('');
+    selA.innerHTML = opts;
+    selB.innerHTML = opts;
+    const finderSel = document.getElementById('finderTeam');
+    finderSel.innerHTML = opts;
+    const mine = state.teams.find(t => t.key === MY_TEAM || t.displayName === MY_TEAM) || state.teams[0];
+    const other = state.teams.find(t => t !== mine) || state.teams[1];
+    if (mine){
+      selA.value = String(mine.rosterId);
+      finderSel.value = String(mine.rosterId);
+    }
+    if (other) selB.value = String(other.rosterId);
+    selA.addEventListener('change', onTeamChange);
+    selB.addEventListener('change', onTeamChange);
+    bindFinderUi();
+
+    /* First paint with players only — keep HQ tabs responsive. */
+    document.getElementById('app').hidden = false;
+    tag.textContent = state.teams.length + ' teams ready';
+    status.classList.remove('error');
+    if (projError){
+      status.classList.add('error');
+      status.textContent = 'Consensus projections unavailable (' + projError
+        + '). Rookie Lock OVR may fall back to Sleeper/comps; smash samples still drive most Trade stars.';
+    } else {
+      status.textContent = 'Analyze a deal or use Trade Finder. Loading draft-pick values\u2026 · '
+        + (lockPack.scored || 0) + ' players from ' + lockPack.statsSeason
+        + ' (' + lockPack.weeksFound + ' game samples).';
+    }
+    onTeamChange();
+    setMode('analyze');
+
+    await yieldToMain();
+
     if (window.DraftPickValue){
       try {
         const [tradedRes, draftsRes] = await Promise.all([
@@ -1946,6 +2022,7 @@ async function load(){
         ]);
         const traded = tradedRes.ok ? await tradedRes.json() : [];
         const drafts = draftsRes.ok ? await draftsRes.json() : [];
+        await yieldToMain();
         const tradeScoreByPid = {};
         state.playersById.forEach((p, id) => {
           if (p.tradeScore != null) tradeScoreByPid[id] = Number(p.tradeScore);
@@ -1976,54 +2053,28 @@ async function load(){
             return row;
           });
         });
+        await yieldToMain();
+        renderLists();
+        if (state.mode === 'finder') renderFinder();
+        if (!projError){
+          const baseBits = state.draftPickRoundBases
+            ? (' · pick bases '
+              + [1, 2, 3, 4, 5].filter(r => state.draftPickRoundBases[r] != null)
+                .map(r => r + '=' + Number(state.draftPickRoundBases[r]).toFixed(0)).join('/'))
+            : '';
+          status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
+            + 'Players = Lock OVR × age × injury · picks = 16-keeper fringe medians × slot/quality'
+            + baseBits + ' · ' + (lockPack.scored || 0)
+            + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
+        }
       } catch (pickErr){
         console.warn('Trade Analyzer: draft pick values failed.', pickErr);
+        if (!projError){
+          status.textContent = 'Analyze a deal or use Trade Finder. Pick values unavailable · '
+            + (lockPack.scored || 0) + ' players from ' + lockPack.statsSeason + '.';
+        }
       }
     }
-
-    const selA = document.getElementById('teamA');
-    const selB = document.getElementById('teamB');
-    const opts = state.teams.map(t =>
-      '<option value="' + escapeHtml(String(t.rosterId)) + '">' + escapeHtml(t.displayName)
-      + (t.key === MY_TEAM || t.displayName === MY_TEAM ? ' (you)' : '')
-      + (t.manager ? ' · ' + escapeHtml(t.manager) : '')
-      + '</option>'
-    ).join('');
-    selA.innerHTML = opts;
-    selB.innerHTML = opts;
-    const finderSel = document.getElementById('finderTeam');
-    finderSel.innerHTML = opts;
-    const mine = state.teams.find(t => t.key === MY_TEAM || t.displayName === MY_TEAM) || state.teams[0];
-    const other = state.teams.find(t => t !== mine) || state.teams[1];
-    if (mine){
-      selA.value = String(mine.rosterId);
-      finderSel.value = String(mine.rosterId);
-    }
-    if (other) selB.value = String(other.rosterId);
-    selA.addEventListener('change', onTeamChange);
-    selB.addEventListener('change', onTeamChange);
-    bindFinderUi();
-
-    document.getElementById('app').hidden = false;
-    tag.textContent = state.teams.length + ' teams ready';
-    status.classList.remove('error');
-    if (projError){
-      status.classList.add('error');
-      status.textContent = 'Consensus projections unavailable (' + projError
-        + '). Rookie Lock OVR may fall back to Sleeper/comps; smash samples still drive most Trade stars.';
-    } else {
-      const baseBits = state.draftPickRoundBases
-        ? (' · pick bases '
-          + [1, 2, 3, 4, 5].filter(r => state.draftPickRoundBases[r] != null)
-            .map(r => r + '=' + Number(state.draftPickRoundBases[r]).toFixed(0)).join('/'))
-        : '';
-      status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
-        + 'Players = Lock OVR × age × injury · picks = 16-keeper fringe medians × slot/quality'
-        + baseBits + ' · ' + (lockPack.scored || 0)
-        + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
-    }
-    onTeamChange();
-    setMode('analyze');
   } catch (e){
     status.classList.add('error');
     status.textContent = 'Could not load trade analyzer: ' + (e.message || e);
@@ -2032,6 +2083,7 @@ async function load(){
 }
 
 load();
+}); // pb-deps-ready
 </script>
 </body>
 </html>

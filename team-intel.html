@@ -537,13 +537,27 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-pickval';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'].forEach(function(src){
-    document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
-  });
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-uiresp';
+  /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
+  var files = ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
+  var i = 0;
+  function next(){
+    if (i >= files.length){
+      window.dispatchEvent(new Event('pb-deps-ready'));
+      return;
+    }
+    var s = document.createElement('script');
+    s.src = files[i++] + '?v=' + encodeURIComponent(v);
+    s.onload = function(){ setTimeout(next, 0); };
+    s.onerror = function(){ setTimeout(next, 0); };
+    document.head.appendChild(s);
+  }
+  next();
 })();
 </script>
 <script>
+window.addEventListener('pb-deps-ready', function pbIntelMain(){
+window.removeEventListener('pb-deps-ready', pbIntelMain);
 const LEAGUE_ID = '1350649177381552128';
 const TWO_K = window.TWO_K_SNAPSHOT || {ratings:[]};
 function normalizePlayerName(name){
@@ -2928,19 +2942,41 @@ function tradeScoreLookup(){
   return map;
 }
 
+function draftPickValueSignature(){
+  const scores = tradeScoreLookup();
+  let n = 0;
+  let sum = 0;
+  Object.keys(scores).forEach(id => {
+    n += 1;
+    sum += Number(scores[id]) || 0;
+  });
+  const maxReady = state.maxPtsReady ? '1' : '0';
+  const maxSig = (state.teams || []).map(t =>
+    String(t.rosterId) + ':' + (t.maxPts != null ? Math.round(t.maxPts) : '')
+  ).join(',');
+  return n + '|' + Math.round(sum) + '|' + maxReady + '|' + maxSig;
+}
+
 function valueDraftPicks(rawByOwner, seasons, meta){
   if (!window.DraftPickValue || !state.teams){
     state.draftPicksByRosterId = rawByOwner;
     state.draftPickSeasons = seasons;
     state.draftPickRoundBases = null;
+    state.draftPickValueSig = null;
+    return;
+  }
+  const sig = draftPickValueSignature();
+  if (state.draftPickValueSig === sig && state.draftPicksByRosterId){
+    state.draftPickSeasons = seasons;
     return;
   }
   const D = DraftPickValue;
-  D.assignQualityRanks(state.teams, tradeScoreLookup());
+  const scoreMap = tradeScoreLookup();
+  D.assignQualityRanks(state.teams, scoreMap);
   const meaningful = D.standingsMeaningful(state.teams);
   const fringe = D.fringeMediansByRound(
     state.teams.map(t => t.players || []),
-    tradeScoreLookup(),
+    scoreMap,
     {rounds: (meta && meta.rounds) || 5}
   );
   const ctx = {
@@ -2955,6 +2991,7 @@ function valueDraftPicks(rawByOwner, seasons, meta){
   state.draftPickSeasons = seasons;
   state.draftPickRoundBases = fringe.bases;
   state.draftPickValueCtx = ctx;
+  state.draftPickValueSig = sig;
 }
 
 async function loadDraftPicks(){
@@ -3170,7 +3207,18 @@ async function loadAwards(){
     })
   ];
 
-  tasks.forEach(p => p.then(() => { renderNav(); renderTeam(); }));
+  /* Coalesce boot re-renders — each task used to paint the whole page. */
+  let bootRenderQueued = false;
+  function queueBootRender(){
+    if (bootRenderQueued) return;
+    bootRenderQueued = true;
+    setTimeout(() => {
+      bootRenderQueued = false;
+      renderNav();
+      renderTeam();
+    }, 0);
+  }
+  tasks.forEach(p => p.then(queueBootRender));
   await Promise.allSettled(tasks);
 
   /* FA pool needs player DB + projections + smash season from ceilings. */
@@ -3187,6 +3235,7 @@ async function loadAwards(){
   renderTeam();
   setLoadNote(null);
 })();
+}); // pb-deps-ready
 </script>
 </body>
 </html>

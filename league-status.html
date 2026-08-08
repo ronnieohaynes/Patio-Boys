@@ -179,13 +179,27 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-flex-mono';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js'].forEach(function(src){
-    document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
-  });
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-uiresp';
+  /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
+  var files = ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js'];
+  var i = 0;
+  function next(){
+    if (i >= files.length){
+      window.dispatchEvent(new Event('pb-deps-ready'));
+      return;
+    }
+    var s = document.createElement('script');
+    s.src = files[i++] + '?v=' + encodeURIComponent(v);
+    s.onload = function(){ setTimeout(next, 0); };
+    s.onerror = function(){ setTimeout(next, 0); };
+    document.head.appendChild(s);
+  }
+  next();
 })();
 </script>
 <script>
+window.addEventListener('pb-deps-ready', function pbStatusMain(){
+window.removeEventListener('pb-deps-ready', pbStatusMain);
 const LEAGUE_ID = '1350649177381552128';
 
 function fmtPts(s){
@@ -1008,6 +1022,7 @@ async function loadAccolades(){
     loadTrades(currentData, historyData)
   ]);
 })();
+}); // pb-deps-ready
 </script>
 </body>
 </html>
