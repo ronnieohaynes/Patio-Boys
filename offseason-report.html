@@ -140,8 +140,9 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-flex-mono';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
+  /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
+  ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -401,7 +402,9 @@ async function load(){
     const leagueRes = await fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID);
     if (!leagueRes.ok) throw new Error('League fetch failed');
     const league = await leagueRes.json();
-    const playerDb = await fetch('https://api.sleeper.app/v1/players/nba').then(r => r.json());
+    const playerDb = (window.PatioBoysShare && typeof PatioBoysShare.fetchPlayersNba === 'function')
+      ? await PatioBoysShare.fetchPlayersNba()
+      : await fetch('https://api.sleeper.app/v1/players/nba').then(r => r.json());
 
     const draftPack = await gradeDraft(league, playerDb, msg => { status.textContent = msg; });
 

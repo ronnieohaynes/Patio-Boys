@@ -620,11 +620,10 @@
 </main>
 
 <div class="lockwrap" id="lockWrap">
-  <button class="lockbtn" id="lockBtn">Download draft board PDF</button>
+  <button class="lockbtn" id="lockBtn">Copy draft order</button>
   <p class="caption" id="copyHint"></p>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin="anonymous"></script>
 <script>
 const teamColors = {
   'Funeral Home':'#C9963A','BoobieDominguez':'#1D9E75','2011-12 Champs':'#D8553A',
@@ -831,110 +830,6 @@ function resetBoard(){
     board[roundNum].forEach(p => { p.team = null; });
   });
   applyPresetPicks();
-}
-
-function hexToRgb(hex){
-  const m = String(hex || '').match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
-  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [34, 33, 28];
-}
-
-function pdfTeamLabel(team){
-  if (!team) return '\u2014';
-  return withManager(team);
-}
-
-function exportDraftBoardPdf(){
-  if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('PDF library not loaded');
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const margin = 40;
-  const gridTop = margin + 42;
-  const gridW = pageW - margin * 2;
-  const roundLabelW = 54;
-  const cellW = (gridW - roundLabelW) / 8;
-  const cellH = 56;
-  const gap = 5;
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(22);
-  doc.setTextColor(27, 24, 20);
-  doc.text('Patio Boys \u00b7 S26\u201327 Draft Board', margin, margin);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(110, 110, 120);
-  doc.text(
-    'Lottery draw \u00b7 ' + new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
-    margin,
-    margin + 18
-  );
-
-  Object.keys(board).forEach((roundNum, rowIndex) => {
-    const y = gridTop + rowIndex * (cellH + gap);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(120, 120, 132);
-    doc.text('Round ' + roundNum, margin, y + cellH / 2 + 3);
-
-    board[roundNum].forEach((pick, colIndex) => {
-      const x = margin + roundLabelW + colIndex * cellW;
-      const team = pick.team;
-      const rgb = team ? hexToRgb(teamColors[team]) : [245, 246, 248];
-
-      if (team){
-        doc.setFillColor(rgb[0], rgb[1], rgb[2]);
-        doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
-      } else {
-        doc.setFillColor(245, 246, 248);
-        doc.setDrawColor(220, 222, 228);
-      }
-      doc.roundedRect(x + 1, y, cellW - 2, cellH, 4, 4, 'FD');
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7);
-      if (team) doc.setTextColor(255, 255, 255);
-      else doc.setTextColor(140, 140, 150);
-      doc.text('Pick ' + pick.pick, x + 8, y + 13);
-
-      const label = pdfTeamLabel(team);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8.5);
-      const lines = doc.splitTextToSize(label, cellW - 14);
-      if (team) doc.setTextColor(255, 255, 255);
-      else doc.setTextColor(70, 70, 80);
-      doc.text(lines.slice(0, 2), x + 8, y + 28);
-    });
-  });
-
-  const round1Order = board[1].map(p => pdfTeamLabel(p.team)).join(' \u00b7 ');
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(100, 100, 110);
-  doc.text('Round 1 order: ' + round1Order, margin, pageH - 28, { maxWidth: pageW - margin * 2 });
-
-  const stamp = new Date().toISOString().slice(0, 10);
-  doc.save('Patio-Boys-Draft-Board-' + stamp + '.pdf');
-  return true;
-}
-
-function downloadDraftBoardPdf(showStatus){
-  try {
-    exportDraftBoardPdf();
-    if (showStatus){
-      const hint = document.getElementById('copyHint');
-      if (hint) hint.textContent = 'Draft board PDF downloaded.';
-    }
-    return true;
-  } catch (e){
-    console.warn('Patio Boys lottery: PDF export failed.', e);
-    if (showStatus){
-      const hint = document.getElementById('copyHint');
-      if (hint) hint.textContent = 'Could not create PDF. Try again after the page finishes loading.';
-    }
-    return false;
-  }
 }
 
 /* ===== Finalized 26-27 draft order =====
@@ -2359,17 +2254,12 @@ async function runLottery(){
     await waitAfterPick(null);
 
     setNowDrawing(null, 'The full board is set');
-    const pdfOk = downloadDraftBoardPdf(false);
-    setOnelinerText(
-      'Round 2 is locked. Rounds 3\u20135 already mirrored in live off round 1.' +
-      (pdfOk ? ' Draft board PDF downloaded.' : '')
-    );
+    setOnelinerText('Round 2 is locked. Rounds 3\u20135 already mirrored in live off round 1.');
     btn.textContent = 'Run it again';
     const round1Order = [1,2,3,4,5,6,7,8].map(k => results[k]);
     const round2List = [16,15,14,13,12,11,10,9].map(p => p + ':' + round2[p]);
     const summary = 'Round 1 order to enter into Sleeper (picks 7 & 8 as Hamas and Belt, then trade pick 7 to ' + slot2Team + ' and pick 8 to ' + slot1Winner.name + '): picks 1-8 ' + round1Order.join(', ') + '. Round 2, already accounting for the Freakonomics/Belt, Hamas/Papa Book, and forfeited-pick trades, picks 9-16: ' + round2List.reverse().join(', ') + '. Rounds 3-5 continue the same snake using Hamas and Belt\u2019s own picks 7 and 8, not the round 1/2 trade recipients, those trades were one-time only.';
     document.getElementById('lockBtn').onclick = () => {
-      if (downloadDraftBoardPdf(true)) return;
       navigator.clipboard.writeText(summary).then(() => {
         document.getElementById('copyHint').textContent = 'Copied: ' + summary;
       }).catch(() => { document.getElementById('copyHint').textContent = summary; });
@@ -2395,19 +2285,19 @@ const HQ_NAV = {
     label: 'League',
     defaultTab: 'status',
     tabs: {
-      status: { panel: 'tabStatus', btn: 'tabBtnStatus', frame: 'leagueStatusFrame', src: 'league-status.html?embed=1&v=20260808-loader', loaded: 'statusFrameLoaded' },
-      intel:  { panel: 'tabIntel',  btn: 'tabBtnIntel',  frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260808-loader', loaded: 'intelFrameLoaded' },
-      goat:   { panel: 'tabGoat',   btn: 'tabBtnGoat',   frame: 'goatTrackerFrame',   src: 'goat-tracker.html?embed=1&v=20260808-loader', loaded: 'goatFrameLoaded' }
+      status: { panel: 'tabStatus', btn: 'tabBtnStatus', frame: 'leagueStatusFrame', src: 'league-status.html?embed=1&v=20260808-fast', loaded: 'statusFrameLoaded' },
+      intel:  { panel: 'tabIntel',  btn: 'tabBtnIntel',  frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260808-fast', loaded: 'intelFrameLoaded' },
+      goat:   { panel: 'tabGoat',   btn: 'tabBtnGoat',   frame: 'goatTrackerFrame',   src: 'goat-tracker.html?embed=1&v=20260808-fast', loaded: 'goatFrameLoaded' }
     }
   },
   moves: {
     label: 'Moves',
     defaultTab: 'fa',
     tabs: {
-      fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',     src: 'free-agents.html?embed=1&v=20260808-loader', loaded: 'faFrameLoaded' },
-      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',   src: 'transactions.html?embed=1&v=20260808-loader', loaded: 'txFrameLoaded' },
-      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame',  src: 'trade-analyzer.html?embed=1&v=20260808-loader', loaded: 'tradeFrameLoaded' },
-      offseason: { panel: 'tabOffseason', btn: 'tabBtnOffseason', frame: 'offseasonReportFrame', src: 'offseason-report.html?embed=1&v=20260808-loader', loaded: 'offseasonFrameLoaded' }
+      fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',     src: 'free-agents.html?embed=1&v=20260808-fast', loaded: 'faFrameLoaded' },
+      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',   src: 'transactions.html?embed=1&v=20260808-fast', loaded: 'txFrameLoaded' },
+      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame',  src: 'trade-analyzer.html?embed=1&v=20260808-fast', loaded: 'tradeFrameLoaded' },
+      offseason: { panel: 'tabOffseason', btn: 'tabBtnOffseason', frame: 'offseasonReportFrame', src: 'offseason-report.html?embed=1&v=20260808-fast', loaded: 'offseasonFrameLoaded' }
     }
   },
   draft: {
@@ -2415,8 +2305,8 @@ const HQ_NAV = {
     defaultTab: 'board',
     tabs: {
       board:  { panel: 'tabBoard',  btn: 'tabBtnBoard',  frame: null,               src: null,                                    loaded: null },
-      grades: { panel: 'tabGrades', btn: 'tabBtnGrades', frame: 'draftGradesFrame', src: 'draft-grades.html?embed=1&v=20260808-loader', loaded: 'gradesFrameLoaded' },
-      mock:   { panel: 'tabMock',   btn: 'tabBtnMock',   frame: 'mockDraftFrame',   src: 'mock-draft.html?embed=1&v=20260808-loader', loaded: 'mockFrameLoaded' }
+      grades: { panel: 'tabGrades', btn: 'tabBtnGrades', frame: 'draftGradesFrame', src: 'draft-grades.html?embed=1&v=20260808-fast', loaded: 'gradesFrameLoaded' },
+      mock:   { panel: 'tabMock',   btn: 'tabBtnMock',   frame: 'mockDraftFrame',   src: 'mock-draft.html?embed=1&v=20260808-fast', loaded: 'mockFrameLoaded' }
     }
   },
   rules: {

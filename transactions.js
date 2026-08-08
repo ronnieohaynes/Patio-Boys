@@ -824,7 +824,9 @@
     const currentSeason = seasons[0].season;
 
     onProgress('Loading players…');
-    const playerDb = await fetchJson('https://api.sleeper.app/v1/players/nba');
+    const playerDb = (global.PatioBoysShare && typeof global.PatioBoysShare.fetchPlayersNba === 'function')
+      ? await global.PatioBoysShare.fetchPlayersNba()
+      : await fetchJson('https://api.sleeper.app/v1/players/nba');
 
     onProgress('Fetching trades and waivers…');
     const rawState = [];

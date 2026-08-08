@@ -543,9 +543,9 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-uiresp';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
-  var files = ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
+  var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   var i = 0;
   function next(){
     if (i >= files.length){
@@ -881,6 +881,10 @@ async function loadCeilings(){
 }
 
 async function loadPlayerDb(){
+  if (window.PatioBoysShare && typeof PatioBoysShare.fetchPlayersNba === 'function'){
+    state.playerDb = await PatioBoysShare.fetchPlayersNba();
+    return;
+  }
   const r = await fetch('https://api.sleeper.app/v1/players/nba');
   if (!r.ok) throw new Error('Player database unavailable');
   state.playerDb = await r.json();
@@ -891,9 +895,14 @@ async function loadPlayerDb(){
 async function loadProjections(){
   const scoring = state.league.scoring_settings || {};
   const season = state.league.season;
-  const r = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
-  if (!r.ok) throw new Error('Projections unavailable (HTTP ' + r.status + ')');
-  const rows = await r.json();
+  let rows;
+  if (window.PatioBoysShare && typeof PatioBoysShare.fetchNbaProjections === 'function'){
+    rows = await PatioBoysShare.fetchNbaProjections(season);
+  } else {
+    const r = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
+    if (!r.ok) throw new Error('Projections unavailable (HTTP ' + r.status + ')');
+    rows = await r.json();
+  }
   if (!Array.isArray(rows) || !rows.length) throw new Error('No ' + season + ' projections published yet');
   const byId = new Map();
   rows.forEach(row => {

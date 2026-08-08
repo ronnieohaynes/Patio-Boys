@@ -246,8 +246,9 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-flex-mono';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
+  /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
+  ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -1005,28 +1006,34 @@ async function load(){
   const status = document.getElementById('status');
   const tag = document.getElementById('progressTag');
   try {
-    const [leagueRes, usersRes, rostersRes, playersRes] = await Promise.all([
+    const playersP = (window.PatioBoysShare && typeof PatioBoysShare.fetchPlayersNba === 'function')
+      ? PatioBoysShare.fetchPlayersNba()
+      : fetch('https://api.sleeper.app/v1/players/nba').then(r => {
+          if (!r.ok) throw new Error('players unavailable');
+          return r.json();
+        });
+    const [leagueRes, usersRes, rostersRes, playerDb] = await Promise.all([
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID),
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/users'),
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters'),
-      fetch('https://api.sleeper.app/v1/players/nba')
+      playersP
     ]);
-    if (!leagueRes.ok || !usersRes.ok || !rostersRes.ok || !playersRes.ok){
+    if (!leagueRes.ok || !usersRes.ok || !rostersRes.ok || !playerDb){
       throw new Error('Sleeper league request failed');
     }
     const league = await leagueRes.json();
     const users = await usersRes.json();
     const rosters = await rostersRes.json();
-    const playerDb = await playersRes.json();
 
     status.textContent = 'Scoring free agents against each roster\u2026';
     const scoring = league.scoring_settings || {};
     const season = league.season || '2026';
     const projById = new Map();
     try {
-      const projRes = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
-      if (!projRes.ok) throw new Error('HTTP ' + projRes.status);
-      const rows = await projRes.json();
+      const rows = (window.PatioBoysShare && typeof PatioBoysShare.fetchNbaProjections === 'function')
+        ? await PatioBoysShare.fetchNbaProjections(season)
+        : await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular')
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
       (rows || []).forEach(row => {
         const stats = row.stats || {};
         let total = 0, matched = 0;
