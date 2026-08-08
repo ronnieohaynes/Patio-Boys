@@ -121,6 +121,12 @@
 </style>
 </head>
 <body>
+<link rel="stylesheet" href="hq-loader.css">
+<div class="pb-boot-loader" id="pbBootLoader" role="status" aria-live="polite">
+  <div class="pb-boot-mark" aria-hidden="true">PB</div>
+  <p class="pb-boot-label">Loading report card…</p>
+</div>
+<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
 <div class="wrap">
@@ -619,10 +625,12 @@ async function load(){
           + '</article>';
       }).join('')
       + '</div>';
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'offseason-report'});
   } catch (e){
     status.classList.add('error');
     status.textContent = 'Could not build off-season report: ' + (e.message || e);
     tag.textContent = 'Error';
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'offseason-report', error: true});
   }
 }
 

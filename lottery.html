@@ -376,6 +376,38 @@
     display:block;
     background:var(--bg);
   }
+  .boardsection.status-panel{position:relative}
+  .pb-boot-loader.pb-panel-loader{
+    position:absolute;inset:0;z-index:5;border-radius:inherit;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+    background:color-mix(in srgb, var(--bg) 88%, #000);
+    transition:opacity .28s ease, visibility .28s ease;
+  }
+  .pb-boot-loader.pb-panel-loader[hidden],
+  .pb-boot-loader.pb-panel-loader.is-done{
+    opacity:0;visibility:hidden;pointer-events:none;
+  }
+  .pb-boot-mark{
+    position:relative;width:64px;height:64px;border-radius:50%;
+    display:grid;place-items:center;
+    font-family:'Anton',sans-serif;font-size:22px;letter-spacing:.04em;
+    color:#1B140A;background:var(--gold);
+    box-shadow:inset 0 -3px 0 rgba(0,0,0,.18), 0 8px 22px rgba(0,0,0,.35);
+  }
+  .pb-boot-mark::before{
+    content:'';position:absolute;inset:-6px;border-radius:50%;
+    border:2px solid transparent;border-top-color:var(--gold);
+    border-right-color:color-mix(in srgb, var(--gold) 35%, transparent);
+    animation:pbBootSpin .9s linear infinite;
+  }
+  .pb-boot-label{
+    margin:0;font-family:'IBM Plex Mono',monospace;font-size:11px;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--ink-dim);
+  }
+  @keyframes pbBootSpin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion: reduce){
+    .pb-boot-mark::before{animation:none;border-color:var(--gold)}
+  }
   .boardsection h2{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:18px;margin:0;line-height:1}
   .board-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;flex-shrink:0}
   .board-head .caption{margin:0;font-size:10px;color:var(--ink-dim)}
@@ -2363,19 +2395,19 @@ const HQ_NAV = {
     label: 'League',
     defaultTab: 'status',
     tabs: {
-      status: { panel: 'tabStatus', btn: 'tabBtnStatus', frame: 'leagueStatusFrame', src: 'league-status.html?embed=1&v=20260808-uiresp', loaded: 'statusFrameLoaded' },
-      intel:  { panel: 'tabIntel',  btn: 'tabBtnIntel',  frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260808-uiresp', loaded: 'intelFrameLoaded' },
-      goat:   { panel: 'tabGoat',   btn: 'tabBtnGoat',   frame: 'goatTrackerFrame',   src: 'goat-tracker.html?embed=1&v=20260808-flex-mono', loaded: 'goatFrameLoaded' }
+      status: { panel: 'tabStatus', btn: 'tabBtnStatus', frame: 'leagueStatusFrame', src: 'league-status.html?embed=1&v=20260808-loader', loaded: 'statusFrameLoaded' },
+      intel:  { panel: 'tabIntel',  btn: 'tabBtnIntel',  frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260808-loader', loaded: 'intelFrameLoaded' },
+      goat:   { panel: 'tabGoat',   btn: 'tabBtnGoat',   frame: 'goatTrackerFrame',   src: 'goat-tracker.html?embed=1&v=20260808-loader', loaded: 'goatFrameLoaded' }
     }
   },
   moves: {
     label: 'Moves',
     defaultTab: 'fa',
     tabs: {
-      fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',     src: 'free-agents.html?embed=1&v=20260808-flex-mono', loaded: 'faFrameLoaded' },
-      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',   src: 'transactions.html?embed=1&v=20260808-txpicks', loaded: 'txFrameLoaded' },
-      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame',  src: 'trade-analyzer.html?embed=1&v=20260808-uiresp', loaded: 'tradeFrameLoaded' },
-      offseason: { panel: 'tabOffseason', btn: 'tabBtnOffseason', frame: 'offseasonReportFrame', src: 'offseason-report.html?embed=1&v=20260808-flex-mono', loaded: 'offseasonFrameLoaded' }
+      fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',     src: 'free-agents.html?embed=1&v=20260808-loader', loaded: 'faFrameLoaded' },
+      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',   src: 'transactions.html?embed=1&v=20260808-loader', loaded: 'txFrameLoaded' },
+      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame',  src: 'trade-analyzer.html?embed=1&v=20260808-loader', loaded: 'tradeFrameLoaded' },
+      offseason: { panel: 'tabOffseason', btn: 'tabBtnOffseason', frame: 'offseasonReportFrame', src: 'offseason-report.html?embed=1&v=20260808-loader', loaded: 'offseasonFrameLoaded' }
     }
   },
   draft: {
@@ -2383,15 +2415,15 @@ const HQ_NAV = {
     defaultTab: 'board',
     tabs: {
       board:  { panel: 'tabBoard',  btn: 'tabBtnBoard',  frame: null,               src: null,                                    loaded: null },
-      grades: { panel: 'tabGrades', btn: 'tabBtnGrades', frame: 'draftGradesFrame', src: 'draft-grades.html?embed=1&v=20260731-5050', loaded: 'gradesFrameLoaded' },
-      mock:   { panel: 'tabMock',   btn: 'tabBtnMock',   frame: 'mockDraftFrame',   src: 'mock-draft.html?embed=1&v=20260731-noboost', loaded: 'mockFrameLoaded' }
+      grades: { panel: 'tabGrades', btn: 'tabBtnGrades', frame: 'draftGradesFrame', src: 'draft-grades.html?embed=1&v=20260808-loader', loaded: 'gradesFrameLoaded' },
+      mock:   { panel: 'tabMock',   btn: 'tabBtnMock',   frame: 'mockDraftFrame',   src: 'mock-draft.html?embed=1&v=20260808-loader', loaded: 'mockFrameLoaded' }
     }
   },
   rules: {
     label: 'Rules',
     defaultTab: 'charter',
     tabs: {
-      charter: { panel: 'tabCharter', btn: 'tabBtnCharter', frame: 'charterFrame', src: 'charter.html?embed=1&v=20260804-taxi', loaded: 'charterFrameLoaded' },
+      charter: { panel: 'tabCharter', btn: 'tabBtnCharter', frame: 'charterFrame', src: 'charter.html?embed=1&v=20260808-loader', loaded: 'charterFrameLoaded' },
       rules:   { panel: 'tabRules',   btn: 'tabBtnRules',   frame: null,           src: null,                                    loaded: null }
     }
   }
@@ -2488,15 +2520,96 @@ function setMainTab(tab){
   });
 
   const conf = HQ_NAV[group].tabs[tab];
-  if (conf.frame && conf.src && conf.loaded && !hqFrameLoaded[conf.loaded]){
+  if (conf.frame && conf.src && conf.loaded){
+    const panel = document.getElementById(conf.panel);
     const frame = document.getElementById(conf.frame);
-    if (frame){
-      frame.src = hqFrameSrc(conf.src);
-      hqFrameLoaded[conf.loaded] = true;
-      syncFrameLoadedFlags();
+    if (frame && panel){
+      if (!hqFrameLoaded[conf.loaded]){
+        showHqPanelLoader(panel, tabLoaderLabel(tab));
+        frame.src = hqFrameSrc(conf.src);
+        hqFrameLoaded[conf.loaded] = true;
+        syncFrameLoadedFlags();
+      } else if (!hqFrameReady[conf.frame]){
+        showHqPanelLoader(panel, tabLoaderLabel(tab));
+      } else {
+        hideHqPanelLoader(panel);
+      }
     }
   }
 }
+
+const hqFrameReady = {};
+function tabLoaderLabel(tab){
+  const labels = {
+    status: 'Loading league status…',
+    intel: 'Loading team intel…',
+    goat: 'Loading GOAT race…',
+    fa: 'Loading free agents…',
+    tx: 'Loading transactions…',
+    trade: 'Loading trade analyzer…',
+    offseason: 'Loading report card…',
+    grades: 'Loading draft grades…',
+    mock: 'Loading mock draft…',
+    charter: 'Loading charter…'
+  };
+  return labels[tab] || 'Loading Patio Boys…';
+}
+const hqLoaderTimers = {};
+function showHqPanelLoader(panel, label){
+  if (!panel) return;
+  let el = panel.querySelector(':scope > .pb-boot-loader');
+  if (!el){
+    el = document.createElement('div');
+    el.className = 'pb-boot-loader pb-panel-loader';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.innerHTML = '<div class="pb-boot-mark" aria-hidden="true">PB</div>'
+      + '<p class="pb-boot-label"></p>';
+    panel.appendChild(el);
+  }
+  const p = el.querySelector('.pb-boot-label');
+  if (p) p.textContent = label || 'Loading…';
+  el.hidden = false;
+  el.classList.remove('is-done');
+  const id = panel.id || 'panel';
+  if (hqLoaderTimers[id]) clearTimeout(hqLoaderTimers[id]);
+  hqLoaderTimers[id] = setTimeout(function(){
+    Object.keys(HQ_NAV).forEach(g => {
+      Object.keys(HQ_NAV[g].tabs).forEach(t => {
+        const conf = HQ_NAV[g].tabs[t];
+        if (conf.panel === id && conf.frame) hqFrameReady[conf.frame] = true;
+      });
+    });
+    hideHqPanelLoader(panel);
+  }, 14000);
+}
+function hideHqPanelLoader(panel){
+  if (!panel) return;
+  const id = panel.id || 'panel';
+  if (hqLoaderTimers[id]){
+    clearTimeout(hqLoaderTimers[id]);
+    delete hqLoaderTimers[id];
+  }
+  const el = panel.querySelector(':scope > .pb-boot-loader');
+  if (!el) return;
+  el.classList.add('is-done');
+  el.hidden = true;
+}
+window.addEventListener('message', function(ev){
+  const data = ev && ev.data;
+  if (!data || data.type !== 'pb-ready') return;
+  Object.keys(HQ_NAV).forEach(g => {
+    Object.keys(HQ_NAV[g].tabs).forEach(t => {
+      const conf = HQ_NAV[g].tabs[t];
+      if (!conf.frame) return;
+      const frame = document.getElementById(conf.frame);
+      if (!frame || !ev.source || frame.contentWindow !== ev.source) return;
+      hqFrameReady[conf.frame] = true;
+      const panel = document.getElementById(conf.panel);
+      if (panel && !panel.hidden) hideHqPanelLoader(panel);
+    });
+  });
+});
 
 /* Stamp iframe URLs so Refresh / nocache also busts nested script caches. */
 function hqCacheToken(){

@@ -1,0 +1,45 @@
+/* Patio Boys HQ loading emblem */
+.pb-boot-loader{
+  position:fixed;inset:0;z-index:9999;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  background:color-mix(in srgb, var(--bg, #14181F) 92%, #000);
+  color:var(--ink, #ECEEF3);
+  transition:opacity .28s ease, visibility .28s ease;
+}
+.pb-boot-loader[hidden],
+.pb-boot-loader.is-done{
+  opacity:0;visibility:hidden;pointer-events:none;
+}
+.pb-boot-loader.pb-panel-loader{
+  position:absolute;inset:0;border-radius:inherit;
+  background:color-mix(in srgb, var(--bg, #14181F) 88%, #000);
+}
+.pb-boot-mark{
+  position:relative;
+  width:64px;height:64px;border-radius:50%;
+  display:grid;place-items:center;
+  font-family:'Anton', Impact, sans-serif;
+  font-size:22px;letter-spacing:.04em;
+  color:#1B140A;background:var(--gold, #C9963A);
+  box-shadow:inset 0 -3px 0 rgba(0,0,0,.18), 0 8px 22px rgba(0,0,0,.35);
+}
+.pb-boot-mark::before{
+  content:'';
+  position:absolute;inset:-6px;border-radius:50%;
+  border:2px solid transparent;
+  border-top-color:var(--gold, #C9963A);
+  border-right-color:color-mix(in srgb, var(--gold, #C9963A) 35%, transparent);
+  animation:pbBootSpin 0.9s linear infinite;
+}
+.pb-boot-label{
+  margin:0;
+  font-family:'IBM Plex Mono', ui-monospace, monospace;
+  font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-dim, #8B93A6);
+}
+@keyframes pbBootSpin{
+  to{transform:rotate(360deg)}
+}
+@media (prefers-reduced-motion: reduce){
+  .pb-boot-mark::before{animation:none;border-color:var(--gold, #C9963A)}
+}

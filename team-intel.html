@@ -463,6 +463,12 @@
 </style>
 </head>
 <body>
+<link rel="stylesheet" href="hq-loader.css">
+<div class="pb-boot-loader" id="pbBootLoader" role="status" aria-live="polite">
+  <div class="pb-boot-mark" aria-hidden="true">PB</div>
+  <p class="pb-boot-label">Loading team intel…</p>
+</div>
+<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
 <div class="wrap">
@@ -3156,6 +3162,7 @@ async function loadAwards(){
 }
 
 (async () => {
+  try {
   document.querySelectorAll('#dynastyPanel .view-toggle button[data-view]').forEach(btn => {
     btn.addEventListener('click', () => {
       const view = btn.getAttribute('data-view') === 'adv' ? 'adv' : 'basic';
@@ -3234,6 +3241,9 @@ async function loadAwards(){
   renderNav();
   renderTeam();
   setLoadNote(null);
+  } finally {
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'team-intel'});
+  }
 })();
 }); // pb-deps-ready
 </script>
