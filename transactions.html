@@ -112,6 +112,12 @@
 </style>
 </head>
 <body>
+<link rel="stylesheet" href="hq-loader.css">
+<div class="pb-boot-loader" id="pbBootLoader" role="status" aria-live="polite">
+  <div class="pb-boot-mark" aria-hidden="true">PB</div>
+  <p class="pb-boot-label">Loading transactions…</p>
+</div>
+<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
 <div class="wrap topbar">Patio Boys &middot; Transactions</div>
@@ -366,9 +372,11 @@ async function boot(){
       + (c.waivers || 0) + ' waivers/FA · ' + (c.graded || 0) + ' graded'
       + (c.pending ? ' · ' + c.pending + ' waiting on picks' : '') + '.';
     render();
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'transactions'});
   } catch (e){
     status.className = 'status error';
     status.textContent = 'Could not load transactions: ' + (e.message || e);
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'transactions', error: true});
   }
 }
 

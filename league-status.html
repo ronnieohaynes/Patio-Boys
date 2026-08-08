@@ -102,6 +102,12 @@
 </style>
 </head>
 <body>
+<link rel="stylesheet" href="hq-loader.css">
+<div class="pb-boot-loader" id="pbBootLoader" role="status" aria-live="polite">
+  <div class="pb-boot-mark" aria-hidden="true">PB</div>
+  <p class="pb-boot-label">Loading league status…</p>
+</div>
+<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
 <div class="wrap topbar">Patio Boys &middot; Live League Status</div>
@@ -1014,13 +1020,19 @@ async function loadAccolades(){
 }
 
 (async()=>{
-  const currentData = await loadCurrent();
-  const historyData = await loadHistory(currentData?currentData.league:null);
-  await Promise.all([
-    loadRatings(currentData),
-    loadAccolades(),
-    loadTrades(currentData, historyData)
-  ]);
+  try {
+    if (window.PatioBoysLoader) PatioBoysLoader.setLabel(document.body, 'Loading league status…');
+    const currentData = await loadCurrent();
+    const historyData = await loadHistory(currentData?currentData.league:null);
+    if (window.PatioBoysLoader) PatioBoysLoader.setLabel(document.body, 'Scoring accolades…');
+    await Promise.all([
+      loadRatings(currentData),
+      loadAccolades(),
+      loadTrades(currentData, historyData)
+    ]);
+  } finally {
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'league-status'});
+  }
 })();
 }); // pb-deps-ready
 </script>
