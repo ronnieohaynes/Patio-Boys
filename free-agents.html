@@ -394,8 +394,19 @@ function buildFaDepthChart(players, slots){
         !claimed.has(String(r.id))
         && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
       )
-      .sort((a, b) => b.rankVal - a.rankVal
-        || String(a.name).localeCompare(String(b.name)))[0];
+      .sort((a, b) => {
+        const possA = TeamNeedsModel.positions(a.positions);
+        const possB = TeamNeedsModel.positions(b.positions);
+        const fitA = TeamNeedsModel.slotFitBonus
+          ? TeamNeedsModel.slotFitBonus(possA, row.slot)
+          : 0;
+        const fitB = TeamNeedsModel.slotFitBonus
+          ? TeamNeedsModel.slotFitBonus(possB, row.slot)
+          : 0;
+        return b.rankVal - a.rankVal
+          || fitB - fitA
+          || String(a.name).localeCompare(String(b.name));
+      })[0];
     if (!pick) return;
     row.starter = pick;
     claimed.add(String(pick.id));
