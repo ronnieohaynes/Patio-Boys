@@ -494,7 +494,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-flex-mono';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260807-prime-10';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1907,20 +1907,8 @@ function buildDepthChart(team){
         !claimed.has(String(r.id))
         && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
       )
-      .sort((a, b) => {
-        /* Same Lock rank: mono-eligible prefer CORE; multi prefer G/F/UTIL. */
-        const possA = TeamNeedsModel.positions(a.positions);
-        const possB = TeamNeedsModel.positions(b.positions);
-        const fitA = TeamNeedsModel.slotFitBonus
-          ? TeamNeedsModel.slotFitBonus(possA, row.slot)
-          : 0;
-        const fitB = TeamNeedsModel.slotFitBonus
-          ? TeamNeedsModel.slotFitBonus(possB, row.slot)
-          : 0;
-        return b.rankVal - a.rankVal
-          || fitB - fitA
-          || String(a.name).localeCompare(String(b.name));
-      })[0];
+      .sort((a, b) => b.rankVal - a.rankVal
+        || String(a.name).localeCompare(String(b.name)))[0];
     if (!pick) return;
     row.starter = pick;
     claimed.add(String(pick.id));
@@ -2048,7 +2036,6 @@ function renderDepthChart(t){
     + '<p class="lineup-foot">Same ' + pack.slots.length + ' starting slots as Team Needs ('
     + escapeHtml(pack.slots.join(', '))
     + '). <strong>1st string</strong> = legal starters by hold value (Lock OVR × situation path). '
-    + 'Mono-eligible players prefer their CORE slot; multi-eligible prefer G/F/UTIL so flex stays open. '
     + '<strong>Top 8</strong> = the next ' + (pack.top8Spots || DEPTH_TOP8)
     + ' best remaining by <strong>Lock OVR</strong> (overall, not tied to Pos). '
     + '<strong>Taxi</strong> holds up to ' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)

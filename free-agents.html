@@ -240,7 +240,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-flex-mono';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260807-prime-10';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -394,19 +394,8 @@ function buildFaDepthChart(players, slots){
         !claimed.has(String(r.id))
         && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
       )
-      .sort((a, b) => {
-        const possA = TeamNeedsModel.positions(a.positions);
-        const possB = TeamNeedsModel.positions(b.positions);
-        const fitA = TeamNeedsModel.slotFitBonus
-          ? TeamNeedsModel.slotFitBonus(possA, row.slot)
-          : 0;
-        const fitB = TeamNeedsModel.slotFitBonus
-          ? TeamNeedsModel.slotFitBonus(possB, row.slot)
-          : 0;
-        return b.rankVal - a.rankVal
-          || fitB - fitA
-          || String(a.name).localeCompare(String(b.name));
-      })[0];
+      .sort((a, b) => b.rankVal - a.rankVal
+        || String(a.name).localeCompare(String(b.name)))[0];
     if (!pick) return;
     row.starter = pick;
     claimed.add(String(pick.id));
