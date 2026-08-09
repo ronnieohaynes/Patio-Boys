@@ -543,7 +543,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-tabs';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-uiresp2';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   var i = 0;
@@ -1234,7 +1234,21 @@ function pct1(rate){
 
 /* Attach smash Lock OVR (50–99) once dist map exists. Recalculates when
    player DB / projections arrive. Rookies with no smash + no Sleeper proj
-   still seed from early-career comps / draft-rank bands. */
+   still seed from early-career comps / draft-rank bands.
+   Cached by signature so render paths don't re-run ~90ms attach every paint. */
+function lockAttachSignature(){
+  const lockN = state.lockInByPid ? Object.keys(state.lockInByPid).length : 0;
+  const priorN = state.priorLockInByPid ? Object.keys(state.priorLockInByPid).length : 0;
+  const dbN = state.playerDb ? Object.keys(state.playerDb).length : 0;
+  const projN = state.projById ? state.projById.size : 0;
+  return [
+    lockN, priorN, dbN, projN,
+    state.statsSeason || '',
+    state.priorStatsSeason || '',
+    state.projSettled ? '1' : '0',
+    state.ceilingSettled ? '1' : '0'
+  ].join('|');
+}
 function refreshLockValues(){
   if (!state.lockInByPid || !window.LockInDist) return false;
   applyUnsignedProjZeros();
@@ -1275,9 +1289,12 @@ function refreshLockValues(){
           samples: [], seasonAvg: null, seasonGp: null, avgSource: source,
           projOnly: true
         };
+        state._lockAttachSig = null; /* new seeds need attach */
       });
     });
   }
+  const sig = lockAttachSignature();
+  if (state._lockAttachSig === sig) return true;
   L.attachLockValues(state.lockInByPid, {
     playerDb: state.playerDb || {},
     projById: state.projById,
@@ -1287,6 +1304,7 @@ function refreshLockValues(){
     priorDistMap: state.priorLockInByPid || null,
     priorStatsSeason: state.priorStatsSeason || null
   });
+  state._lockAttachSig = sig;
   return true;
 }
 
@@ -1479,8 +1497,9 @@ function renderLockIn(t){
     return;
   }
 
+  /* Basic view: skip Monte Carlo so team switches stay snappy. */
   const summary = window.LockInDist && scored.length
-    ? LockInDist.teamLockInSummary(scored, {marks, slots, sims: 500})
+    ? LockInDist.teamLockInSummary(scored, {marks, slots, sims: basic ? 0 : 200})
     : null;
   const avgFill = summary ? summary.sim.avgFill : {};
   const expected = summary ? summary.sim.expected : {};
@@ -3190,6 +3209,20 @@ async function loadAwards(){
     if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'team-intel'});
   }
 
+  function runIdle(fn, timeoutMs){
+    if (window.PatioBoysShare && typeof PatioBoysShare.runWhenIdle === 'function'){
+      PatioBoysShare.runWhenIdle(fn, timeoutMs);
+      return;
+    }
+    setTimeout(fn, Math.min(80, timeoutMs == null ? 600 : timeoutMs));
+  }
+  function yieldMain(){
+    if (window.PatioBoysShare && typeof PatioBoysShare.yieldToMain === 'function'){
+      return PatioBoysShare.yieldToMain();
+    }
+    return new Promise(r => setTimeout(r, 0));
+  }
+
   try {
     await loadCore();
     setLoadNote('Loaded ' + state.teams.length + ' franchises from "' + (state.league.name || 'Sleeper league') + '" · season ' + state.league.season + '. Pulling stats, players, and trades…');
@@ -3203,6 +3236,8 @@ async function loadAwards(){
     return;
   }
 
+  await yieldMain();
+
   const prevSeasonsPromise = loadPreviousSeasons().catch(e => {
     console.warn('Team Intel: previous seasons unavailable.', e);
     return [];
@@ -3210,10 +3245,18 @@ async function loadAwards(){
 
   const playerDbPromise = loadPlayerDb().catch(e => console.warn('Team Intel: player DB failed.', e));
 
-  const ceilingsPromise = loadCeilings().catch(e => {
-    state.ceilingError = e.message || String(e);
-    console.warn('Team Intel: ceilings failed.', e);
-  }).finally(() => { state.ceilingSettled = true; });
+  /* Defer smash/gamelog ceilings until idle so tab clicks stay responsive. */
+  const ceilingsPromise = new Promise(resolve => {
+    runIdle(() => {
+      loadCeilings().catch(e => {
+        state.ceilingError = e.message || String(e);
+        console.warn('Team Intel: ceilings failed.', e);
+      }).finally(() => {
+        state.ceilingSettled = true;
+        resolve();
+      });
+    }, 700);
+  });
 
   const tasks = [
     playerDbPromise,
@@ -3225,7 +3268,11 @@ async function loadAwards(){
     }).finally(() => { state.projSettled = true; }),
     ceilingsPromise,
     prevSeasonsPromise.then(prev => loadTrades(prev)).catch(e => console.warn('Team Intel: trades failed.', e)),
-    playerDbPromise.then(() => loadAwards()).catch(e => console.warn('Team Intel: awards failed.', e)),
+    playerDbPromise.then(() => new Promise(resolve => {
+      runIdle(() => {
+        loadAwards().catch(e => console.warn('Team Intel: awards failed.', e)).finally(resolve);
+      }, 1200);
+    })),
     loadDraftPicks().catch(e => {
       state.picksError = e.message || String(e);
       state.picksReady = false;
@@ -3248,14 +3295,19 @@ async function loadAwards(){
   await Promise.allSettled(tasks);
 
   /* FA pool needs player DB + projections + smash season from ceilings. */
-  try {
-    await loadFreeAgents();
-  } catch (e){
-    state.freeAgentsError = e.message || String(e);
-    console.warn('Team Intel: free agents failed.', e);
-  } finally {
-    state.freeAgentsSettled = true;
-  }
+  await new Promise(resolve => {
+    runIdle(async () => {
+      try {
+        await loadFreeAgents();
+      } catch (e){
+        state.freeAgentsError = e.message || String(e);
+        console.warn('Team Intel: free agents failed.', e);
+      } finally {
+        state.freeAgentsSettled = true;
+        resolve();
+      }
+    }, 1400);
+  });
 
   renderNav();
   renderTeam();

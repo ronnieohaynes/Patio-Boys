@@ -2292,7 +2292,7 @@ const HQ_NAV = {
     label: 'League',
     defaultTab: 'intel',
     tabs: {
-      intel: { panel: 'tabIntel', btn: 'tabBtnIntel', frame: 'teamIntelFrame', src: 'team-intel.html?embed=1&v=20260809-navorder', loaded: 'intelFrameLoaded' }
+      intel: { panel: 'tabIntel', btn: 'tabBtnIntel', frame: 'teamIntelFrame', src: 'team-intel.html?embed=1&v=20260809-uiresp2', loaded: 'intelFrameLoaded' }
     }
   },
   moves: {
@@ -2301,7 +2301,7 @@ const HQ_NAV = {
     tabs: {
       fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',    src: 'free-agents.html?embed=1&v=20260809-histnav', loaded: 'faFrameLoaded' },
       tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',  src: 'transactions.html?embed=1&v=20260809-grades', loaded: 'txFrameLoaded' },
-      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame', src: 'trade-analyzer.html?embed=1&v=20260809-needcon', loaded: 'tradeFrameLoaded' }
+      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame', src: 'trade-analyzer.html?embed=1&v=20260809-uiresp2', loaded: 'tradeFrameLoaded' }
     }
   },
   history: {
@@ -2435,20 +2435,20 @@ function setMainTab(tab){
     const panel = document.getElementById(conf.panel);
     const frame = document.getElementById(conf.frame);
     if (frame && panel){
-      if (!hqFrameLoaded[conf.loaded]){
-        showHqPanelLoader(panel, tabLoaderLabel(tab));
-        const src = hqFrameSrc(conf.src);
-        hqFrameLoaded[conf.loaded] = true;
-        syncFrameLoadedFlags();
-        /* Defer iframe boot one frame so the nav highlight paints before script work. */
-        requestAnimationFrame(function(){
+      /* Loader + iframe src after paint so the click highlight is never blocked. */
+      requestAnimationFrame(function(){
+        if (!hqFrameLoaded[conf.loaded]){
+          showHqPanelLoader(panel, tabLoaderLabel(tab));
+          const src = hqFrameSrc(conf.src);
+          hqFrameLoaded[conf.loaded] = true;
+          syncFrameLoadedFlags();
           setTimeout(function(){ frame.src = src; }, 0);
-        });
-      } else if (!hqFrameReady[conf.frame]){
-        showHqPanelLoader(panel, tabLoaderLabel(tab));
-      } else {
-        hideHqPanelLoader(panel);
-      }
+        } else if (!hqFrameReady[conf.frame]){
+          showHqPanelLoader(panel, tabLoaderLabel(tab));
+        } else {
+          hideHqPanelLoader(panel);
+        }
+      });
     }
   }
 }
