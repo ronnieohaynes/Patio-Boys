@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Patio Boys — Trades</title>
+<title>Patio Boys — Transactions</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -46,6 +46,7 @@
     padding:14px 16px;border-top:3px solid var(--gold);
   }
   .tx-card.pending{border-top-color:var(--ink-dim)}
+  .tx-card.waiver{border-top-color:var(--teal)}
   .tx-head{
     display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline;
   }
@@ -94,10 +95,6 @@
   .asset.pending{color:var(--ink-dim)}
   .asset.drop{color:var(--coral)}
   .asset.drop .dv, .asset.drop .tx-stars{color:var(--coral)}
-  .asset .ceil{
-    font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.06em;
-    text-transform:uppercase;color:var(--ink-dim);margin-left:4px;
-  }
   .empty{
     padding:28px;text-align:center;color:var(--ink-dim);
     font-family:'IBM Plex Mono',monospace;font-size:12px;
@@ -111,30 +108,30 @@
 </style>
 </head>
 <body>
-<link rel="stylesheet" href="hq-loader.css">
-<div class="pb-boot-loader" id="pbBootLoader" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-  <div class="pb-boot-mark" aria-hidden="true">PB</div>
-  <p class="pb-boot-label">Loading trades…</p>
-  <div class="pb-boot-bar" aria-hidden="true"><div class="pb-boot-bar-fill"></div></div>
-  <p class="pb-boot-pct">0%</p>
-</div>
-<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
-<div class="wrap topbar">Patio Boys &middot; Trades</div>
+<div class="wrap topbar">Patio Boys &middot; Transactions</div>
 
 <div class="wrap hero">
   <p class="eyebrow">Ledger &middot; Trade ★ at the time</p>
-  <h1 class="display">Trade<br>Ledger</h1>
-  <p>Completed player and pick trades across seasons, graded with Lock OVR / Trade ★ as of that season. Pure trade-score fairness — no waiver adds/drops. Future picks use the same 16-keeper fringe values as Trade Analyzer; drafted picks resolve to the player.</p>
+  <h1 class="display">Trades &amp;<br>Waivers</h1>
+  <p>Every completed trade and waiver/FA move across seasons, graded with Lock OVR / Trade ★ as of that season. Waivers also weigh roster fit (cutting your worst players can grade well; clogging the bench can grade poorly). Trades stay pure trade-score fairness. Future picks stay ungraded until they become players.</p>
 </div>
 
 <div class="wrap">
   <section>
     <p class="eyebrow">Filters</p>
-    <h2>Completed Trades</h2>
-    <p class="status" id="txStatus">Loading trades&hellip;</p>
+    <h2>League Moves</h2>
+    <p class="status" id="txStatus">Loading transactions&hellip;</p>
     <div class="controls" id="controls" hidden>
+      <div class="field">
+        <label for="typeFilter">Type</label>
+        <select id="typeFilter">
+          <option value="all">All</option>
+          <option value="trade">Trades</option>
+          <option value="waiver">Waivers / FA</option>
+        </select>
+      </div>
       <div class="field">
         <label for="seasonFilter">Season</label>
         <select id="seasonFilter"><option value="all">All</option></select>
@@ -153,46 +150,24 @@
       </div>
     </div>
     <p class="caption" id="txCaption" hidden>
-      Grades use Trade ★ fairness on a normal letter scale (A+ ≥97%, A ≥94%, A- ≥90%, … F &lt;60%).
-      When one side gets more players/picks, the grade also blends in average trade score per asset.
-      Rookies without NBA samples are reverse-engineered from next-year projections + comps.
-      Future picks count via 16-keeper fringe medians × year/slot/quality; once drafted they grade as that player.
+      Waivers use Trade ★ at the time plus roster fit (lineup lift from lock smash, credit for cutting worst players, clog penalties).
+      Trades use Trade ★ fairness with no fit; when one side gets more players/picks, the grade also blends in average trade score per asset.
+      Rookies without NBA samples are reverse-engineered from next-year projections + comps. Unresolved picks do not count until they resolve to a drafted player.
     </p>
     <div class="tx-list" id="txList"></div>
-    <div class="empty" id="txEmpty" hidden>No trades match those filters.</div>
+    <div class="empty" id="txEmpty" hidden>No transactions match those filters.</div>
   </section>
 </div>
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-progress';
-  /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
-  var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js','transactions.js'];
-  function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
-  if (window.PatioBoysLoader && typeof PatioBoysLoader.loadScripts === 'function'){
-    PatioBoysLoader.loadScripts(files, {
-      version: v,
-      label: 'Loading trades…',
-      startPct: 8,
-      endPct: 45
-    }).then(ready);
-    return;
-  }
-  var i = 0;
-  function next(){
-    if (i >= files.length){ ready(); return; }
-    var s = document.createElement('script');
-    s.src = files[i++] + '?v=' + encodeURIComponent(v);
-    s.onload = function(){ setTimeout(next, 0); };
-    s.onerror = function(){ setTimeout(next, 0); };
-    document.head.appendChild(s);
-  }
-  next();
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-flex-mono';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
+    document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
+  });
 })();
 </script>
 <script>
-window.addEventListener('pb-deps-ready', function pbTxMain(){
-window.removeEventListener('pb-deps-ready', pbTxMain);
 const LEAGUE_ID = '1350649177381552128';
 const state = { pack: null };
 
@@ -223,11 +198,13 @@ function fmtAssetVal(a){
 
 function filteredRows(){
   if (!state.pack) return [];
+  const type = document.getElementById('typeFilter').value;
   const season = document.getElementById('seasonFilter').value;
   const team = document.getElementById('teamFilter').value;
   const grade = document.getElementById('gradeFilter').value;
   return (state.pack.rows || []).filter(r => {
-    if (r.type !== 'trade') return false;
+    if (type === 'trade' && r.type !== 'trade') return false;
+    if (type === 'waiver' && r.type === 'trade') return false;
     if (season !== 'all' && String(r.season) !== season) return false;
     if (team !== 'all'){
       const hit = (r.franchises || []).some(f => f === team)
@@ -244,9 +221,7 @@ function renderAssets(assets, drops){
   const lines = [];
   (assets || []).forEach(a => {
     if (a.graded){
-      const tip = a.pickNote ? (' title="' + escapeHtml(a.pickNote) + '"') : '';
-      const pickMark = a.pickValued ? ' <span class="ceil">pick</span>' : '';
-      lines.push('<p class="asset"' + tip + '><span>' + escapeHtml(a.label) + pickMark + '</span>'
+      lines.push('<p class="asset"><span>' + escapeHtml(a.label) + '</span>'
         + fmtAssetVal(a) + '</p>');
     } else {
       lines.push('<p class="asset pending">' + escapeHtml(a.label) + ' · ungraded</p>');
@@ -291,6 +266,27 @@ function renderTradeCard(r){
     + '</div></article>';
 }
 
+function renderWaiverCard(r){
+  const side = (r.sides && r.sides[0]) || {};
+  const gradeHtml = r.grade
+    ? '<p class="tx-grade">' + escapeHtml(r.grade) + '</p>'
+    : '<p class="tx-grade dim">—</p>';
+  const bid = r.waiverBid != null ? ' · $' + r.waiverBid + ' FAAB' : '';
+  return '<article class="tx-card waiver">'
+    + '<div class="tx-head"><p class="tx-meta">' + escapeHtml(r.dateLabel)
+    + ' · Season ' + escapeHtml(r.season) + ' · ' + escapeHtml(r.typeLabel) + bid + '</p>'
+    + gradeHtml + '</div>'
+    + '<h3 class="tx-title">' + escapeHtml(side.team || r.teams[0] || 'Team') + '</h3>'
+    + '<p class="tx-sub">Roster fit <strong>' + (r.net >= 0 ? '+' : '') + fmtDyn(r.net)
+    + '</strong> · raw trade ' + ((r.rawNet >= 0 ? '+' : '') + fmtDyn(r.rawNet))
+    + ' (add ' + fmtDyn(r.valueA) + ' / drop ' + fmtDyn(r.valueB) + ')'
+    + (r.reason ? ' · ' + escapeHtml(r.reason) : '') + '</p>'
+    + '<div class="sides" style="grid-template-columns:1fr">'
+    + '<div class="side"><p class="lbl">Roster change</p>'
+    + renderAssets(side.assets, side.drops)
+    + '</div></div></article>';
+}
+
 function render(){
   const list = document.getElementById('txList');
   const empty = document.getElementById('txEmpty');
@@ -301,14 +297,14 @@ function render(){
     return;
   }
   empty.hidden = true;
-  list.innerHTML = rows.map(renderTradeCard).join('');
+  list.innerHTML = rows.map(r => r.type === 'trade' ? renderTradeCard(r) : renderWaiverCard(r)).join('');
 }
 
 async function boot(){
   const status = document.getElementById('txStatus');
   if (!window.PatioBoysTransactions){
     status.className = 'status error';
-    status.textContent = 'Trade engine failed to load.';
+    status.textContent = 'Transaction engine failed to load.';
     return;
   }
   if (!window.LockInDist || typeof LockInDist.fetchLockValueIndex !== 'function'){
@@ -316,26 +312,9 @@ async function boot(){
     status.textContent = 'Lock-value engine failed to load (stale lock-in-dist.js cache). Hit Refresh in the HQ header.';
     return;
   }
-  if (!window.DraftPickValue){
-    console.warn('Trades: draft-pick-value.js missing — future picks stay ungraded.');
-  }
   try {
     const pack = await PatioBoysTransactions.compute(LEAGUE_ID, {
-      tradesOnly: true,
-      onProgress: msg => {
-        status.textContent = msg;
-        if (window.PatioBoysLoader){
-          /* Map compute stages into the mid/late progress band. */
-          const m = String(msg || '').toLowerCase();
-          let pct = 55;
-          if (m.indexOf('walk') >= 0 || m.indexOf('season') >= 0) pct = 52;
-          else if (m.indexOf('player') >= 0) pct = 58;
-          else if (m.indexOf('fetch') >= 0 || m.indexOf('trade') >= 0) pct = 66;
-          else if (m.indexOf('lock') >= 0 || m.indexOf('value') >= 0) pct = 74;
-          else if (m.indexOf('grad') >= 0) pct = 86;
-          PatioBoysLoader.reportProgress(pct, {label: msg});
-        }
-      }
+      onProgress: msg => { status.textContent = msg; }
     });
     state.pack = pack;
     const seasonSel = document.getElementById('seasonFilter');
@@ -354,25 +333,22 @@ async function boot(){
     });
     document.getElementById('controls').hidden = false;
     document.getElementById('txCaption').hidden = false;
-    ['seasonFilter','teamFilter','gradeFilter'].forEach(id => {
+    ['typeFilter','seasonFilter','teamFilter','gradeFilter'].forEach(id => {
       document.getElementById(id).addEventListener('change', render);
     });
     const c = pack.counts || {};
     status.classList.remove('error');
-    status.textContent = (c.trades || c.total || 0) + ' trades · '
-      + (c.graded || 0) + ' graded'
+    status.textContent = (c.total || 0) + ' moves · ' + (c.trades || 0) + ' trades · '
+      + (c.waivers || 0) + ' waivers/FA · ' + (c.graded || 0) + ' graded'
       + (c.pending ? ' · ' + c.pending + ' waiting on picks' : '') + '.';
     render();
-    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'trades'});
   } catch (e){
     status.className = 'status error';
-    status.textContent = 'Could not load trades: ' + (e.message || e);
-    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'trades', error: true});
+    status.textContent = 'Could not load transactions: ' + (e.message || e);
   }
 }
 
 boot();
-}); // pb-deps-ready
 </script>
 </body>
 </html>

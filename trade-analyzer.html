@@ -321,14 +321,6 @@
 </style>
 </head>
 <body>
-<link rel="stylesheet" href="hq-loader.css">
-<div class="pb-boot-loader" id="pbBootLoader" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-  <div class="pb-boot-mark" aria-hidden="true">PB</div>
-  <p class="pb-boot-label">Loading trade analyzer…</p>
-  <div class="pb-boot-bar" aria-hidden="true"><div class="pb-boot-bar-fill"></div></div>
-  <p class="pb-boot-pct">0%</p>
-</div>
-<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
 <div class="wrap">
@@ -337,7 +329,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -415,34 +407,13 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-progress';
-  /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
-  var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
-  function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
-  if (window.PatioBoysLoader && typeof PatioBoysLoader.loadScripts === 'function'){
-    PatioBoysLoader.loadScripts(files, {
-      version: v,
-      label: 'Loading trade analyzer…',
-      startPct: 8,
-      endPct: 45
-    }).then(ready);
-    return;
-  }
-  var i = 0;
-  function next(){
-    if (i >= files.length){ ready(); return; }
-    var s = document.createElement('script');
-    s.src = files[i++] + '?v=' + encodeURIComponent(v);
-    s.onload = function(){ setTimeout(next, 0); };
-    s.onerror = function(){ setTimeout(next, 0); };
-    document.head.appendChild(s);
-  }
-  next();
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-flex-mono';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
+    document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
+  });
 })();
 </script>
 <script>
-window.addEventListener('pb-deps-ready', function pbTradeMain(){
-window.removeEventListener('pb-deps-ready', pbTradeMain);
 const LEAGUE_ID = '1350649177381552128';
 const MY_TEAM = 'Freakonomics';
 const MAX_TOP_N = 10;
@@ -769,10 +740,9 @@ async function loadSleeperProjMaps(scoring, season){
   const byId = new Map();
   const byName = new Map();
   try {
-    const rows = (window.PatioBoysShare && typeof PatioBoysShare.fetchNbaProjections === 'function')
-      ? await PatioBoysShare.fetchNbaProjections(season)
-      : await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular')
-          .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    const res = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
+    if (!res.ok) return { byId, byName, count: 0 };
+    const rows = await res.json();
     (Array.isArray(rows) ? rows : []).forEach(row => {
       const pl = row.player || {};
       const pid = row.player_id || pl.player_id;
@@ -787,38 +757,25 @@ async function loadSleeperProjMaps(scoring, season){
   return { byId, byName, count: byId.size };
 }
 
-/* Ratio is smaller haul ÷ larger haul (1.0 = perfectly even). */
 function fairnessGrade(ratio){
-  if (ratio >= 0.97) return 'A+';
-  if (ratio >= 0.94) return 'A';
-  if (ratio >= 0.90) return 'A-';
-  if (ratio >= 0.87) return 'B+';
-  if (ratio >= 0.84) return 'B';
-  if (ratio >= 0.80) return 'B-';
-  if (ratio >= 0.77) return 'C+';
-  if (ratio >= 0.74) return 'C';
-  if (ratio >= 0.70) return 'C-';
-  if (ratio >= 0.67) return 'D+';
-  if (ratio >= 0.64) return 'D';
-  if (ratio >= 0.60) return 'D-';
+  if (ratio >= 0.94) return 'A+';
+  if (ratio >= 0.88) return 'A';
+  if (ratio >= 0.80) return 'B+';
+  if (ratio >= 0.72) return 'B';
+  if (ratio >= 0.62) return 'C+';
+  if (ratio >= 0.52) return 'C';
+  if (ratio >= 0.40) return 'D';
   return 'F';
 }
 
-const FINDER_FAIR_SOFT = 0.80; /* below B- → caution */
-const FINDER_FAIR_HARD = 0.70; /* below C- → block */
-const KEEPER_COUNT = 16;
-/* Starter-lineup FP/G swing that counts as a real need hit/help (FA uses 0.5 to crack). */
-const NEED_SOFT = 1.0;
+const FINDER_FAIR_SOFT = 0.80;
+const FINDER_FAIR_HARD = 0.62;
 
 const state = {
   teams: [],
   playersById: new Map(),
-  picksById: new Map(),
-  slots: null,
   sendA: new Set(),
   sendB: new Set(),
-  draftPickRoundBases: null,
-  draftPickNextSeason: null,
   maxMetricLabel: 'Proj',
   mode: 'analyze',
   finderDir: 'shop', /* shop = available on your roster; want = acquire from others */
@@ -842,381 +799,12 @@ function starsHtml(n){
 }
 
 function tradeValHtml(p){
-  const score = Number(p.dynasty != null ? p.dynasty : p.tradeScore);
+  const score = Number(p.dynasty);
   const scoreTxt = Number.isFinite(score) ? score.toFixed(1) : '—';
   const ovrTxt = p.lockOvr != null ? ('OVR ' + p.lockOvr) : '';
   return starsHtml(p.tradeStars)
     + '<span class="score">' + scoreTxt + '</span>'
     + (ovrTxt ? '<span class="ovr-mini">' + ovrTxt + '</span>' : '');
-}
-
-function assetById(id){
-  const key = String(id);
-  if (state.playersById.has(key)) return state.playersById.get(key);
-  if (state.picksById && state.picksById.has(key)) return state.picksById.get(key);
-  return null;
-}
-
-function assetsFromSet(sendSet){
-  return [...sendSet].map(id => assetById(id)).filter(Boolean);
-}
-
-function assetTradeValue(p){
-  if (!p) return 0;
-  const v = Number(p.dynasty != null ? p.dynasty : p.tradeScore);
-  return Number.isFinite(v) ? v : 0;
-}
-
-function assetDisplayName(p){
-  if (!p) return '?';
-  if (p.kind === 'pick'){
-    return p.label || ((p.season || '') + ' '
-      + (window.DraftPickValue ? DraftPickValue.roundOrdinal(p.round) : (p.round + 'th')));
-  }
-  return p.name || '?';
-}
-
-function rosterTradeScores(team){
-  if (!team) return [];
-  return (team.playerIds || []).map(id => {
-    const p = state.playersById.get(String(id));
-    return p ? assetTradeValue(p) : 0;
-  }).filter(v => v > 0).sort((a, b) => b - a);
-}
-
-/* 16th = last keeper seat; 17th = first cuttable fringe. */
-function teamSeatThresholds(team){
-  const scores = rosterTradeScores(team);
-  return {
-    keeperFloor: scores[KEEPER_COUNT - 1] != null ? scores[KEEPER_COUNT - 1] : null,
-    fringe: scores[KEEPER_COUNT] != null ? scores[KEEPER_COUNT]
-      : (scores.length ? scores[scores.length - 1] : null),
-    ranked: scores.length
-  };
-}
-
-/* ---------- lineup need (TeamNeedsModel starter FP/G) ---------- */
-
-function needPlayerRec(p){
-  if (!p || p.kind === 'pick') return null;
-  const Needs = window.TeamNeedsModel;
-  const positions = p.positions && p.positions.length
-    ? p.positions
-    : (Needs && typeof Needs.positions === 'function' ? Needs.positions(p.pos) : []);
-  return {
-    id: String(p.id),
-    name: p.name || String(p.id),
-    positions: positions || [],
-    metric: Number.isFinite(Number(p.metric)) ? Number(p.metric) : 0,
-    age: p.age != null ? Number(p.age) : null
-  };
-}
-
-function needRecsForIds(ids){
-  return (ids || []).map(id => {
-    const p = state.playersById.get(String(id));
-    return needPlayerRec(p);
-  }).filter(Boolean);
-}
-
-function lineupTotalForIds(ids){
-  const Needs = window.TeamNeedsModel;
-  if (!Needs || typeof Needs.optimize !== 'function' || !state.slots || !state.slots.length){
-    return null;
-  }
-  const opt = Needs.optimize(needRecsForIds(ids), state.slots);
-  return Number(opt.total) || 0;
-}
-
-function rosterIdsAfterTrade(team, sendAssets, receiveAssets){
-  const send = new Set(
-    (sendAssets || [])
-      .filter(a => a && a.kind !== 'pick' && a.id != null)
-      .map(a => String(a.id))
-  );
-  const after = (team.playerIds || []).map(String).filter(id => !send.has(id));
-  (receiveAssets || []).forEach(a => {
-    if (!a || a.kind === 'pick' || a.id == null) return;
-    const id = String(a.id);
-    if (!after.includes(id)) after.push(id);
-  });
-  return after;
-}
-
-function fmtNeedDelta(v){
-  const n = Number(v) || 0;
-  return (n >= 0 ? '+' : '') + n.toFixed(1);
-}
-
-/* Before/after starter FP/G for both sides. Soft-caution only — never hard-blocks. */
-function evaluateNeedFit(teamA, teamB, fromA, fromB){
-  const flags = [];
-  let softNeed = false;
-  const beforeA = lineupTotalForIds(teamA.playerIds);
-  const beforeB = lineupTotalForIds(teamB.playerIds);
-  if (beforeA == null || beforeB == null){
-    return {softNeed, flags, deltaA: null, deltaB: null};
-  }
-  const afterA = lineupTotalForIds(rosterIdsAfterTrade(teamA, fromA, fromB));
-  const afterB = lineupTotalForIds(rosterIdsAfterTrade(teamB, fromB, fromA));
-  if (afterA == null || afterB == null){
-    return {softNeed, flags, deltaA: null, deltaB: null};
-  }
-  const deltaA = afterA - beforeA;
-  const deltaB = afterB - beforeB;
-  const helpedA = deltaA >= NEED_SOFT;
-  const helpedB = deltaB >= NEED_SOFT;
-  const hurtA = deltaA <= -NEED_SOFT;
-  const hurtB = deltaB <= -NEED_SOFT;
-  const spread = Math.abs(deltaA - deltaB);
-
-  softNeed = (helpedA && hurtB) || (helpedB && hurtA)
-    || (spread >= NEED_SOFT && (hurtA || hurtB));
-
-  if (softNeed){
-    const winner = deltaA >= deltaB ? teamA.displayName : teamB.displayName;
-    const loser = deltaA >= deltaB ? teamB.displayName : teamA.displayName;
-    const winD = Math.max(deltaA, deltaB);
-    const loseD = Math.min(deltaA, deltaB);
-    flags.push({
-      cls: 'warn',
-      title: 'Need mismatch',
-      text: loser + ' loses starter-lineup juice (' + fmtNeedDelta(loseD)
-        + ' FP/G) while ' + winner + ' gains (' + fmtNeedDelta(winD)
-        + '). Trade ★ can look fair while the fit does not.'
-    });
-  } else {
-    flags.push({
-      cls: 'ok',
-      title: 'Lineup need',
-      text: teamA.displayName + ' ' + fmtNeedDelta(deltaA)
-        + ' FP/G starters · ' + teamB.displayName + ' ' + fmtNeedDelta(deltaB)
-        + ' FP/G starters (proj lineup). Need fit is balanced enough.'
-    });
-  }
-  return {softNeed, flags, deltaA, deltaB};
-}
-
-/* ---------- contract shape (max vs min money) ---------- */
-/* Soft-caution when one side receives max/near-max multi-year and the other
-   gets min/cheap — even if Trade ★ is close. Never hard-blocks alone. */
-const CONTRACT_MAX_Y1 = 30e6;
-const CONTRACT_LARGE_Y1 = 18e6; /* snapshot tierRule.large */
-const CONTRACT_MIN_Y1 = 6e6;    /* min / near-min */
-
-function fmtMoneyYr(v){
-  const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  if (n >= 1e6) return '$' + (n / 1e6).toFixed(n >= 10e6 ? 0 : 1) + 'M/yr';
-  return '$' + Math.round(n / 1e3) + 'K/yr';
-}
-
-function assetContractBand(p){
-  if (!p || p.kind === 'pick') return null;
-  const Needs = window.TeamNeedsModel;
-  if (!Needs || typeof Needs.contractProfile !== 'function') return null;
-  const profile = Needs.contractProfile(p.name || p, {lockOvr: p.lockOvr});
-  if (!profile || profile.y1 == null || !Number.isFinite(Number(profile.y1))) return null;
-  const y1 = Number(profile.y1);
-  const years = profile.yearsLeft != null && Number.isFinite(Number(profile.yearsLeft))
-    ? Number(profile.yearsLeft)
-    : 1;
-  let band = 'mid';
-  if (y1 >= CONTRACT_MAX_Y1 || (y1 >= CONTRACT_LARGE_Y1 && years >= 3)
-    || (y1 >= 22e6 && years >= 2)){
-    band = 'max';
-  } else if (y1 <= CONTRACT_MIN_Y1){
-    band = 'min';
-  }
-  return {
-    name: p.name || String(p.id),
-    y1,
-    years,
-    band,
-    label: fmtMoneyYr(y1) + (years ? (' · ' + years + 'yr') : '')
-  };
-}
-
-function haulContractShape(assets){
-  const rows = (assets || []).map(assetContractBand).filter(Boolean);
-  if (!rows.length) return null;
-  const maxN = rows.filter(r => r.band === 'max').length;
-  const minN = rows.filter(r => r.band === 'min').length;
-  const midN = rows.filter(r => r.band === 'mid').length;
-  const avgY1 = rows.reduce((s, r) => s + r.y1, 0) / rows.length;
-  let band = 'mid';
-  if (maxN > 0 && maxN >= minN && maxN >= midN) band = 'max';
-  else if (minN > 0 && maxN === 0 && avgY1 <= CONTRACT_MIN_Y1 * 1.15) band = 'min';
-  return {rows, maxN, minN, midN, avgY1, band, n: rows.length};
-}
-
-function evaluateContractFit(teamA, teamB, fromA, fromB){
-  const flags = [];
-  let softContract = false;
-  /* What each team receives. */
-  const recvA = haulContractShape(fromB);
-  const recvB = haulContractShape(fromA);
-  if (!recvA || !recvB){
-    return {softContract, flags, recvA, recvB};
-  }
-
-  softContract = (recvA.band === 'max' && recvB.band === 'min')
-    || (recvA.band === 'min' && recvB.band === 'max');
-
-  if (softContract){
-    const rich = recvA.band === 'max' ? teamA : teamB;
-    const cheap = recvA.band === 'min' ? teamA : teamB;
-    const richShape = recvA.band === 'max' ? recvA : recvB;
-    const cheapShape = recvA.band === 'min' ? recvA : recvB;
-    const richBits = richShape.rows.filter(r => r.band === 'max').map(r =>
-      r.name + ' (' + r.label + ')').slice(0, 2).join(', ');
-    const cheapBits = cheapShape.rows.filter(r => r.band === 'min').map(r =>
-      r.name + ' (' + r.label + ')').slice(0, 2).join(', ');
-    flags.push({
-      cls: 'warn',
-      title: 'Contract mismatch',
-      text: rich.displayName + ' takes on max/near-max money'
-        + (richBits ? (' — ' + richBits) : '')
-        + ' while ' + cheap.displayName + ' gets min/cheap'
-        + (cheapBits ? (' — ' + cheapBits) : '')
-        + '. Trade ★ can look close while the deals do not.'
-    });
-  } else {
-    flags.push({
-      cls: 'ok',
-      title: 'Contracts',
-      text: teamA.displayName + ' receives ~' + fmtMoneyYr(recvA.avgY1)
-        + ' avg · ' + teamB.displayName + ' receives ~' + fmtMoneyYr(recvB.avgY1)
-        + ' avg. Money shape is not a max-for-min swap.'
-    });
-  }
-  return {softContract, flags, recvA, recvB};
-}
-
-function packageSeatCheck(assets, receiverTeam){
-  const thr = teamSeatThresholds(receiverTeam);
-  const pieces = (assets || []).map(p => {
-    const value = assetTradeValue(p);
-    const clearsKeeper = thr.keeperFloor != null && value >= thr.keeperFloor;
-    const clearsFringe = thr.fringe != null && value >= thr.fringe;
-    return {asset: p, value, clearsKeeper, clearsFringe};
-  }).sort((a, b) => b.value - a.value);
-  return {
-    thr,
-    pieces,
-    clearKeeperN: pieces.filter(x => x.clearsKeeper).length,
-    clearFringeN: pieces.filter(x => x.clearsFringe).length,
-    pickN: pieces.filter(x => x.asset && x.asset.kind === 'pick').length,
-    playerN: pieces.filter(x => !x.asset || x.asset.kind !== 'pick').length
-  };
-}
-
-/* Fake depth = multi-asset haul where almost nothing clears the receiver's fringe. */
-function isFakeDepth(seat, sentCount){
-  if (!seat || seat.pieces.length < 2) return false;
-  if (seat.clearFringeN >= 2) return false;
-  if (seat.clearFringeN === 1 && seat.pieces.length <= 2) return false;
-  return seat.clearFringeN <= 1 && seat.pieces.length >= Math.max(2, sentCount);
-}
-
-function countShapeLabel(nSend, nGet){
-  return nSend + '-for-' + nGet;
-}
-
-/* Judge mismatched asset shapes for Analyze + Finder. */
-function evaluateMismatch(fromA, fromB, teamA, teamB){
-  const nA = (fromA || []).length;
-  const nB = (fromB || []).length;
-  const flags = [];
-  let softCaution = false;
-  const seatA = packageSeatCheck(fromB, teamA); /* A receives fromB */
-  const seatB = packageSeatCheck(fromA, teamB);
-
-  if (!nA && !nB){
-    return {flags, softCaution, seatA, seatB, shape: '0-for-0'};
-  }
-
-  const shape = countShapeLabel(nA, nB);
-  if (nA !== nB){
-    flags.push({
-      cls: 'ok',
-      title: 'Asset count',
-      text: shape + ' mismatch — ' + teamA.displayName + ' sends ' + nA
-        + ', ' + teamB.displayName + ' sends ' + nB
-        + '. Shape alone is fine if Trade ★ is close and the pile is real depth.'
-    });
-  } else {
-    flags.push({
-      cls: 'ok',
-      title: 'Asset count',
-      text: shape + ' even swap.'
-    });
-  }
-
-  function pileFlag(receiverName, seat, sentN, receivedN){
-    if (receivedN <= sentN) return;
-    const fringeTxt = seat.thr.fringe != null ? seat.thr.fringe.toFixed(0) : '—';
-    const keeperTxt = seat.thr.keeperFloor != null ? seat.thr.keeperFloor.toFixed(0) : '—';
-    const fake = isFakeDepth(seat, sentN);
-    if (fake){
-      softCaution = true;
-      flags.push({
-        cls: 'warn',
-        title: 'Keeper seats — ' + receiverName,
-        text: 'Package looks like fake depth: only ' + seat.clearFringeN
-          + ' of ' + receivedN + ' pieces clear their fringe (~'
-          + fringeTxt + ' Trade ★ / 17th). Most of the haul would not crack a 16-keeper roster.'
-      });
-    } else {
-      flags.push({
-        cls: 'ok',
-        title: 'Keeper seats — ' + receiverName,
-        text: seat.clearFringeN + '/' + receivedN + ' pieces clear fringe (~'
-          + fringeTxt + '); ' + seat.clearKeeperN + ' would push a top-'
-          + KEEPER_COUNT + ' seat (~' + keeperTxt + ').'
-      });
-    }
-  }
-
-  if (nB > nA) pileFlag(teamA.displayName, seatA, nA, nB);
-  if (nA > nB) pileFlag(teamB.displayName, seatB, nB, nA);
-
-  /* Player ↔ pick haul */
-  function pickHaulFlag(receiverName, received, sent, seat){
-    const recvPicks = (received || []).filter(p => p.kind === 'pick');
-    const sentPlayers = (sent || []).filter(p => p.kind !== 'pick');
-    if (!recvPicks.length || !sentPlayers.length) return;
-    const allPicks = recvPicks.length === (received || []).length;
-    if (!allPicks && recvPicks.length < 2) return;
-    const pickVal = recvPicks.reduce((s, p) => s + assetTradeValue(p), 0);
-    const playerVal = sentPlayers.reduce((s, p) => s + assetTradeValue(p), 0);
-    const nextSeason = state.draftPickNextSeason;
-    const laterN = recvPicks.filter(p => {
-      if (Number(p.yearsOut) >= 1) return true;
-      return nextSeason != null && Number(p.season) > Number(nextSeason);
-    }).length;
-    let cls = 'ok';
-    let text = (allPicks ? 'Pure pick haul' : 'Pick-heavy haul')
-      + ' (' + pickVal.toFixed(0) + ' pick ★ vs ' + playerVal.toFixed(0)
-      + ' player ★).';
-    if (laterN >= Math.ceil(recvPicks.length / 2) && pickVal < playerVal * 0.95){
-      softCaution = true;
-      cls = 'warn';
-      text += ' Majority are future-year picks — lean Caution unless the ★ edge is clear.';
-    } else if (seat.clearFringeN >= 1 || pickVal >= playerVal * 0.9){
-      text += ' Next to a real keeper seat / fringe cut, this is a normal rebuild swap.';
-    } else {
-      softCaution = true;
-      cls = 'warn';
-      text += ' Pick values sit under their cuttable fringe — weak capital for that roster.';
-    }
-    flags.push({cls, title: 'Picks vs players — ' + receiverName, text});
-  }
-
-  pickHaulFlag(teamA.displayName, fromB, fromA, seatA);
-  pickHaulFlag(teamB.displayName, fromA, fromB, seatB);
-
-  return {flags, softCaution, seatA, seatB, shape};
 }
 
 function makePlayer(pid, playerDb, projMaps, lockDist, histById, sleeperMaps){
@@ -1300,15 +888,15 @@ function analyze(){
   const aName = teamA.displayName;
   const bName = teamB.displayName;
 
-  const fromA = assetsFromSet(state.sendA);
-  const fromB = assetsFromSet(state.sendB);
+  const fromA = [...state.sendA].map(id => state.playersById.get(id)).filter(Boolean);
+  const fromB = [...state.sendB].map(id => state.playersById.get(id)).filter(Boolean);
   if (!fromA.length && !fromB.length){
     result.hidden = true;
     return;
   }
 
-  const valueToA = fromB.reduce((s, p) => s + (Number(p.dynasty) || 0), 0);
-  const valueToB = fromA.reduce((s, p) => s + (Number(p.dynasty) || 0), 0);
+  const valueToA = fromB.reduce((s, p) => s + p.dynasty, 0);
+  const valueToB = fromA.reduce((s, p) => s + p.dynasty, 0);
   const high = Math.max(valueToA, valueToB, 0.01);
   const low = Math.min(valueToA, valueToB);
   const ratio = low / high;
@@ -1316,20 +904,12 @@ function analyze(){
   const winner = valueToA === valueToB ? null
     : (valueToA > valueToB ? aName : bName);
   const loser = winner == null ? null : (winner === aName ? bName : aName);
-  const unfair = ratio < FINDER_FAIR_HARD || (high - low) >= 12;
+  const unfair = ratio < 0.62 || (high - low) >= 12;
 
   const afterA = new Set(teamA.playerIds);
   const afterB = new Set(teamB.playerIds);
-  fromA.forEach(p => {
-    if (p.kind === 'pick') return;
-    afterA.delete(p.id);
-    afterB.add(p.id);
-  });
-  fromB.forEach(p => {
-    if (p.kind === 'pick') return;
-    afterB.delete(p.id);
-    afterA.add(p.id);
-  });
+  fromA.forEach(p => { afterA.delete(p.id); afterB.add(p.id); });
+  fromB.forEach(p => { afterB.delete(p.id); afterA.add(p.id); });
 
   const beforeStandings = state.teams.map(t => {
     const mp = maxPointsForIds(t.playerIds);
@@ -1373,7 +953,7 @@ function analyze(){
   const verdictCls = unfair ? 'unfair' : (runaway ? 'runaway' : '');
   let headline = 'Balanced enough on trade value';
   if (unfair && winner) headline = 'Lopsided — favors ' + winner;
-  else if (winner && ratio < FINDER_FAIR_SOFT) headline = 'Edge to ' + winner;
+  else if (winner && ratio < 0.80) headline = 'Edge to ' + winner;
   else if (winner) headline = 'Slight edge to ' + winner;
 
   const flags = [];
@@ -1418,27 +998,14 @@ function analyze(){
     });
   }
 
-  const mismatch = evaluateMismatch(fromA, fromB, teamA, teamB);
-  mismatch.flags.forEach(f => flags.push(f));
-  const needFit = evaluateNeedFit(teamA, teamB, fromA, fromB);
-  needFit.flags.forEach(f => flags.push(f));
-  const contractFit = evaluateContractFit(teamA, teamB, fromA, fromB);
-  contractFit.flags.forEach(f => flags.push(f));
-
   function sideHtml(title, color, receives, value, maxDelta){
     const items = receives.length
-      ? '<ul>' + receives.map(p => {
-        const label = p.kind === 'pick'
-          ? (p.label || ((p.season || '') + ' ' + (window.DraftPickValue
-            ? DraftPickValue.roundOrdinal(p.round) : (p.round + 'th'))))
-          : p.name;
-        const extra = p.kind === 'pick'
-          ? (p.viaTrade ? '<span class="ceil">via trade</span>' : '<span class="ceil">pick</span>')
-          : (p.ceilClass && p.ceilClass !== 'role'
-            ? '<span class="ceil">' + escapeHtml(ceilingLabel(p.ceilClass)) + '</span>' : '');
-        return '<li><span>' + escapeHtml(label) + extra
-          + '</span><span class="dv">' + tradeValHtml(p) + '</span></li>';
-      }).join('') + '</ul>'
+      ? '<ul>' + receives.map(p =>
+        '<li><span>' + escapeHtml(p.name)
+          + (p.ceilClass && p.ceilClass !== 'role'
+            ? '<span class="ceil">' + escapeHtml(ceilingLabel(p.ceilClass)) + '</span>' : '')
+          + '</span><span class="dv">' + tradeValHtml(p) + '</span></li>'
+      ).join('') + '</ul>'
       : '<p class="empty-note">Nothing incoming</p>';
     return '<div class="side-card" style="--team-color:' + color + '">'
       + '<h4>' + escapeHtml(title) + ' gets</h4>'
@@ -1450,17 +1017,11 @@ function analyze(){
   const aDelta = afterMap[teamA.rosterId].total - (beforeStandings.find(r => String(r.rosterId) === String(aId)) || {before:0}).before;
   const bDelta = afterMap[teamB.rosterId].total - (beforeStandings.find(r => String(r.rosterId) === String(bId)) || {before:0}).before;
 
-  /* League ruling: block lopsided value or Max Points runaways; soft imbalances → review.
-     Fake-depth / need / max-for-min contract nudge Allow → Caution; they do not hard-block alone. */
+  /* League ruling: block lopsided value or Max Points runaways; soft imbalances → review. */
   let ruling = 'allow';
   let rulingTitle = 'Allow this trade';
-  let rulingWhy = 'Trade value is close enough; Max Points, need, and contract shape stay in band.';
-  const softEdge = !unfair && !runaway
-    && (ratio < FINDER_FAIR_SOFT || /^[CD]/.test(grade));
-  const softMismatch = !unfair && !runaway && mismatch.softCaution;
-  const softNeed = !unfair && !runaway && needFit.softNeed;
-  const softContract = !unfair && !runaway && contractFit.softContract;
-  const softAny = softEdge || softMismatch || softNeed || softContract;
+  let rulingWhy = 'Trade value is close enough and Max Points stay within the league band.';
+  const softEdge = !unfair && !runaway && (ratio < 0.80 || grade === 'C+' || grade === 'C');
   if (unfair && runaway){
     ruling = 'block';
     rulingTitle = 'Do not allow';
@@ -1478,27 +1039,11 @@ function analyze(){
     rulingTitle = 'Do not allow';
     rulingWhy = 'Blocked — ' + leader.team + ' would pull too far ahead in Max Points (+'
       + gap.toFixed(1) + ' over ' + second.team + '). League balance breaks even if the trade haul looks fine.';
-  } else if (softAny){
+  } else if (softEdge){
     ruling = 'review';
     rulingTitle = 'Allow with caution';
-    const softBits = [];
-    if (softEdge) softBits.push('Trade ★ edge (fairness ' + grade + ')');
-    if (softMismatch) softBits.push('soft package shape (fake depth / weak pick capital)');
-    if (softNeed) softBits.push('starter-lineup need mismatch');
-    if (softContract) softBits.push('max-for-min contract mismatch');
-    if (softContract && softBits.length === 1){
-      rulingWhy = 'Trade ★ is close enough, but one side takes on max/near-max money while the other gets min/cheap deals. Allow with caution.';
-    } else if (softNeed && softBits.length === 1){
-      rulingWhy = 'Trade ★ is close enough, but one side takes a clear starter-lineup hit while the other gains. Allow with caution.';
-    } else if (softMismatch && softBits.length === 1){
-      rulingWhy = 'Trade ★ is close enough, but keeper-seat / pick-haul checks say the pile may not'
-        + ' be real depth for a 16-keeper roster. Allow with caution.';
-    } else if (softEdge && softBits.length === 1){
-      rulingWhy = 'Passable, but ' + (winner || 'one side') + ' gets a clear edge (fairness '
-        + grade + '). Fine to allow unless the league wants a stricter bar.';
-    } else {
-      rulingWhy = 'Passable on raw Trade ★, but review for: ' + softBits.join('; ') + '.';
-    }
+    rulingWhy = 'Passable, but ' + (winner || 'one side') + ' gets a clear edge (fairness '
+      + grade + '). Fine to allow unless the league wants a stricter bar.';
   }
 
   result.hidden = false;
@@ -1554,12 +1099,8 @@ function renderLists(){
   function listHtml(team, sendSet, side){
     if (!team) return '<p class="empty-note" style="padding:14px">Select a team</p>';
     const players = team.playerIds.map(id => state.playersById.get(id)).filter(Boolean)
-      .sort((a, b) => (b.dynasty || 0) - (a.dynasty || 0));
-    const picks = (team.picks || []).slice()
-      .sort((a, b) => (b.dynasty || 0) - (a.dynasty || 0)
-        || Number(a.season) - Number(b.season)
-        || a.round - b.round);
-    const playerRows = players.map(p => {
+      .sort((a, b) => b.dynasty - a.dynasty);
+    return players.map(p => {
       const checked = sendSet.has(p.id) ? ' checked' : '';
       const sel = sendSet.has(p.id) ? ' selected' : '';
       return '<label class="player-row' + sel + '">'
@@ -1575,25 +1116,6 @@ function renderLists(){
         + '</div></span>'
         + '<span class="val">' + tradeValHtml(p) + '</span></label>';
     }).join('');
-    const pickRows = picks.map(p => {
-      const checked = sendSet.has(p.id) ? ' checked' : '';
-      const sel = sendSet.has(p.id) ? ' selected' : '';
-      const orig = teamById(p.originalRosterId);
-      const via = p.viaTrade
-        ? ('via ' + ((orig && orig.displayName) || ('R' + p.originalRosterId)))
-        : 'own pick';
-      const bandBit = p.band && p.band !== 'mid' ? (' · ' + p.band) : '';
-      return '<label class="player-row' + sel + '" title="' + escapeHtml(p.note || '') + '">'
-        + '<input type="checkbox" data-side="' + side + '" value="' + escapeHtml(p.id) + '"' + checked + '>'
-        + '<span><span class="name">' + escapeHtml(p.label || (p.season + ' pick')) + '</span>'
-        + '<span class="ceil">pick</span>'
-        + '<div class="meta">' + escapeHtml(via + bandBit) + '</div></span>'
-        + '<span class="val">' + tradeValHtml(p) + '</span></label>';
-    }).join('');
-    if (!playerRows && !pickRows){
-      return '<p class="empty-note" style="padding:14px">No assets</p>';
-    }
-    return playerRows + pickRows;
   }
 
   document.getElementById('listA').innerHTML = listHtml(teamA, state.sendA, 'A');
@@ -1633,15 +1155,13 @@ function setMode(mode){
   document.getElementById('modeFinder').hidden = state.mode !== 'finder';
   const lede = document.getElementById('ledeText');
   if (state.mode === 'finder'){
-    lede.innerHTML = 'Trade Finder scans for <strong>1–3 asset</strong> packages (players + picks), including mismatched counts. '
-      + 'It grades Trade ★ fairness, fringe seats, starter-lineup <strong>need</strong>, and <strong>max-for-min</strong> contracts. '
-      + '<strong>Shop</strong> = offers for your guy; <strong>Find</strong> = what you can send. Click to open in Analyze.';
+    lede.innerHTML = 'Trade Finder works like NBA 2K: pick a player, then scan the league for packages. '
+      + '<strong>Shop player</strong> lists offers for someone on your roster; '
+      + '<strong>Find player</strong> shows what you can send to acquire someone else. '
+      + 'Click an offer to load it in Analyze.';
     renderFinder();
   } else {
-    lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending. '
-      + 'Player value is <strong>Trade ★</strong>; picks use snapshot fringe bases × slot/quality. '
-      + 'Keeper-seat, starter-lineup need, and max-for-min contracts can nudge Allow → Caution. '
-      + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
+    lede.innerHTML = 'Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
   }
 }
 
@@ -1655,7 +1175,9 @@ function teamOwning(pid){
 }
 
 function finderValue(p){
-  return assetTradeValue(p);
+  if (!p) return 0;
+  const v = Number(p.dynasty);
+  return Number.isFinite(v) ? v : 0;
 }
 
 function finderRatio(a, b){
@@ -1667,152 +1189,82 @@ function finderRatio(a, b){
   return hi > 0 ? lo / hi : 0;
 }
 
-function finderRuling(ratio, delta, softCaution){
+function finderRuling(ratio, delta){
   if (ratio < FINDER_FAIR_HARD || delta >= 12) return 'block';
-  if (ratio < FINDER_FAIR_SOFT || softCaution) return 'caution';
+  if (ratio < FINDER_FAIR_SOFT) return 'caution';
   return 'allow';
-}
-
-function yieldToMain(){
-  return new Promise(resolve => setTimeout(resolve, 0));
 }
 
 function counterpartPool(team, excludeIds){
   const skip = new Set((excludeIds || []).map(String));
-  const players = (team.playerIds || []).map(id => state.playersById.get(String(id))).filter(Boolean)
-    .filter(p => !skip.has(String(p.id)) && finderValue(p) > 0);
-  /* Cap pick pool — full 15×3yr inventory explodes 2/3-for-1 search space. */
-  const picks = (team.picks || []).filter(p =>
-    p && !skip.has(String(p.id)) && finderValue(p) > 0
-  ).sort((a, b) => finderValue(b) - finderValue(a)).slice(0, 8);
-  return players.concat(picks).sort((a, b) => finderValue(b) - finderValue(a));
+  return (team.playerIds || []).map(id => state.playersById.get(String(id))).filter(Boolean)
+    .filter(p => !skip.has(p.id) && finderValue(p) > 0)
+    .sort((a, b) => finderValue(b) - finderValue(a));
 }
 
-function packageKindLabel(assets, againstCount){
-  const n = (assets || []).length;
-  const pickN = (assets || []).filter(p => p.kind === 'pick').length;
-  const base = n + '-for-' + Math.max(1, againstCount || 1);
-  if (pickN === n && n > 0) return base + ' picks';
-  if (pickN > 0) return base + ' mix';
-  return base;
-}
-
-function scoreFinderPack(pack, targetVal){
-  const stars = (pack.assets || []).reduce((s, p) => s + (Number(p.tradeStars) || 0), 0);
-  let score = pack.ratio * 100 - pack.delta * 0.15 + stars * 0.45;
-  /* Prefer real mismatched packages when value is close; punish fake depth. */
-  if ((pack.assets || []).length > 1) score += 1.5;
-  if (pack.softCaution) score -= 8;
-  if (pack.clearFringeN >= 2) score += 3;
-  if (pack.clearFringeN === 0 && (pack.assets || []).length >= 2) score -= 6;
-  return score;
-}
-
-/* Best packages from `giver` to match `targetVal` (1–3 assets, players + picks). */
+/* Best packages from `giver` to match `targetVal` (assets leaving giver). */
 function packagesMatchingValue(giver, targetVal, opts){
   const options = opts || {};
   const pool = counterpartPool(giver, options.excludeIds || []);
-  const receiver = options.receiverTeam || null;
-  const againstCount = Number(options.againstCount) || 1;
   if (!pool.length || !(targetVal > 0)) return [];
   const out = [];
 
-  function consider(assets){
-    const sendVal = assets.reduce((s, p) => s + finderValue(p), 0);
+  pool.forEach(p => {
+    const sendVal = finderValue(p);
     const ratio = finderRatio(sendVal, targetVal);
     if (ratio < FINDER_FAIR_HARD) return;
     const delta = Math.abs(sendVal - targetVal);
-    const seat = receiver ? packageSeatCheck(assets, receiver) : null;
-    const fakeDepth = !!(seat && isFakeDepth(seat, againstCount));
-    const againstAssets = options.againstAssets || [];
-    const needFit = (receiver && againstAssets.length)
-      ? evaluateNeedFit(giver, receiver, assets, againstAssets)
-      : null;
-    const contractFit = (receiver && againstAssets.length)
-      ? evaluateContractFit(giver, receiver, assets, againstAssets)
-      : null;
-    const softCaution = fakeDepth
-      || !!(needFit && needFit.softNeed)
-      || !!(contractFit && contractFit.softContract);
-    let ruling = finderRuling(ratio, delta, softCaution);
+    const ruling = finderRuling(ratio, delta);
     if (ruling === 'block' && !options.includeBlocked) return;
-    let mismatchNote = '';
-    if (fakeDepth && seat){
-      mismatchNote = 'Fake depth risk: ' + seat.clearFringeN + '/' + assets.length
-        + ' clear receiver fringe';
-    } else if (contractFit && contractFit.softContract){
-      mismatchNote = 'Contract mismatch: max/near-max for min/cheap';
-    } else if (needFit && needFit.softNeed){
-      mismatchNote = 'Need mismatch: giver '
-        + fmtNeedDelta(needFit.deltaA) + ' / receiver '
-        + fmtNeedDelta(needFit.deltaB) + ' starter FP/G';
-    } else if (seat){
-      mismatchNote = seat.clearFringeN + '/' + assets.length + ' clear fringe'
-        + (seat.clearKeeperN ? (', ' + seat.clearKeeperN + ' keeper-seat') : '');
-    }
-    const pack = {
-      kind: packageKindLabel(assets, againstCount),
-      assets: assets.slice(),
-      players: assets.slice(), /* backward compat for apply/render */
+    out.push({
+      kind: '1-for-1',
+      players: [p],
       sendVal,
       getVal: targetVal,
       ratio,
       delta,
       ruling,
       grade: fairnessGrade(ratio),
-      softCaution,
-      clearFringeN: seat ? seat.clearFringeN : null,
-      clearKeeperN: seat ? seat.clearKeeperN : null,
-      mismatchNote
-    };
-    pack.score = scoreFinderPack(pack, targetVal);
-    out.push(pack);
-  }
+      score: ratio * 100 - delta * 0.2 + (p.tradeStars || 0)
+    });
+  });
 
-  /* Trim pool before combinations — keeps Finder off the main-thread cliff. */
-  const trimmed = pool.slice(0, 18);
-
-  /* 1-for-1 */
-  trimmed.forEach(p => consider([p]));
-
-  /* 2-for-1 */
-  const n2 = Math.min(trimmed.length, 10);
-  for (let i = 0; i < n2; i++){
-    for (let j = i + 1; j < n2; j++){
-      consider([trimmed[i], trimmed[j]]);
+  /* 2-for-1: two smaller pieces ≈ target */
+  for (let i = 0; i < Math.min(pool.length, 12); i++){
+    for (let j = i + 1; j < Math.min(pool.length, 14); j++){
+      const a = pool[i];
+      const b = pool[j];
+      const sendVal = finderValue(a) + finderValue(b);
+      const ratio = finderRatio(sendVal, targetVal);
+      if (ratio < FINDER_FAIR_HARD) continue;
+      const delta = Math.abs(sendVal - targetVal);
+      const ruling = finderRuling(ratio, delta);
+      if (ruling === 'block' && !options.includeBlocked) continue;
+      /* Prefer combos closer than any single piece already kept */
+      out.push({
+        kind: '2-for-1',
+        players: [a, b],
+        sendVal,
+        getVal: targetVal,
+        ratio,
+        delta,
+        ruling,
+        grade: fairnessGrade(ratio),
+        score: ratio * 100 - delta * 0.15 + ((a.tradeStars || 0) + (b.tradeStars || 0)) * 0.5
+      });
     }
   }
 
-  /* 3-for-1 mismatched piles */
-  const n3 = Math.min(trimmed.length, 7);
-  for (let i = 0; i < n3; i++){
-    for (let j = i + 1; j < n3; j++){
-      for (let k = j + 1; k < n3; k++){
-        const a = trimmed[i];
-        const b = trimmed[j];
-        const c = trimmed[k];
-        /* Skip piles where the top chip already overshoots badly alone. */
-        if (finderValue(a) > targetVal * 1.05) continue;
-        consider([a, b, c]);
-      }
-    }
-  }
-
+  /* Keep top few unique lineups per team */
   out.sort((a, b) => b.score - a.score || a.delta - b.delta);
-
-  /* Keep a mix of even and mismatched shapes (up to 5). */
   const seen = new Set();
-  const kindCount = {};
   const uniq = [];
   for (const pack of out){
-    const key = pack.assets.map(p => p.id).sort().join('+');
+    const key = pack.players.map(p => p.id).sort().join('+');
     if (seen.has(key)) continue;
-    const kc = kindCount[pack.kind] || 0;
-    if (kc >= 2) continue;
     seen.add(key);
-    kindCount[pack.kind] = kc + 1;
     uniq.push(pack);
-    if (uniq.length >= 5) break;
+    if (uniq.length >= 3) break;
   }
   return uniq;
 }
@@ -1824,24 +1276,6 @@ function buildFinderOffers(){
 
   const groups = [];
 
-  function offerFromPack(counterparty, youSend, youGet, pack, sendVal, getVal){
-    return {
-      counterparty,
-      youSend,
-      youGet,
-      sendVal,
-      getVal,
-      ratio: pack.ratio,
-      delta: Math.abs(sendVal - getVal),
-      ruling: pack.ruling,
-      grade: pack.grade,
-      kind: pack.kind,
-      score: pack.score,
-      softCaution: pack.softCaution,
-      mismatchNote: pack.mismatchNote
-    };
-  }
-
   if (state.finderDir === 'shop'){
     /* Shopping a player on MY roster — other teams offer pieces for him. */
     const mineIds = new Set((mine.playerIds || []).map(String));
@@ -1849,18 +1283,23 @@ function buildFinderOffers(){
     const targetVal = finderValue(anchor);
     state.teams.forEach(other => {
       if (String(other.rosterId) === String(mine.rosterId)) return;
-      const packs = packagesMatchingValue(other, targetVal, {
-        excludeIds: [anchor.id],
-        receiverTeam: mine,
-        againstCount: 1,
-        againstAssets: [anchor]
-      });
+      const packs = packagesMatchingValue(other, targetVal, {excludeIds: [anchor.id]});
       if (!packs.length) return;
       groups.push({
         team: other,
-        offers: packs.map(pack => offerFromPack(
-          other, [anchor], pack.assets || pack.players, pack, targetVal, pack.sendVal
-        ))
+        offers: packs.map(pack => ({
+          counterparty: other,
+          youSend: [anchor],
+          youGet: pack.players,
+          sendVal: targetVal,
+          getVal: pack.sendVal,
+          ratio: pack.ratio,
+          delta: Math.abs(pack.sendVal - targetVal),
+          ruling: pack.ruling,
+          grade: pack.grade,
+          kind: pack.kind,
+          score: pack.score
+        }))
       });
     });
   } else {
@@ -1868,18 +1307,23 @@ function buildFinderOffers(){
     const owner = teamOwning(anchor.id);
     if (!owner || String(owner.rosterId) === String(mine.rosterId)) return [];
     const targetVal = finderValue(anchor);
-    const packs = packagesMatchingValue(mine, targetVal, {
-      excludeIds: [anchor.id],
-      receiverTeam: owner,
-      againstCount: 1,
-      againstAssets: [anchor]
-    });
+    const packs = packagesMatchingValue(mine, targetVal, {excludeIds: [anchor.id]});
     if (!packs.length) return [];
     groups.push({
       team: owner,
-      offers: packs.map(pack => offerFromPack(
-        owner, pack.assets || pack.players, [anchor], pack, pack.sendVal, targetVal
-      ))
+      offers: packs.map(pack => ({
+        counterparty: owner,
+        youSend: pack.players,
+        youGet: [anchor],
+        sendVal: pack.sendVal,
+        getVal: targetVal,
+        ratio: pack.ratio,
+        delta: Math.abs(pack.sendVal - targetVal),
+        ruling: pack.ruling,
+        grade: pack.grade,
+        kind: pack.kind,
+        score: pack.score
+      }))
     });
   }
 
@@ -1888,22 +1332,8 @@ function buildFinderOffers(){
   return groups;
 }
 
-/* Async Finder rebuild so selecting a player doesn't freeze HQ. */
-let finderBuildToken = 0;
-async function buildFinderOffersAsync(){
-  const token = ++finderBuildToken;
-  const mine = finderTeam();
-  const anchor = state.finderPlayerId ? state.playersById.get(String(state.finderPlayerId)) : null;
-  if (!mine || !anchor) return [];
-  await yieldToMain();
-  if (token !== finderBuildToken) return null;
-  const groups = buildFinderOffers();
-  if (token !== finderBuildToken) return null;
-  return groups;
-}
-
 function namesJoin(players){
-  return (players || []).map(p => assetDisplayName(p)).join(' + ');
+  return players.map(p => p.name).join(' + ');
 }
 
 function renderFinderPlayerList(){
@@ -1966,17 +1396,14 @@ function renderFinderPlayerList(){
   });
 }
 
-async function renderFinderResults(){
+function renderFinderResults(){
   const root = document.getElementById('finderResults');
+  const groups = buildFinderOffers();
+  state.finderOffers = groups;
   if (!state.finderPlayerId){
-    state.finderOffers = [];
     root.innerHTML = '<div class="finder-empty">Select a player to generate packages.</div>';
     return;
   }
-  root.innerHTML = '<div class="finder-empty">Scanning packages\u2026</div>';
-  const groups = await buildFinderOffersAsync();
-  if (groups == null) return; /* superseded by a newer selection */
-  state.finderOffers = groups;
   if (!groups.length){
     root.innerHTML = '<div class="finder-empty">No packages within fairness bands (ratio ≥ '
       + FINDER_FAIR_HARD + '). Try another player.</div>';
@@ -1991,16 +1418,12 @@ async function renderFinderResults(){
       + g.offers.map((o, oi) => {
         const sendTxt = namesJoin(o.youSend);
         const getTxt = namesJoin(o.youGet);
-        const mm = o.mismatchNote
-          ? (' · ' + o.mismatchNote)
-          : '';
         return '<div class="offer-row" data-group="' + gi + '" data-offer="' + oi + '" role="button" tabindex="0">'
           + '<div><div class="offer-line">Send ' + escapeHtml(sendTxt)
           + '<span class="arrow">→</span>Get ' + escapeHtml(getTxt) + '</div>'
           + '<div class="offer-meta">' + escapeHtml(o.kind)
           + ' · grade ' + escapeHtml(o.grade)
           + ' · ' + o.sendVal.toFixed(0) + ' vs ' + o.getVal.toFixed(0) + ' trade score'
-          + escapeHtml(mm)
           + ' · click to open in Analyze</div></div>'
           + '<div class="offer-side">'
           + '<div>' + Math.round(o.ratio * 100) + '% match</div>'
@@ -2124,33 +1547,22 @@ async function load(){
   const status = document.getElementById('status');
   const tag = document.getElementById('progressTag');
   try {
-    const playersP = (window.PatioBoysShare && typeof PatioBoysShare.fetchPlayersNba === 'function')
-      ? PatioBoysShare.fetchPlayersNba()
-      : fetch('https://api.sleeper.app/v1/players/nba').then(r => {
-          if (!r.ok) throw new Error('players unavailable');
-          return r.json();
-        });
-    const [leagueRes, usersRes, rostersRes, playerDb] = await Promise.all([
+    const [leagueRes, usersRes, rostersRes, playersRes] = await Promise.all([
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID),
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/users'),
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters'),
-      playersP
+      fetch('https://api.sleeper.app/v1/players/nba')
     ]);
-    if (!leagueRes.ok || !usersRes.ok || !rostersRes.ok || !playerDb){
+    if (!leagueRes.ok || !usersRes.ok || !rostersRes.ok || !playersRes.ok){
       throw new Error('Sleeper league request failed');
     }
     const league = await leagueRes.json();
     const users = await usersRes.json();
     const rosters = await rostersRes.json();
+    const playerDb = await playersRes.json();
     const scoring = league.scoring_settings || {};
-    state.slots = (window.TeamNeedsModel && typeof TeamNeedsModel.parseSlots === 'function')
-      ? TeamNeedsModel.parseSlots(league.roster_positions || [])
-      : null;
 
     status.textContent = 'Building Lock OVR + Trade stars from smash samples\u2026';
-    if (window.PatioBoysLoader){
-      PatioBoysLoader.reportProgress(52, {label: 'Building Lock OVR + Trade ★…'});
-    }
     const projMaps = buildConsensusProjMaps(scoring);
     const projError = projMaps.meta.count ? null
       : 'nba-proj-consensus.js missing or empty — run build-proj-consensus.py';
@@ -2197,7 +1609,6 @@ async function load(){
     users.forEach(u => { userById[u.user_id] = u; });
 
     state.playersById = new Map();
-    state.picksById = new Map();
     state.teams = rosters.map((r, i) => {
       const u = userById[r.owner_id] || {};
       const raw = (u.metadata && u.metadata.team_name) || u.display_name || ('Roster ' + r.roster_id);
@@ -2212,40 +1623,19 @@ async function load(){
         if (!state.playersById.has(pid)){
           state.playersById.set(pid, makePlayer(pid, playerDb, projMaps, lockDist, histPack.avgById, sleeperMaps));
         }
-      });
-      const s = r.settings || {};
-      const wins = s.wins || 0;
-      const losses = s.losses || 0;
-      const ties = s.ties || 0;
-      const rawPf = (s.fpts || 0) + (s.fpts_decimal || 0) / 100;
-      return {
+      });      return {
         rosterId: r.roster_id,
         key,
         displayName: raw,
         color: TEAM_COLORS[key] || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
         manager: u.display_name || '',
-        playerIds: uniq,
-        wins, losses, ties, rawPf,
-        picks: []
+        playerIds: uniq
       };
-    });
-    /* Standings rank for next-draft slot mult (W then PF). */
-    state.teams.slice().sort((a, b) => b.wins - a.wins || b.rawPf - a.rawPf)
-      .forEach((t, i) => { t.standingsRank = i + 1; });
-    /* Max Pts proxy for team-quality rank. */
-    state.teams.forEach(t => {
-      t.maxPts = maxPointsForIds(t.playerIds).total;
-    });
-    state.teams.sort((a, b) => {
+    }).sort((a, b) => {
       if (a.key === MY_TEAM || a.displayName === MY_TEAM) return -1;
       if (b.key === MY_TEAM || b.displayName === MY_TEAM) return 1;
       return a.displayName.localeCompare(b.displayName);
     });
-
-    await yieldToMain();
-    if (window.PatioBoysLoader){
-      PatioBoysLoader.reportProgress(82, {label: 'Readying trade boards…'});
-    }
 
     const selA = document.getElementById('teamA');
     const selB = document.getElementById('teamB');
@@ -2270,7 +1660,6 @@ async function load(){
     selB.addEventListener('change', onTeamChange);
     bindFinderUi();
 
-    /* First paint with players only — keep HQ tabs responsive. */
     document.getElementById('app').hidden = false;
     tag.textContent = state.teams.length + ' teams ready';
     status.classList.remove('error');
@@ -2279,87 +1668,20 @@ async function load(){
       status.textContent = 'Consensus projections unavailable (' + projError
         + '). Rookie Lock OVR may fall back to Sleeper/comps; smash samples still drive most Trade stars.';
     } else {
-      status.textContent = 'Analyze a deal or use Trade Finder. Loading draft-pick values\u2026 · '
-        + (lockPack.scored || 0) + ' players from ' + lockPack.statsSeason
-        + ' (' + lockPack.weeksFound + ' game samples).';
+      status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
+        + 'Trade value = Lock OVR × age × injury · ' + (lockPack.scored || 0)
+        + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
     }
     onTeamChange();
     setMode('analyze');
-    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'trade-analyzer'});
-
-    await yieldToMain();
-
-    if (window.DraftPickValue){
-      try {
-        const [tradedRes, draftsRes] = await Promise.all([
-          fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/traded_picks'),
-          fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/drafts')
-        ]);
-        const traded = tradedRes.ok ? await tradedRes.json() : [];
-        const drafts = draftsRes.ok ? await draftsRes.json() : [];
-        await yieldToMain();
-        const tradeScoreByPid = {};
-        state.playersById.forEach((p, id) => {
-          if (p.tradeScore != null) tradeScoreByPid[id] = Number(p.tradeScore);
-          else if (p.dynasty != null) tradeScoreByPid[id] = Number(p.dynasty);
-        });
-        const pickPack = DraftPickValue.valueLeaguePicks({
-          league,
-          rosters,
-          tradedPicks: traded,
-          drafts,
-          teams: state.teams,
-          tradeScoreByPid
-        });
-        state.draftPickRoundBases = pickPack.roundBases;
-        state.draftPickNextSeason = pickPack.nextDraftSeason;
-        state.picksById = new Map();
-        state.teams.forEach(t => {
-          const owned = pickPack.byOwner[Number(t.rosterId)]
-            || pickPack.byOwner[String(t.rosterId)]
-            || [];
-          t.picks = owned.map(p => {
-            const row = Object.assign({}, p, {
-              name: p.label,
-              kind: 'pick',
-              dynasty: p.tradeScore
-            });
-            state.picksById.set(String(row.id), row);
-            return row;
-          });
-        });
-        await yieldToMain();
-        renderLists();
-        if (state.mode === 'finder') renderFinder();
-        if (!projError){
-          const baseBits = state.draftPickRoundBases
-            ? (' · pick bases '
-              + [1, 2, 3, 4, 5].filter(r => state.draftPickRoundBases[r] != null)
-                .map(r => r + '=' + Number(state.draftPickRoundBases[r]).toFixed(0)).join('/'))
-            : '';
-          status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
-            + 'Players = Lock OVR × age × injury · picks = 16-keeper fringe medians × slot/quality'
-            + baseBits + ' · ' + (lockPack.scored || 0)
-            + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
-        }
-      } catch (pickErr){
-        console.warn('Trade Analyzer: draft pick values failed.', pickErr);
-        if (!projError){
-          status.textContent = 'Analyze a deal or use Trade Finder. Pick values unavailable · '
-            + (lockPack.scored || 0) + ' players from ' + lockPack.statsSeason + '.';
-        }
-      }
-    }
   } catch (e){
     status.classList.add('error');
     status.textContent = 'Could not load trade analyzer: ' + (e.message || e);
     tag.textContent = 'Error';
-    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'trade-analyzer', error: true});
   }
 }
 
 load();
-}); // pb-deps-ready
 </script>
 </body>
 </html>

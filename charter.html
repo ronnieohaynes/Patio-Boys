@@ -145,14 +145,6 @@
 </style>
 </head>
 <body>
-<link rel="stylesheet" href="hq-loader.css">
-<div class="pb-boot-loader" id="pbBootLoader" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-  <div class="pb-boot-mark" aria-hidden="true">PB</div>
-  <p class="pb-boot-label">Loading charter…</p>
-  <div class="pb-boot-bar" aria-hidden="true"><div class="pb-boot-bar-fill"></div></div>
-  <p class="pb-boot-pct">0%</p>
-</div>
-<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
 <div class="wrap topbar">
@@ -337,7 +329,6 @@
   } else {
     document.querySelectorAll('.fade-in').forEach(i => i.classList.add('in'));
   }
-  if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'charter'});
 </script>
 </body>
 </html>

@@ -148,14 +148,6 @@
 </style>
 </head>
 <body>
-<link rel="stylesheet" href="hq-loader.css">
-<div class="pb-boot-loader" id="pbBootLoader" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-  <div class="pb-boot-mark" aria-hidden="true">PB</div>
-  <p class="pb-boot-label">Loading draft grades…</p>
-  <div class="pb-boot-bar" aria-hidden="true"><div class="pb-boot-bar-fill"></div></div>
-  <p class="pb-boot-pct">0%</p>
-</div>
-<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
 <div class="wrap">
@@ -169,9 +161,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
-  /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist when needed (~1.4MB). */
-  ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-flex-mono';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -478,10 +469,9 @@ async function loadSleeperProjMaps(scoring, season){
   const byId = new Map();
   const byName = new Map();
   try {
-    const rows = (window.PatioBoysShare && typeof PatioBoysShare.fetchNbaProjections === 'function')
-      ? await PatioBoysShare.fetchNbaProjections(season)
-      : await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular')
-          .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    const res = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
+    if (!res.ok) return { byId, byName, count: 0 };
+    const rows = await res.json();
     (Array.isArray(rows) ? rows : []).forEach(row => {
       const pl = row.player || {};
       const pid = row.player_id || pl.player_id;
@@ -574,24 +564,19 @@ async function load(){
   const status = document.getElementById('status');
   const tag = document.getElementById('progressTag');
   try {
-    const playersP = (window.PatioBoysShare && typeof PatioBoysShare.fetchPlayersNba === 'function')
-      ? PatioBoysShare.fetchPlayersNba()
-      : fetch('https://api.sleeper.app/v1/players/nba').then(r => {
-          if (!r.ok) throw new Error('players unavailable');
-          return r.json();
-        });
-    const [leagueRes, usersRes, rostersRes, playerDb] = await Promise.all([
+    const [leagueRes, usersRes, rostersRes, playersRes] = await Promise.all([
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID),
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/users'),
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters'),
-      playersP
+      fetch('https://api.sleeper.app/v1/players/nba')
     ]);
-    if (!leagueRes.ok || !usersRes.ok || !rostersRes.ok || !playerDb){
+    if (!leagueRes.ok || !usersRes.ok || !rostersRes.ok || !playersRes.ok){
       throw new Error('Sleeper league request failed');
     }
     const league = await leagueRes.json();
     const users = await usersRes.json();
     const rosters = await rostersRes.json();
+    const playerDb = await playersRes.json();
     const draftId = league.draft_id;
     if (!draftId) throw new Error('No draft found for this league');
 
@@ -941,12 +926,10 @@ async function load(){
           + '</div></div></div>';
       }).join('')
       + '</div></div>';
-    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'draft-grades'});
   } catch (e){
     status.classList.add('error');
     status.textContent = 'Could not grade the draft: ' + (e.message || e);
     tag.textContent = 'Error';
-    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'draft-grades', error: true});
   }
 }
 

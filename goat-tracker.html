@@ -106,14 +106,6 @@
 </style>
 </head>
 <body>
-<link rel="stylesheet" href="hq-loader.css">
-<div class="pb-boot-loader" id="pbBootLoader" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-  <div class="pb-boot-mark" aria-hidden="true">PB</div>
-  <p class="pb-boot-label">Loading GOAT race…</p>
-  <div class="pb-boot-bar" aria-hidden="true"><div class="pb-boot-bar-fill"></div></div>
-  <p class="pb-boot-pct">0%</p>
-</div>
-<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
 <div class="wrap topbar">Patio Boys &middot; GOAT Race</div>
@@ -174,8 +166,8 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
-  ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-flex-mono';
+  ['2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -251,7 +243,6 @@ async function boot(){
   if (!window.PatioBoysAwards){
     statusEl.className = 'status error';
     statusEl.textContent = 'Awards engine failed to load.';
-    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'goat-tracker', error: true});
     return;
   }
 
@@ -393,11 +384,9 @@ async function boot(){
       + ' \u00b7 ' + total3 + ' third (+' + fmtPts(pts.third_place || 0) + ' ea)'
       + (locked ? ' \u00b7 ' + locked + ' locked award' + (locked === 1 ? '' : 's') : '')
       + '.';
-    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'goat-tracker'});
   } catch (e){
     statusEl.className = 'status error';
     statusEl.textContent = 'Could not load GOAT race: ' + (e.message || e);
-    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'goat-tracker', error: true});
   }
 }
 

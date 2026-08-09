@@ -152,13 +152,11 @@
   }
 
   async function loadWeeklyCeilings(statsSeason, scoring){
-    const Share = global.PatioBoysShare;
-    const weeklyResults = (Share && typeof Share.fetchWeeklyNbaStats === 'function')
-      ? await Share.fetchWeeklyNbaStats(statsSeason)
-      : await Promise.all(Array.from({ length: 25 }, (_, i) => i + 1).map(w =>
-          fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
-            .then(r => r.ok ? r.json() : null).catch(() => null)
-        ));
+    const weeks = Array.from({ length: 25 }, (_, i) => i + 1);
+    const weeklyResults = await Promise.all(weeks.map(w =>
+      fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
+        .then(r => r.ok ? r.json() : null).catch(() => null)
+    ));
     const weeklyByPlayer = {};
     let weeksFound = 0;
     weeklyResults.forEach(wk => {
@@ -664,20 +662,19 @@
     const sleeperById = new Map();
     const sleeperByName = new Map();
     try {
-      const Share = global.PatioBoysShare;
-      const rows = (Share && typeof Share.fetchNbaProjections === 'function')
-        ? await Share.fetchNbaProjections(season)
-        : await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular')
-            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
-      (Array.isArray(rows) ? rows : []).forEach(row => {
-        const pl = row.player || {};
-        const pid = row.player_id || pl.player_id;
-        const name = sleeperPlayerName(pl);
-        const fp = scoreStatLine(row.stats || {}, scoring);
-        if (fp == null || !(fp > 0)) return;
-        if (pid != null) sleeperById.set(String(pid), fp);
-        if (name) sleeperByName.set(normalizePlayerName(name), fp);
-      });
+      const res = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
+      if (res.ok){
+        const rows = await res.json();
+        (Array.isArray(rows) ? rows : []).forEach(row => {
+          const pl = row.player || {};
+          const pid = row.player_id || pl.player_id;
+          const name = sleeperPlayerName(pl);
+          const fp = scoreStatLine(row.stats || {}, scoring);
+          if (fp == null || !(fp > 0)) return;
+          if (pid != null) sleeperById.set(String(pid), fp);
+          if (name) sleeperByName.set(normalizePlayerName(name), fp);
+        });
+      }
     } catch (e){ /* optional */ }
 
     const histById = new Map();
@@ -1298,11 +1295,8 @@
     const rootId = leagueId || LEAGUE_ID;
     let playerDb = opts.playerDb || null;
     if (!playerDb){
-      try {
-        playerDb = (global.PatioBoysShare && typeof global.PatioBoysShare.fetchPlayersNba === 'function')
-          ? await global.PatioBoysShare.fetchPlayersNba()
-          : await fetchJson('https://api.sleeper.app/v1/players/nba');
-      } catch (e){ playerDb = null; }
+      try { playerDb = await fetchJson('https://api.sleeper.app/v1/players/nba'); }
+      catch (e){ playerDb = null; }
     }
 
     /* Walk the full previous_league_id chain (current + completed seasons). */
