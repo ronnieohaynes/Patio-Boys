@@ -335,7 +335,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Lineup <strong>need</strong> (starter FP/G fit) can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -413,7 +413,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-need';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-needcon';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   var i = 0;
@@ -988,6 +988,102 @@ function evaluateNeedFit(teamA, teamB, fromA, fromB){
   return {softNeed, flags, deltaA, deltaB};
 }
 
+/* ---------- contract shape (max vs min money) ---------- */
+/* Soft-caution when one side receives max/near-max multi-year and the other
+   gets min/cheap — even if Trade ★ is close. Never hard-blocks alone. */
+const CONTRACT_MAX_Y1 = 30e6;
+const CONTRACT_LARGE_Y1 = 18e6; /* snapshot tierRule.large */
+const CONTRACT_MIN_Y1 = 6e6;    /* min / near-min */
+
+function fmtMoneyYr(v){
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  if (n >= 1e6) return '$' + (n / 1e6).toFixed(n >= 10e6 ? 0 : 1) + 'M/yr';
+  return '$' + Math.round(n / 1e3) + 'K/yr';
+}
+
+function assetContractBand(p){
+  if (!p || p.kind === 'pick') return null;
+  const Needs = window.TeamNeedsModel;
+  if (!Needs || typeof Needs.contractProfile !== 'function') return null;
+  const profile = Needs.contractProfile(p.name || p, {lockOvr: p.lockOvr});
+  if (!profile || profile.y1 == null || !Number.isFinite(Number(profile.y1))) return null;
+  const y1 = Number(profile.y1);
+  const years = profile.yearsLeft != null && Number.isFinite(Number(profile.yearsLeft))
+    ? Number(profile.yearsLeft)
+    : 1;
+  let band = 'mid';
+  if (y1 >= CONTRACT_MAX_Y1 || (y1 >= CONTRACT_LARGE_Y1 && years >= 3)
+    || (y1 >= 22e6 && years >= 2)){
+    band = 'max';
+  } else if (y1 <= CONTRACT_MIN_Y1){
+    band = 'min';
+  }
+  return {
+    name: p.name || String(p.id),
+    y1,
+    years,
+    band,
+    label: fmtMoneyYr(y1) + (years ? (' · ' + years + 'yr') : '')
+  };
+}
+
+function haulContractShape(assets){
+  const rows = (assets || []).map(assetContractBand).filter(Boolean);
+  if (!rows.length) return null;
+  const maxN = rows.filter(r => r.band === 'max').length;
+  const minN = rows.filter(r => r.band === 'min').length;
+  const midN = rows.filter(r => r.band === 'mid').length;
+  const avgY1 = rows.reduce((s, r) => s + r.y1, 0) / rows.length;
+  let band = 'mid';
+  if (maxN > 0 && maxN >= minN && maxN >= midN) band = 'max';
+  else if (minN > 0 && maxN === 0 && avgY1 <= CONTRACT_MIN_Y1 * 1.15) band = 'min';
+  return {rows, maxN, minN, midN, avgY1, band, n: rows.length};
+}
+
+function evaluateContractFit(teamA, teamB, fromA, fromB){
+  const flags = [];
+  let softContract = false;
+  /* What each team receives. */
+  const recvA = haulContractShape(fromB);
+  const recvB = haulContractShape(fromA);
+  if (!recvA || !recvB){
+    return {softContract, flags, recvA, recvB};
+  }
+
+  softContract = (recvA.band === 'max' && recvB.band === 'min')
+    || (recvA.band === 'min' && recvB.band === 'max');
+
+  if (softContract){
+    const rich = recvA.band === 'max' ? teamA : teamB;
+    const cheap = recvA.band === 'min' ? teamA : teamB;
+    const richShape = recvA.band === 'max' ? recvA : recvB;
+    const cheapShape = recvA.band === 'min' ? recvA : recvB;
+    const richBits = richShape.rows.filter(r => r.band === 'max').map(r =>
+      r.name + ' (' + r.label + ')').slice(0, 2).join(', ');
+    const cheapBits = cheapShape.rows.filter(r => r.band === 'min').map(r =>
+      r.name + ' (' + r.label + ')').slice(0, 2).join(', ');
+    flags.push({
+      cls: 'warn',
+      title: 'Contract mismatch',
+      text: rich.displayName + ' takes on max/near-max money'
+        + (richBits ? (' — ' + richBits) : '')
+        + ' while ' + cheap.displayName + ' gets min/cheap'
+        + (cheapBits ? (' — ' + cheapBits) : '')
+        + '. Trade ★ can look close while the deals do not.'
+    });
+  } else {
+    flags.push({
+      cls: 'ok',
+      title: 'Contracts',
+      text: teamA.displayName + ' receives ~' + fmtMoneyYr(recvA.avgY1)
+        + ' avg · ' + teamB.displayName + ' receives ~' + fmtMoneyYr(recvB.avgY1)
+        + ' avg. Money shape is not a max-for-min swap.'
+    });
+  }
+  return {softContract, flags, recvA, recvB};
+}
+
 function packageSeatCheck(assets, receiverTeam){
   const thr = teamSeatThresholds(receiverTeam);
   const pieces = (assets || []).map(p => {
@@ -1317,6 +1413,8 @@ function analyze(){
   mismatch.flags.forEach(f => flags.push(f));
   const needFit = evaluateNeedFit(teamA, teamB, fromA, fromB);
   needFit.flags.forEach(f => flags.push(f));
+  const contractFit = evaluateContractFit(teamA, teamB, fromA, fromB);
+  contractFit.flags.forEach(f => flags.push(f));
 
   function sideHtml(title, color, receives, value, maxDelta){
     const items = receives.length
@@ -1344,14 +1442,16 @@ function analyze(){
   const bDelta = afterMap[teamB.rosterId].total - (beforeStandings.find(r => String(r.rosterId) === String(bId)) || {before:0}).before;
 
   /* League ruling: block lopsided value or Max Points runaways; soft imbalances → review.
-     Fake-depth / weak pick hauls / need mismatch nudge Allow → Caution; they do not hard-block alone. */
+     Fake-depth / need / max-for-min contract nudge Allow → Caution; they do not hard-block alone. */
   let ruling = 'allow';
   let rulingTitle = 'Allow this trade';
-  let rulingWhy = 'Trade value is close enough, Max Points stay in band, and starter-lineup need is balanced.';
+  let rulingWhy = 'Trade value is close enough; Max Points, need, and contract shape stay in band.';
   const softEdge = !unfair && !runaway
     && (ratio < FINDER_FAIR_SOFT || /^[CD]/.test(grade));
   const softMismatch = !unfair && !runaway && mismatch.softCaution;
   const softNeed = !unfair && !runaway && needFit.softNeed;
+  const softContract = !unfair && !runaway && contractFit.softContract;
+  const softAny = softEdge || softMismatch || softNeed || softContract;
   if (unfair && runaway){
     ruling = 'block';
     rulingTitle = 'Do not allow';
@@ -1369,19 +1469,22 @@ function analyze(){
     rulingTitle = 'Do not allow';
     rulingWhy = 'Blocked — ' + leader.team + ' would pull too far ahead in Max Points (+'
       + gap.toFixed(1) + ' over ' + second.team + '). League balance breaks even if the trade haul looks fine.';
-  } else if (softEdge || softMismatch || softNeed){
+  } else if (softAny){
     ruling = 'review';
     rulingTitle = 'Allow with caution';
     const softBits = [];
     if (softEdge) softBits.push('Trade ★ edge (fairness ' + grade + ')');
     if (softMismatch) softBits.push('soft package shape (fake depth / weak pick capital)');
     if (softNeed) softBits.push('starter-lineup need mismatch');
-    if (softNeed && !softEdge && !softMismatch){
+    if (softContract) softBits.push('max-for-min contract mismatch');
+    if (softContract && softBits.length === 1){
+      rulingWhy = 'Trade ★ is close enough, but one side takes on max/near-max money while the other gets min/cheap deals. Allow with caution.';
+    } else if (softNeed && softBits.length === 1){
       rulingWhy = 'Trade ★ is close enough, but one side takes a clear starter-lineup hit while the other gains. Allow with caution.';
-    } else if (softMismatch && !softEdge && !softNeed){
+    } else if (softMismatch && softBits.length === 1){
       rulingWhy = 'Trade ★ is close enough, but keeper-seat / pick-haul checks say the pile may not'
         + ' be real depth for a 16-keeper roster. Allow with caution.';
-    } else if (softEdge && !softMismatch && !softNeed){
+    } else if (softEdge && softBits.length === 1){
       rulingWhy = 'Passable, but ' + (winner || 'one side') + ' gets a clear edge (fairness '
         + grade + '). Fine to allow unless the league wants a stricter bar.';
     } else {
@@ -1522,13 +1625,13 @@ function setMode(mode){
   const lede = document.getElementById('ledeText');
   if (state.mode === 'finder'){
     lede.innerHTML = 'Trade Finder scans for <strong>1–3 asset</strong> packages (players + picks), including mismatched counts. '
-      + 'It grades Trade ★ fairness, 16-keeper fringe, and starter-lineup <strong>need</strong>. '
+      + 'It grades Trade ★ fairness, fringe seats, starter-lineup <strong>need</strong>, and <strong>max-for-min</strong> contracts. '
       + '<strong>Shop</strong> = offers for your guy; <strong>Find</strong> = what you can send. Click to open in Analyze.';
     renderFinder();
   } else {
     lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending. '
       + 'Player value is <strong>Trade ★</strong>; picks use snapshot fringe bases × slot/quality. '
-      + 'Mismatched piles get a keeper-seat check; starter-lineup need can nudge Allow → Caution. '
+      + 'Keeper-seat, starter-lineup need, and max-for-min contracts can nudge Allow → Caution. '
       + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
   }
 }
@@ -1616,13 +1719,20 @@ function packagesMatchingValue(giver, targetVal, opts){
     const needFit = (receiver && againstAssets.length)
       ? evaluateNeedFit(giver, receiver, assets, againstAssets)
       : null;
-    const softCaution = fakeDepth || !!(needFit && needFit.softNeed);
+    const contractFit = (receiver && againstAssets.length)
+      ? evaluateContractFit(giver, receiver, assets, againstAssets)
+      : null;
+    const softCaution = fakeDepth
+      || !!(needFit && needFit.softNeed)
+      || !!(contractFit && contractFit.softContract);
     let ruling = finderRuling(ratio, delta, softCaution);
     if (ruling === 'block' && !options.includeBlocked) return;
     let mismatchNote = '';
     if (fakeDepth && seat){
       mismatchNote = 'Fake depth risk: ' + seat.clearFringeN + '/' + assets.length
         + ' clear receiver fringe';
+    } else if (contractFit && contractFit.softContract){
+      mismatchNote = 'Contract mismatch: max/near-max for min/cheap';
     } else if (needFit && needFit.softNeed){
       mismatchNote = 'Need mismatch: giver '
         + fmtNeedDelta(needFit.deltaA) + ' / receiver '
