@@ -528,7 +528,7 @@
         <button class="nav-sub" id="tabBtnIntel" type="button" role="tab" aria-selected="false" aria-controls="tabIntel" data-group="league" data-tab="intel" hidden>Intel</button>
         <button class="nav-sub" id="tabBtnPast" type="button" role="tab" aria-selected="false" aria-controls="tabPast" data-group="league" data-tab="past" hidden>Past</button>
         <button class="nav-sub" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa" data-group="moves" data-tab="fa" hidden>FA</button>
-        <button class="nav-sub" id="tabBtnTx" type="button" role="tab" aria-selected="false" aria-controls="tabTx" data-group="moves" data-tab="tx" hidden>Transactions</button>
+        <button class="nav-sub" id="tabBtnTx" type="button" role="tab" aria-selected="false" aria-controls="tabTx" data-group="moves" data-tab="tx" hidden>Trades</button>
         <button class="nav-sub" id="tabBtnTrade" type="button" role="tab" aria-selected="false" aria-controls="tabTrade" data-group="moves" data-tab="trade" hidden>Analyzer</button>
         <button class="nav-sub" id="tabBtnBoard" type="button" role="tab" aria-selected="false" aria-controls="tabBoard" data-group="draft" data-tab="board" hidden>Board</button>
         <button class="nav-sub" id="tabBtnGrades" type="button" role="tab" aria-selected="false" aria-controls="tabGrades" data-group="draft" data-tab="grades" hidden>Grades</button>
@@ -608,7 +608,7 @@
       <iframe class="status-frame" id="freeAgentsFrame" title="Free Agents" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabTx" role="tabpanel" aria-labelledby="tabBtnTx" hidden>
-      <iframe class="status-frame" id="transactionsFrame" title="Transactions" src="about:blank"></iframe>
+      <iframe class="status-frame" id="transactionsFrame" title="Trades" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabTrade" role="tabpanel" aria-labelledby="tabBtnTrade" hidden>
       <iframe class="status-frame" id="tradeAnalyzerFrame" title="Trade Analyzer" src="about:blank"></iframe>
@@ -2310,7 +2310,7 @@ const HQ_NAV = {
     defaultTab: 'fa',
     tabs: {
       fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',    src: 'free-agents.html?embed=1&v=20260809-histnav', loaded: 'faFrameLoaded' },
-      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',  src: 'transactions.html?embed=1&v=20260809-histnav', loaded: 'txFrameLoaded' },
+      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',  src: 'transactions.html?embed=1&v=20260809-trades', loaded: 'txFrameLoaded' },
       trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame', src: 'trade-analyzer.html?embed=1&v=20260809-histnav', loaded: 'tradeFrameLoaded' }
     }
   },
@@ -2461,7 +2461,7 @@ function tabLoaderLabel(tab){
     intel: 'Loading team intel…',
     goat: 'Loading GOAT race…',
     fa: 'Loading free agents…',
-    tx: 'Loading transactions…',
+    tx: 'Loading trades…',
     trade: 'Loading trade analyzer…',
     offseason: 'Loading report card…',
     grades: 'Loading draft grades…',

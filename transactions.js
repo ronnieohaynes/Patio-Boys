@@ -1,8 +1,9 @@
 /* Patio Boys transaction ledger.
-   Fetches completed trades + waivers/FA claims across the league chain,
+   Fetches completed trades (+ optional waivers/FA) across the league chain,
    resolves drafted picks to players, and grades with Lock OVR / Trade ★
    as of that season (tradeScore-at-time). Future unresolved picks use
-   DraftPickValue (16-keeper fringe). Roster-fit uses lockBase (smash FP). */
+   DraftPickValue (16-keeper fringe). Roster-fit uses lockBase (smash FP).
+   Pass { tradesOnly: true } to skip adds/drops / waiver grading. */
 (function(global){
   'use strict';
 
@@ -817,7 +818,11 @@
 
   async function compute(leagueId, opts){
     const startId = leagueId || LEAGUE_ID;
-    const onProgress = (opts && opts.onProgress) || function(){};
+    const options = opts || {};
+    const onProgress = options.onProgress || function(){};
+    const tradesOnly = !!options.tradesOnly;
+    const gradeTypes = tradesOnly ? { trade: 1 } : GRADE_TYPES;
+    const stateTypes = tradesOnly ? { trade: 1 } : STATE_TYPES;
     onProgress('Walking league seasons…');
     const seasons = await walkLeagueChain(startId);
     if (!seasons.length) throw new Error('No league seasons found');
@@ -828,10 +833,10 @@
       ? await global.PatioBoysShare.fetchPlayersNba()
       : await fetchJson('https://api.sleeper.app/v1/players/nba');
 
-    onProgress('Fetching trades and waivers…');
+    onProgress(tradesOnly ? 'Fetching trades…' : 'Fetching trades and waivers…');
     const rawState = [];
     for (const s of seasons){
-      const txns = await fetchSeasonTransactions(s.leagueId, STATE_TYPES);
+      const txns = await fetchSeasonTransactions(s.leagueId, stateTypes);
       txns.forEach(tx => {
         rawState.push({
           ...tx,
@@ -851,12 +856,15 @@
       return true;
     });
     const unique = stateTxns
-      .filter(t => GRADE_TYPES[t.type])
+      .filter(t => gradeTypes[t.type])
       .slice()
       .sort((a, b) => (b.status_updated || 0) - (a.status_updated || 0));
 
-    onProgress('Replaying rosters for fit grades…');
-    const preRostersByTxn = buildPreRostersByTxn(seasons, stateTxns);
+    let preRostersByTxn = {};
+    if (!tradesOnly){
+      onProgress('Replaying rosters for fit grades…');
+      preRostersByTxn = buildPreRostersByTxn(seasons, stateTxns);
+    }
 
     onProgress('Resolving drafted picks…');
     const resolvePick = await buildPickResolver(seasons, unique);
@@ -873,23 +881,25 @@
       const season = String(tx.season);
       const bag = pidsBySeason[season] || (pidsBySeason[season] = new Set());
       Object.keys(tx.adds || {}).forEach(pid => bag.add(String(pid)));
-      Object.keys(tx.drops || {}).forEach(pid => bag.add(String(pid)));
+      if (!tradesOnly) Object.keys(tx.drops || {}).forEach(pid => bag.add(String(pid)));
       (tx.draft_picks || []).forEach(pk => {
         const resolved = resolvePick(pk);
         if (resolved) bag.add(String(resolved));
       });
     });
     /* Roster-fit grades also need values for everyone on the pre-txn roster. */
-    const seasonByTxnId = new Map(unique.map(t => [String(t.transaction_id), String(t.season)]));
-    Object.keys(preRostersByTxn).forEach(txid => {
-      const season = seasonByTxnId.get(String(txid));
-      if (!season) return;
-      const bag = pidsBySeason[season] || (pidsBySeason[season] = new Set());
-      const byRid = preRostersByTxn[txid] || {};
-      Object.keys(byRid).forEach(rid => {
-        (byRid[rid] || []).forEach(pid => bag.add(String(pid)));
+    if (!tradesOnly){
+      const seasonByTxnId = new Map(unique.map(t => [String(t.transaction_id), String(t.season)]));
+      Object.keys(preRostersByTxn).forEach(txid => {
+        const season = seasonByTxnId.get(String(txid));
+        if (!season) return;
+        const bag = pidsBySeason[season] || (pidsBySeason[season] = new Set());
+        const byRid = preRostersByTxn[txid] || {};
+        Object.keys(byRid).forEach(rid => {
+          (byRid[rid] || []).forEach(pid => bag.add(String(pid)));
+        });
       });
-    });
+    }
     const seasonSet = new Set(unique.map(t => String(t.season)));
     await Promise.all([...seasonSet].map(async season => {
       const scoring = scoringBySeason[season] || seasons[0].scoring;
@@ -903,7 +913,7 @@
       mapsBySeason[String(currentSeason)] || mapsBySeason[seasons[0].season] || null
     );
 
-    onProgress('Grading transactions…');
+    onProgress(tradesOnly ? 'Grading trades…' : 'Grading transactions…');
     const rows = unique.map(tx => {
       const rosterMap = tx.rosterMap || {};
       const asOf = String(tx.season);
@@ -996,6 +1006,8 @@
         };
       }
 
+      if (tradesOnly) return null;
+
       /* waiver + free_agent */
       const rid = String((tx.roster_ids && tx.roster_ids[0]) || Object.values(tx.adds || {})[0] || Object.values(tx.drops || {})[0] || '');
       const meta = rosterMap[rid] || { displayName: 'Roster ' + rid, franchise: 'Roster ' + rid, manager: '', rosterId: rid };
@@ -1047,7 +1059,7 @@
         }],
         waiverBid: Number.isFinite(bid) ? bid : null
       };
-    });
+    }).filter(Boolean);
 
     const teamSet = new Map();
     seasons[0].rosterMap && Object.values(seasons[0].rosterMap).forEach(t => {
