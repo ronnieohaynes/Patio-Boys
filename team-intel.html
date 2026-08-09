@@ -543,7 +543,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-tabs';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-picksnap';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   var i = 0;
@@ -2989,11 +2989,9 @@ function valueDraftPicks(rawByOwner, seasons, meta){
   const scoreMap = tradeScoreLookup();
   D.assignQualityRanks(state.teams, scoreMap);
   const meaningful = D.standingsMeaningful(state.teams);
-  const fringe = D.fringeMediansByRound(
-    state.teams.map(t => t.players || []),
-    scoreMap,
-    {rounds: (meta && meta.rounds) || 5}
-  );
+  const fringe = typeof D.snapshotRoundBases === 'function'
+    ? D.snapshotRoundBases((meta && meta.rounds) || 5)
+    : {bases: D.SNAPSHOT_ROUND_BASE || D.FALLBACK_ROUND_BASE};
   const ctx = {
     roundBases: fringe.bases,
     nextDraftSeason: (meta && meta.nextDraftSeason) || (seasons && seasons[0]),
@@ -3117,7 +3115,7 @@ function renderDraftPicks(t){
     return '<div class="picks-year"><h3>' + escapeHtml(season) + ' draft</h3>'
       + '<div class="picks-chips">' + chips + '</div></div>';
   }).join('')
-    + '<p class="lineup-foot">Pick Trade ★ = median fringe (16-keeper ranks 17–21)'
+    + '<p class="lineup-foot">Pick Trade ★ = snapshot fringe bases (16-keeper ranks 17–21)'
     + (baseBits.length ? (' [' + escapeHtml(baseBits.join(' · ')) + ']') : '')
     + ' × year discount × '
     + escapeHtml(nextMode)

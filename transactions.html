@@ -153,7 +153,7 @@
     <p class="caption" id="txCaption" hidden>
       Grades use Trade ★ fairness; when one side gets more players/picks, the grade also blends in average trade score per asset.
       Rookies without NBA samples are reverse-engineered from next-year projections + comps.
-      Future picks count via 16-keeper fringe medians × year/slot/quality; once drafted they grade as that player.
+      Future picks count via snapshot 16-keeper fringe bases × year/slot/quality; once drafted they grade as that player.
     </p>
     <div class="tx-list" id="txList"></div>
     <div class="empty" id="txEmpty" hidden>No trades match those filters.</div>
@@ -162,7 +162,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-trades';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-picksnap';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js','transactions.js'];
   var i = 0;

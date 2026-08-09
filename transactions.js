@@ -454,7 +454,7 @@
     return (asset.season || '') + ' ' + roundOrdinal(asset.round);
   }
 
-  /* Current-league pick Trade ★ context (16-keeper fringe medians × slot/quality). */
+  /* Current-league pick Trade ★ context (snapshot fringe bases × slot/quality). */
   function buildPickValueContext(seasonPack, maps){
     const D = global.DraftPickValue;
     if (!D || !seasonPack) return null;
@@ -487,14 +487,13 @@
       });
     }
 
+    /* Quality ranks only (slot/quality mults). Round bases stay on the snapshot. */
     D.assignQualityRanks(teams, tradeScoreByPid);
     const league = seasonPack.league || {};
     const rounds = Number(league.settings && league.settings.draft_rounds) || 5;
-    const fringe = D.fringeMediansByRound(
-      teams.map(t => t.players || []),
-      tradeScoreByPid,
-      {rounds}
-    );
+    const fringe = typeof D.snapshotRoundBases === 'function'
+      ? D.snapshotRoundBases(rounds)
+      : {bases: D.SNAPSHOT_ROUND_BASE || D.FALLBACK_ROUND_BASE};
     const seasonNum = Number(league.season || seasonPack.season);
     const draftDone = league.status === 'in_season' || league.status === 'complete'
       || (seasonPack.draftId && league.status !== 'pre_draft');
@@ -526,7 +525,7 @@
   }
 
   /* Trades: tradeScore-at-time fairness (no roster-fit).
-     Unresolved future picks use DraftPickValue (fringe medians × slot/quality).
+     Unresolved future picks use DraftPickValue (snapshot fringe × slot/quality).
      When asset counts differ, blend total haul with per-asset average so
      2-for-1 / 3-for-1 deals aren't graded on volume alone. */
   function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason, pickValueCtx){

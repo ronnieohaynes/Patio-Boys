@@ -413,7 +413,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-picksnap';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   var i = 0;
@@ -1407,7 +1407,7 @@ function setMode(mode){
     renderFinder();
   } else {
     lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending. '
-      + 'Player value is <strong>Trade ★</strong>; picks use 16-keeper fringe medians × slot/quality. '
+      + 'Player value is <strong>Trade ★</strong>; picks use snapshot 16-keeper fringe bases × slot/quality. '
       + 'Mismatched piles get a keeper-seat check (fake depth → Caution). Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
   }
 }
@@ -2076,7 +2076,7 @@ async function load(){
                 .map(r => r + '=' + Number(state.draftPickRoundBases[r]).toFixed(0)).join('/'))
             : '';
           status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
-            + 'Players = Lock OVR × age × injury · picks = 16-keeper fringe medians × slot/quality'
+            + 'Players = Lock OVR × age × injury · picks = snapshot fringe bases × slot/quality'
             + baseBits + ' · ' + (lockPack.scored || 0)
             + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
         }
