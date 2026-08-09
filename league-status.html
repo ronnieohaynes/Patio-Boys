@@ -67,30 +67,6 @@
   .tracker-row.lead .val{color:var(--gold)}
   .tracker-empty{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);padding:8px 0 4px}
 
-  /* trade cards */
-  .trade-list{display:flex;flex-direction:column;gap:16px;margin-top:8px}
-  .trade-card{background:var(--surface);border:1px solid var(--hairline);border-radius:8px;padding:16px}
-  .trade-meta{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);margin:0 0 12px;text-transform:uppercase;letter-spacing:.05em}
-  .trade-sides{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:start}
-  .trade-side{display:flex;flex-direction:column;gap:6px}
-  .trade-side-label{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.05em}
-  .trade-arrow{display:flex;align-items:center;justify-content:center;color:var(--ink-dim);font-size:18px;padding-top:18px}
-  .trade-item{font-size:13px;padding:4px 8px;background:var(--surface-2);border-radius:4px}
-  .trade-item.pick{color:var(--gold)}
-  .trade-grades{display:flex;gap:16px;margin-top:14px;padding-top:14px;border-top:1px solid var(--hairline)}
-  .trade-grade{flex:1;text-align:center}
-  .trade-grade .g-label{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px}
-  .trade-grade .g-val{font-family:'Anton',sans-serif;font-size:28px}
-  .trade-grade .g-sub{font-size:11px;color:var(--ink-dim);margin-top:2px}
-  .grade-ap{color:#1D9E75}.grade-a{color:#3AB87D}.grade-am{color:#5BC48A}
-  .grade-bp{color:#7DD68C}.grade-b{color:#C9963A}.grade-bm{color:#D4A84A}
-  .grade-cp{color:#E0A030}.grade-c{color:#D8883A}.grade-cm{color:#D07030}
-  .grade-dp{color:#D8553A}.grade-d{color:#D8553A}.grade-dm{color:#C04030}
-  .grade-f{color:#B03020}
-  .grade-pending{color:var(--ink-dim)}
-  .pick-trades{margin-top:28px}
-  .pick-trades h3{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px;font-weight:500}
-  @media(max-width:600px){.trade-sides{grid-template-columns:1fr;}.trade-arrow{display:none}}
   body.embed .topbar,
   body.embed .hero{display:none}
   body.embed .wrap{max-width:none;padding:12px 14px 24px}
@@ -98,7 +74,6 @@
   body.embed section:first-of-type{margin-top:0}
   body.embed table{font-size:12px}
   body.embed th,body.embed td{padding:7px 8px}
-  body.embed .trade-card{padding:12px}
 </style>
 </head>
 <body>
@@ -115,38 +90,10 @@
 <div class="wrap hero">
   <p class="eyebrow">Pulled live from Sleeper, in your browser</p>
   <h1 class="display">Where Things<br>Actually Stand</h1>
-  <p>Fetches your league's current rosters, the last two seasons of standings, the full trade history across both seasons, automatic accolades, and a Max Points roster rating. Nothing is cached or guessed.</p>
+  <p>This season only: live standings, current accolades, and Max Points roster grades. Prior seasons live on the History tab; trades live on Transactions.</p>
 </div>
 
 <div class="wrap">
-
-  <section>
-    <p class="eyebrow">Automatic &middot; No Voting &middot; Lock-in Points = Max Points</p>
-    <h2>Accolades</h2>
-    <p class="caption" style="margin-top:0">Champion, MVP (most regular-season Points For), Most Improved (biggest YoY Points For / game), Coach of the Year (lineup efficiency), GM of the Year (biggest YoY gain in total roster dynasty value), and GOAT (manager with the most career GOAT points). Live leaders while the season is open; badges lock when the season completes. Career GOAT points live on the GOAT Race tab.</p>
-    <p class="status" id="awardsStatus">Loading accolades&hellip;</p>
-    <table id="awardsTable" style="display:none">
-      <thead><tr><th>Award</th><th>Leader</th><th>Value</th><th>Runner-up</th><th>Status</th></tr></thead>
-      <tbody id="awardsBody"></tbody>
-    </table>
-    <div class="seasonblock" id="awardTrackerBlock" style="display:none">
-      <h3>Award Tracker &middot; Top 3</h3>
-      <p class="caption" style="margin-top:0">Live race for every accolade except Champion (playoff-only). Rankings update as regular-season Points For, Points For / game, lock-in points, and lineup efficiency move.</p>
-      <div class="tracker-grid" id="awardTracker"></div>
-    </div>
-    <div id="awardsHistory" class="seasonblock" style="display:none"></div>
-  </section>
-
-  <section>
-    <p class="eyebrow">Weekly Ceiling &middot; Real Game-To-Game Variance &middot; Your Scoring Settings</p>
-    <h2>Roster Rating</h2>
-    <p class="caption" style="margin-top:0">Max Points mirrors Sleeper's utilization idea. It pulls every week of last season's stats, finds each player's mean and standard deviation of weekly fantasy output under your real scoring settings, then sums the top 10 players' (mean + 1 standard deviation), a realistic ceiling for a week where the manager starts the right lineup. Score is graded as <strong>Max Points / 500</strong> on a traditional school scale (97% A+ · 93% A · 90% A- · 87% B+ · 83% B · 80% B- · 70% C- · 60% D- · below F) — not curved against the rest of the league. Says nothing about injuries, role changes, or unproven rookies.</p>
-    <p class="status" id="ratingStatus">Loading player stats...</p>
-    <table id="ratingTable" style="display:none">
-      <thead><tr><th>Team</th><th>Manager</th><th>Max Points Grade</th><th>Max Points (Top 10)</th><th>Players Counted</th></tr></thead>
-      <tbody id="ratingBody"></tbody>
-    </table>
-  </section>
 
   <section>
     <p class="eyebrow">This Season</p>
@@ -160,34 +107,39 @@
   </section>
 
   <section>
-    <p class="eyebrow">Last Two Seasons</p>
-    <h2>Recent History</h2>
-    <p class="status" id="historyStatus">Loading historical seasons...</p>
-    <div id="historyBlocks"></div>
+    <p class="eyebrow">Automatic &middot; No Voting &middot; Lock-in Points = Max Points</p>
+    <h2>Accolades</h2>
+    <p class="caption" style="margin-top:0">Champion, MVP (most regular-season Points For), Most Improved (biggest YoY Points For / game), Coach of the Year (lineup efficiency), GM of the Year (biggest YoY gain in total roster dynasty value), and GOAT (manager with the most career GOAT points). Live leaders while the season is open; badges lock when the season completes. Past finals are on History; career GOAT points live on the GOAT Race tab.</p>
+    <p class="status" id="awardsStatus">Loading accolades&hellip;</p>
+    <table id="awardsTable" style="display:none">
+      <thead><tr><th>Award</th><th>Leader</th><th>Value</th><th>Runner-up</th><th>Status</th></tr></thead>
+      <tbody id="awardsBody"></tbody>
+    </table>
+    <div class="seasonblock" id="awardTrackerBlock" style="display:none">
+      <h3>Award Tracker &middot; Top 3</h3>
+      <p class="caption" style="margin-top:0">Live race for every accolade except Champion (playoff-only). Rankings update as regular-season Points For, Points For / game, lock-in points, and lineup efficiency move.</p>
+      <div class="tracker-grid" id="awardTracker"></div>
+    </div>
   </section>
 
   <section>
-    <p class="eyebrow">Both Seasons &middot; Player Trades + Pick Trades Separated</p>
-    <h2>Trade History</h2>
-    <p class="caption" style="margin-top:0">Grades compare what each side received. "Before" is each received player's average over the 50 games before the trade date. "Now" is their last-50-games average today. Each side's combined before/now score is graded on a curve against the other side. Pick-only trades are listed separately since there are no player stats to evaluate.</p>
-    <p class="status" id="tradeStatus">Loading trade history...</p>
-    <div id="tradeList" class="trade-list"></div>
-    <div id="pickTrades" class="pick-trades" style="display:none">
-      <h3>Pick-only trades</h3>
-      <table id="pickTradeTable">
-        <thead><tr><th>Date</th><th>Season</th><th>Team A</th><th>Picks To A</th><th>Team B</th><th>Picks To B</th></tr></thead>
-        <tbody id="pickTradeBody"></tbody>
-      </table>
-    </div>
+    <p class="eyebrow">Weekly Ceiling &middot; Real Game-To-Game Variance &middot; Your Scoring Settings</p>
+    <h2>Roster Rating</h2>
+    <p class="caption" style="margin-top:0">Max Points mirrors Sleeper's utilization idea. It pulls every week of last season's stats, finds each player's mean and standard deviation of weekly fantasy output under your real scoring settings, then sums the top 10 players' (mean + 1 standard deviation), a realistic ceiling for a week where the manager starts the right lineup. Score is graded as <strong>Max Points / 500</strong> on a traditional school scale (97% A+ · 93% A · 90% A- · 87% B+ · 83% B · 80% B- · 70% C- · 60% D- · below F) — not curved against the rest of the league. Says nothing about injuries, role changes, or unproven rookies.</p>
+    <p class="status" id="ratingStatus">Loading player stats...</p>
+    <table id="ratingTable" style="display:none">
+      <thead><tr><th>Team</th><th>Manager</th><th>Max Points Grade</th><th>Max Points (Top 10)</th><th>Players Counted</th></tr></thead>
+      <tbody id="ratingBody"></tbody>
+    </table>
   </section>
 
 </div>
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-history';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
-  var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js'];
+  var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'];
   var i = 0;
   function next(){
     if (i >= files.length){
@@ -235,31 +187,6 @@ function buildStandingsRows(users, rosters){
   }).sort((a,b) => b.wins-a.wins || b.rawPf-a.rawPf);
 }
 
-function gradeClass(g){
-  const map = {
-    'A+':'grade-ap','A':'grade-a','A-':'grade-am',
-    'B+':'grade-bp','B':'grade-b','B-':'grade-bm',
-    'C+':'grade-cp','C':'grade-c','C-':'grade-cm',
-    'D+':'grade-dp','D':'grade-d','D-':'grade-dm',
-    'F':'grade-f'
-  };
-  return map[g] || 'grade-pending';
-}
-
-function scoreToGrade(score, opponentScore){
-  if (score == null || opponentScore == null) return '--';
-  const diff = score - opponentScore;
-  const scale = Math.max(Math.abs(diff), 1);
-  const pct = diff / (Math.abs(score) + Math.abs(opponentScore) + 0.001);
-  if (pct > 0.25) return 'A+';
-  if (pct > 0.12) return 'A';
-  if (pct > 0.05) return 'B+';
-  if (pct > 0.01) return 'B';
-  if (pct > -0.01) return 'C+';
-  if (pct > -0.05) return 'C';
-  if (pct > -0.12) return 'D';
-  return 'F';
-}
 
 // --- Current rosters ---
 async function loadCurrent(){
@@ -292,78 +219,6 @@ async function loadCurrent(){
   }
 }
 
-// --- History ---
-async function loadHistory(currentLeague){
-  const statusEl = document.getElementById('historyStatus');
-  if (!currentLeague){ statusEl.classList.add('error'); statusEl.textContent='Skipped.'; return null; }
-  try {
-    const seasons = [];
-    let prevId = currentLeague.previous_league_id;
-    let guard = 0;
-    while (prevId && seasons.length < 2 && guard < 5){
-      guard++;
-      const leagueRes = await fetch('https://api.sleeper.app/v1/league/'+prevId);
-      if (!leagueRes.ok) break;
-      const league = await leagueRes.json();
-      const [usersRes, rostersRes] = await Promise.all([
-        fetch('https://api.sleeper.app/v1/league/'+prevId+'/users'),
-        fetch('https://api.sleeper.app/v1/league/'+prevId+'/rosters')
-      ]);
-      const users = usersRes.ok ? await usersRes.json() : [];
-      const rosters = rostersRes.ok ? await rostersRes.json() : [];
-      seasons.push({ league, rows: buildStandingsRows(users, rosters) });
-      prevId = league.previous_league_id;
-    }
-    if (seasons.length === 0){ statusEl.textContent='No previous seasons found.'; return seasons; }
-    statusEl.textContent = 'Loaded '+seasons.length+' previous season'+(seasons.length===1?'':'s')+'.';
-    const blocksEl = document.getElementById('historyBlocks');
-    if (seasons.length > 1){
-      const combined = {};
-      seasons.forEach(s => {
-        s.rows.forEach(row => {
-          const key = row.ownerId;
-          if (!combined[key]) combined[key] = { teamName:row.teamName, manager:row.manager, wins:0, losses:0, ties:0, rawPf:0, rawPa:0, seasonsPlayed:0 };
-          combined[key].wins += row.wins; combined[key].losses += row.losses; combined[key].ties += row.ties;
-          combined[key].rawPf += row.rawPf; combined[key].rawPa += row.rawPa;
-          combined[key].seasonsPlayed += 1;
-          combined[key].teamName = row.teamName; combined[key].manager = row.manager;
-        });
-      });
-      const combinedRows = Object.values(combined).sort((a,b) => b.wins-a.wins||b.rawPf-a.rawPf);
-      const block = document.createElement('div'); block.className='seasonblock';
-      block.innerHTML = '<h3>Combined record, '+seasons.map(s=>s.league.season).join(' + ')+'</h3>';
-      const t = document.createElement('table');
-      t.innerHTML = '<thead><tr><th>Team</th><th>Manager</th><th>Combined Record</th><th>Total Pts For</th><th>Total Pts Against</th><th>Seasons</th></tr></thead>';
-      const tb = document.createElement('tbody');
-      combinedRows.forEach(row => {
-        const tr = document.createElement('tr');
-        tr.innerHTML='<td>'+row.teamName+'</td><td>'+row.manager+'</td><td>'+row.wins+'-'+row.losses+(row.ties?'-'+row.ties:'')+'</td><td>'+row.rawPf.toFixed(1)+'</td><td>'+row.rawPa.toFixed(1)+'</td><td>'+row.seasonsPlayed+'</td>';
-        tb.appendChild(tr);
-      });
-      t.appendChild(tb); block.appendChild(t);
-      block.appendChild(Object.assign(document.createElement('p'),{className:'caption',textContent:'Matched by Sleeper user ID across seasons. Fewer seasons counted means the manager changed or joined late.'}));
-      blocksEl.appendChild(block);
-    }
-    seasons.forEach(s => {
-      const block = document.createElement('div'); block.className='seasonblock';
-      block.innerHTML = '<h3>Season '+s.league.season+' (final standings, by record)</h3>';
-      const t = document.createElement('table');
-      t.innerHTML='<thead><tr><th>Team</th><th>Manager</th><th>Record</th><th>Pts For</th><th>Pts Against</th></tr></thead>';
-      const tb = document.createElement('tbody');
-      s.rows.forEach(row => {
-        const tr = document.createElement('tr');
-        tr.innerHTML='<td>'+row.teamName+'</td><td>'+row.manager+'</td><td>'+row.record+'</td><td>'+row.pf+'</td><td>'+row.pa+'</td>';
-        tb.appendChild(tr);
-      });
-      t.appendChild(tb); block.appendChild(t); blocksEl.appendChild(block);
-    });
-    return seasons;
-  } catch(e){
-    const el = document.getElementById('historyStatus');
-    el.classList.add('error'); el.textContent='Could not load history: '+e.message;
-    return null;
-  }
-}
 
 // --- Roster ratings (Max Points only, no keeper) ---
 async function loadRatings(currentData){
@@ -446,469 +301,11 @@ async function loadRatings(currentData){
   }
 }
 
-// --- Trade history ---
-async function loadTrades(currentData, historySeasonsData){
-  const statusEl = document.getElementById('tradeStatus');
-  if (!currentData){ statusEl.classList.add('error'); statusEl.textContent='Skipped.'; return; }
-  try {
-    const league = currentData.league;
-    const scoring = league.scoring_settings||{};
-    const scoringKeys = Object.keys(scoring);
-
-    // Build roster ID -> team name map for both current and historical seasons
-    const rosterToTeam = {};
-    const buildRosterMap = (users, rosters) => {
-      const userById = {};
-      users.forEach(u=>{ userById[u.user_id]=u; });
-      rosters.forEach(r=>{
-        const u = userById[r.owner_id]||{};
-        const name = (u.metadata&&u.metadata.team_name)?u.metadata.team_name:(u.display_name||'Unknown');
-        rosterToTeam[r.roster_id] = name;
-      });
-    };
-    buildRosterMap(currentData.users, currentData.rosters);
-
-    // Collect all seasons to fetch trades from
-    const allSeasons = [{ leagueId: LEAGUE_ID, season: league.season }];
-    if (historySeasonsData){
-      historySeasonsData.forEach(s=>{
-        allSeasons.push({ leagueId: s.league.league_id||s.league.draft_id, season: s.league.season, league: s.league });
-        buildRosterMap(s.rows.map(r=>({ user_id: r.ownerId, display_name: r.manager, metadata:{ team_name: r.teamName } })), s.rows.map(r=>({ roster_id: r.rosterId||r.ownerId, owner_id: r.ownerId })));
-      });
-    }
-
-    statusEl.textContent = 'Fetching all transaction weeks across both seasons (up to 50 requests)...';
-
-    // Pull all trades from both seasons. Walk week 1-25 per season
-    const allTrades = [];
-    for (const s of allSeasons){
-      const lid = s.leagueId || LEAGUE_ID;
-      // First, get the real league ID if we only have the draft_id
-      let realLid = lid;
-      if (s.league && s.league.league_id) realLid = s.league.league_id;
-      const weekFetches = Array.from({length:25},(_,i)=>i+1).map(w=>
-        fetch('https://api.sleeper.app/v1/league/'+realLid+'/transactions/'+w)
-          .then(r=>r.ok?r.json():null).catch(()=>null)
-      );
-      const weekData = await Promise.all(weekFetches);
-      weekData.forEach((txns, wi)=>{
-        if (!txns) return;
-        txns.forEach(tx=>{
-          if (tx.type !== 'trade' || tx.status !== 'complete') return;
-          allTrades.push({ ...tx, season: s.season, leagueId: realLid });
-        });
-      });
-    }
-
-    // Deduplicate by transaction_id
-    const seen = new Set();
-    const uniqueTrades = allTrades.filter(t=>{ if (seen.has(t.transaction_id)) return false; seen.add(t.transaction_id); return true; });
-    uniqueTrades.sort((a,b)=>b.status_updated-a.status_updated);
-
-    if (uniqueTrades.length===0){
-      statusEl.textContent='No completed trades found across both seasons.';
-      return;
-    }
-
-    // Fetch weekly stats for before/now grading. Pull season stats as weekly aggregates already loaded in ratings.
-    // For "before" we need the 50 games before the trade date. We approximate using the season's weekly data.
-    // Pull last season weekly stats (already done in ratings, but we need them here too)
-    let statsSeason = league.season;
-    if (league.previous_league_id){
-      const r = await fetch('https://api.sleeper.app/v1/league/'+league.previous_league_id);
-      if (r.ok){ const l=await r.json(); statsSeason=l.season; }
-    }
-    statusEl.textContent='Pulling weekly stats to grade trades...';
-    const weeklyStats = {};
-    const weeklyData = (window.PatioBoysShare && PatioBoysShare.fetchWeeklyNbaStats)
-      ? await PatioBoysShare.fetchWeeklyNbaStats(statsSeason)
-      : await Promise.all(Array.from({length:25},(_,i)=>i+1).map(w=>
-          fetch('https://api.sleeper.app/v1/stats/nba/regular/'+statsSeason+'/'+w)
-            .then(r=>r.ok?r.json():null).catch(()=>null)
-        ));
-    weeklyData.forEach((wk,i)=>{
-      if (!wk) return;
-      weeklyStats[i+1] = wk;
-    });
-
-    function fantasyValue(obj){
-      if (!obj) return null;
-      const gp=obj.gp||obj.games_played||null;
-      let total=0,matched=0;
-      scoringKeys.forEach(k=>{ if(obj[k]!=null){total+=obj[k]*scoring[k];matched++;} });
-      if (!matched) return null;
-      return gp&&gp>0?total/gp:total;
-    }
-
-    // Build per-player per-week score array
-    const playerWeeklyScores = {};
-    Object.keys(weeklyStats).forEach(w=>{
-      const wk = weeklyStats[w];
-      Object.keys(wk).forEach(pid=>{
-        const v = fantasyValue(wk[pid]);
-        if (v==null) return;
-        if (!playerWeeklyScores[pid]) playerWeeklyScores[pid]=[];
-        playerWeeklyScores[pid].push({ week:parseInt(w), score:v, gp: wk[pid].gp||1 });
-      });
-    });
-
-    // Compute avg over last N games from a sorted-by-week array, either before or after a week threshold
-    function avgGames(pid, beforeWeek, n){
-      const entries = (playerWeeklyScores[pid]||[]);
-      const pool = beforeWeek!=null
-        ? entries.filter(e=>e.week < beforeWeek).sort((a,b)=>b.week-a.week)
-        : entries.sort((a,b)=>b.week-a.week);
-      let games=0, total=0;
-      for (const e of pool){
-        if (games>=n) break;
-        const take = Math.min(e.gp, n-games);
-        total += (e.score/e.gp)*take;
-        games += take;
-      }
-      return games>=5 ? { avg: total/games, games } : null;
-    }
-
-    // Compute "now" avg (last 50 games, no cutoff)
-    function nowAvg(pid){ return avgGames(pid, null, 50); }
-
-    // Compute "before" avg (50 games before the trade week)
-    function beforeAvg(pid, tradeWeek){ return avgGames(pid, tradeWeek, 50); }
-
-    // Estimate trade week from timestamp
-    function tradeWeek(ts, season){
-      // Rough: NBA season starts early October, each week is 7 days
-      const seasonStart = new Date(parseInt(season), 9, 1).getTime();
-      const msPerWeek = 7*24*60*60*1000;
-      return Math.max(1, Math.ceil((ts - seasonStart)/msPerWeek));
-    }
-
-    // Fetch draft results for any seasons where picks have been traded.
-    // Sleeper's draft picks in transactions include a draft_id. We fetch each
-    // unique draft to see which player was actually selected with that pick.
-    statusEl.textContent = 'Resolving traded picks to actual players where the draft has run...';
-    let playerDb = {};
-    try {
-      playerDb = (window.PatioBoysShare && PatioBoysShare.fetchPlayersNba)
-        ? await PatioBoysShare.fetchPlayersNba()
-        : await fetch('https://api.sleeper.app/v1/players/nba').then(r => {
-            if (!r.ok) throw new Error('players unavailable');
-            return r.json();
-          });
-    } catch (pe) { playerDb = {}; }
-    function playerName(pid){
-      const p = playerDb[pid];
-      if (!p) return 'Player '+pid;
-      if (p.first_name||p.last_name) return ((p.first_name||'')+' '+(p.last_name||'')).trim();
-      return p.full_name||('Player '+pid);
-    }
-
-    // Resolve completed draft picks. Trade payloads usually omit draft_id, so key by
-    // season + round + original roster_id using each draft's slot_to_roster_id map.
-    const draftPickByOrig = {}; // season_round_originalRosterId -> player_id
-    const seasonDraftIds = {};
-    seasonDraftIds[String(league.season)] = league.draft_id;
-    if (historySeasonsData){
-      historySeasonsData.forEach(s => {
-        if (s.league && s.league.season && s.league.draft_id){
-          seasonDraftIds[String(s.league.season)] = s.league.draft_id;
-        }
-      });
-    }
-    uniqueTrades.forEach(tx => {
-      (tx.draft_picks || []).forEach(pk => {
-        const s = String(pk.season || '');
-        if (s && seasonDraftIds[s] == null) seasonDraftIds[s] = null;
-      });
-    });
-    /* Fill any missing season -> draft_id via the league chain. */
-    let walkId = LEAGUE_ID;
-    let walkGuard = 0;
-    while (walkId && walkGuard < 5){
-      walkGuard++;
-      try {
-        const lgRes = await fetch('https://api.sleeper.app/v1/league/' + walkId);
-        if (!lgRes.ok) break;
-        const lg = await lgRes.json();
-        if (lg.season && lg.draft_id) seasonDraftIds[String(lg.season)] = lg.draft_id;
-        walkId = lg.previous_league_id;
-      } catch (e){ break; }
-    }
-    await Promise.all(Object.keys(seasonDraftIds).map(async season => {
-      const draftId = seasonDraftIds[season];
-      if (!draftId) return;
-      try {
-        const [draftRes, picksRes] = await Promise.all([
-          fetch('https://api.sleeper.app/v1/draft/' + draftId),
-          fetch('https://api.sleeper.app/v1/draft/' + draftId + '/picks')
-        ]);
-        if (!draftRes.ok || !picksRes.ok) return;
-        const draft = await draftRes.json();
-        const draftPicks = await picksRes.json();
-        if (!Array.isArray(draftPicks) || !draftPicks.length) return;
-        const slotToRoster = draft.slot_to_roster_id || {};
-        draftPicks.forEach(dp => {
-          if (!dp.player_id || dp.draft_slot == null || dp.round == null) return;
-          const orig = slotToRoster[String(dp.draft_slot)];
-          if (orig == null) return;
-          draftPickByOrig[season + '_' + dp.round + '_' + orig] = String(dp.player_id);
-        });
-      } catch (e){}
-    }));
-
-    function resolvePickPlayer(pk){
-      if (!pk) return null;
-      const key = String(pk.season) + '_' + pk.round + '_' + pk.roster_id;
-      return draftPickByOrig[key] || null;
-    }
-
-    function estimatedPickValue(round){
-      const varByRound = { 1: 0.5, 2: -0.5, 3: -1.5 };
-      const v = varByRound[round] ?? -1.5;
-      return starterCutoff + v;
-    }
-
-    // Compute the dynamic starter cutoff: 75th percentile of all rostered players' p75 scores.
-    // Only players on a current staying-team roster count, bench filler from departing teams ignored.
-    // This becomes the floor a player must clear to add meaningful weight to a trade grade.
-    const allRosteredPids = new Set();
-    currentData.rows.forEach(row => row.players.forEach(pid => allRosteredPids.add(pid)));
-
-    function p75(pid){
-      const entries = (playerWeeklyScores[pid]||[]);
-      if (entries.length === 0) return null;
-      const scores = [];
-      entries.forEach(e => {
-        for (let g=0; g<(e.gp||1); g++) scores.push(e.score/(e.gp||1));
-      });
-      scores.sort((a,b)=>a-b);
-      const idx = Math.floor(scores.length * 0.75);
-      return scores[Math.min(idx, scores.length-1)];
-    }
-
-    const allP75s = [...allRosteredPids].map(pid=>p75(pid)).filter(v=>v!=null).sort((a,b)=>a-b);
-    const starterCutoff = allP75s.length > 0
-      ? allP75s[Math.floor(allP75s.length * 0.5)] // median p75 across all rostered players = avg starter
-      : 28;
-
-    // 75th percentile of a player's scores in the 50 games before a given week
-    function p75Before(pid, beforeWeek){
-      const entries = (playerWeeklyScores[pid]||[]).filter(e=>e.week < beforeWeek).sort((a,b)=>b.week-a.week);
-      const scores = [];
-      for (const e of entries){
-        if (scores.length >= 50) break;
-        const ppg = e.score/(e.gp||1);
-        for (let g=0; g<Math.min(e.gp||1, 50-scores.length); g++) scores.push(ppg);
-      }
-      if (scores.length < 5) return null;
-      scores.sort((a,b)=>a-b);
-      return scores[Math.floor(scores.length * 0.75)];
-    }
-
-    // 75th percentile of a player's last 50 games
-    function p75Now(pid){
-      const entries = (playerWeeklyScores[pid]||[]).sort((a,b)=>b.week-a.week);
-      const scores = [];
-      for (const e of entries){
-        if (scores.length >= 50) break;
-        const ppg = e.score/(e.gp||1);
-        for (let g=0; g<Math.min(e.gp||1, 50-scores.length); g++) scores.push(ppg);
-      }
-      if (scores.length < 5) return null;
-      scores.sort((a,b)=>a-b);
-      return scores[Math.floor(scores.length * 0.75)];
-    }
-
-    // VAR (value above replacement) for a single asset, blending before and now equally.
-    // Resolved picks use the actual drafted player. Unresolved picks use an estimated p75.
-    // Returns null if we have no data at all for this asset.
-    function assetVAR(item, wk){
-      if (item.type === 'player'){
-        const before = p75Before(item.pid, wk);
-        const now    = p75Now(item.pid);
-        if (before == null && now == null) return null;
-        const val = (before != null && now != null) ? (before + now) / 2 : (before ?? now);
-        return val - starterCutoff;
-      }
-      if (item.type === 'pick' && item.resolvedPid){
-        const before = p75Before(item.resolvedPid, wk);
-        const now    = p75Now(item.resolvedPid);
-        if (before == null && now == null) return estimatedPickValue(item.round) - starterCutoff;
-        const val = (before != null && now != null) ? (before + now) / 2 : (before ?? now);
-        return val - starterCutoff;
-      }
-      if (item.type === 'pick'){
-        return estimatedPickValue(item.round) - starterCutoff;
-      }
-      return null;
-    }
-
-    function sideVAR(items, wk){
-      return items.reduce((sum, item) => {
-        const v = assetVAR(item, wk);
-        return sum + (v ?? 0);
-      }, 0);
-    }
-
-    // Grade based on VAR difference: how much better did one side do vs the other.
-    // Scale is relative to the starter cutoff so a one-starter-worth swing is meaningful.
-    function varToGrade(varDiff){
-      if (varDiff >  20) return 'A+';
-      if (varDiff >  12) return 'A';
-      if (varDiff >   6) return 'B+';
-      if (varDiff >   1) return 'B';
-      if (varDiff >  -1) return 'C+';
-      if (varDiff >  -6) return 'C';
-      if (varDiff > -12) return 'D';
-      return 'F';
-    }
-
-    // Separate player trades from pick-only trades
-    const playerTrades = [];
-    const pickOnlyTrades = [];
-    uniqueTrades.forEach(tx=>{
-      const adds = tx.adds||{};
-      const picks = tx.draft_picks||[];
-      if (Object.keys(adds).length===0 && picks.length>0) pickOnlyTrades.push(tx);
-      else playerTrades.push(tx);
-    });
-
-    const listEl = document.getElementById('tradeList');
-    listEl.innerHTML='';
-
-    playerTrades.forEach(tx=>{
-      const adds  = tx.adds||{};
-      const picks = tx.draft_picks||[];
-      const rosters = tx.roster_ids||[];
-      const [rA, rB] = rosters;
-      const teamA = rosterToTeam[rA]||('Roster '+rA);
-      const teamB = rosterToTeam[rB]||('Roster '+rB);
-
-      const toA = [], toB = [];
-      Object.entries(adds).forEach(([pid, rid])=>{
-        if (String(rid)===String(rA)) toA.push({ type:'player', pid });
-        else if (String(rid)===String(rB)) toB.push({ type:'player', pid });
-      });
-      picks.forEach(pk=>{
-        const resolvedPid = resolvePickPlayer(pk);
-        if (String(pk.owner_id)===String(rA)){
-          toA.push({ type:'pick', round:pk.round, season:pk.season, rosterId:pk.roster_id, resolvedPid });
-        } else if (String(pk.owner_id)===String(rB)){
-          toB.push({ type:'pick', round:pk.round, season:pk.season, rosterId:pk.roster_id, resolvedPid });
-        }
-      });
-
-      const date = new Date(tx.status_updated).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-      const wk = tradeWeek(tx.status_updated, tx.season);
-
-      const varA = sideVAR(toA, wk);
-      const varB = sideVAR(toB, wk);
-      const netA = varA - varB;
-      const netB = varB - varA;
-      const gradeA = varToGrade(netA);
-      const gradeB = varToGrade(netB);
-
-      const pendingCount = [...toA, ...toB].filter(i => i.type==='pick' && !i.resolvedPid).length;
-
-      function renderItems(items){
-        return items.map(item=>{
-          if (item.type === 'player'){
-            const before = p75Before(item.pid, wk);
-            const now    = p75Now(item.pid);
-            const val = (before != null && now != null) ? (before+now)/2 : (before ?? now);
-            const v = assetVAR(item, wk);
-            const varStr = v != null ? (v >= 0 ? '+' : '') + v.toFixed(1) + ' VAR' : '';
-            const p75str = val != null ? val.toFixed(1)+' p75' : '';
-            const sub = (p75str||varStr) ? ' <span style="color:var(--ink-dim);font-size:11px">('+[p75str,varStr].filter(Boolean).join(', ')+')</span>' : '';
-            return '<div class="trade-item">'+playerName(item.pid)+sub+'</div>';
-          }
-          if (item.resolvedPid){
-            const before = p75Before(item.resolvedPid, wk);
-            const now    = p75Now(item.resolvedPid);
-            const val = (before != null && now != null) ? (before+now)/2 : (before ?? now);
-            const v = assetVAR(item, wk);
-            const varStr = v != null ? (v >= 0 ? '+' : '') + v.toFixed(1) + ' VAR' : '';
-            const p75str = val != null ? val.toFixed(1)+' p75' : '';
-            const sub = (p75str||varStr) ? ' <span style="color:var(--ink-dim);font-size:11px">('+[p75str,varStr].filter(Boolean).join(', ')+')</span>' : '';
-            return '<div class="trade-item pick">Rd '+item.round+' pick ('+item.season+') > '+playerName(item.resolvedPid)+sub+'</div>';
-          }
-          const est = estimatedPickValue(item.round);
-          const estVar = (est - starterCutoff).toFixed(1);
-          return '<div class="trade-item pick">Rd '+item.round+' pick ('+item.season+') <span style="color:var(--ink-dim);font-size:11px">~'+est.toFixed(1)+' p75 est, '+(parseFloat(estVar)>=0?'+':'')+estVar+' VAR est</span></div>';
-        }).join('');
-      }
-
-      const pendingNote = pendingCount > 0
-        ? '<p style="font-size:12px;color:var(--ink-dim);margin:8px 0 0">'+pendingCount+' pick'+(pendingCount>1?'s':'')+' not yet made, estimated using current league standings.</p>'
-        : '';
-
-      const card = document.createElement('div');
-      card.className = 'trade-card';
-      card.innerHTML = `
-        <p class="trade-meta">${date} · Season ${tx.season} · starter cutoff ${starterCutoff.toFixed(1)} p75</p>
-        <div class="trade-sides">
-          <div class="trade-side">
-            <span class="trade-side-label">${teamA} received</span>
-            ${renderItems(toA)}
-          </div>
-          <div class="trade-arrow">&#8644;</div>
-          <div class="trade-side">
-            <span class="trade-side-label">${teamB} received</span>
-            ${renderItems(toB)}
-          </div>
-        </div>
-        ${pendingNote}
-        <div class="trade-grades" style="display:flex;gap:32px;margin-top:14px;padding-top:14px;border-top:1px solid var(--hairline);justify-content:center">
-          <div style="text-align:center">
-            <span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">${teamA}</span>
-            <span class="g-val ${gradeClass(gradeA)}">${gradeA}</span>
-            <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${netA>=0?'+':''}${netA.toFixed(1)} VAR</div>
-          </div>
-          <div style="text-align:center;align-self:center;color:var(--ink-dim);font-size:20px">vs</div>
-          <div style="text-align:center">
-            <span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">${teamB}</span>
-            <span class="g-val ${gradeClass(gradeB)}">${gradeB}</span>
-            <div style="font-size:11px;color:var(--ink-dim);margin-top:2px">${netB>=0?'+':''}${netB.toFixed(1)} VAR</div>
-          </div>
-        </div>`;
-      listEl.appendChild(card);
-    });
-
-    if (pickOnlyTrades.length>0){
-      const pickEl = document.getElementById('pickTrades');
-      pickEl.style.display='';
-      const tbody = document.getElementById('pickTradeBody');
-      pickOnlyTrades.forEach(tx=>{
-        const rosters = tx.roster_ids||[];
-        const [rA,rB] = rosters;
-        const teamA = rosterToTeam[rA]||('Roster '+rA);
-        const teamB = rosterToTeam[rB]||('Roster '+rB);
-        const picks = tx.draft_picks||[];
-        function pickLabel(pk){
-          const resolvedPid = resolvePickPlayer(pk);
-          const base = 'Rd '+pk.round+' '+pk.season;
-          return resolvedPid ? base+' ('+playerName(resolvedPid)+')' : base+' (pending)';
-        }
-        const toA = picks.filter(p=>String(p.owner_id)===String(rA)).map(pickLabel).join(', ')||'--';
-        const toB = picks.filter(p=>String(p.owner_id)===String(rB)).map(pickLabel).join(', ')||'--';
-        const date = new Date(tx.status_updated).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-        const tr = document.createElement('tr');
-        tr.innerHTML='<td>'+date+'</td><td>'+tx.season+'</td><td>'+teamA+'</td><td>'+toA+'</td><td>'+teamB+'</td><td>'+toB+'</td>';
-        tbody.appendChild(tr);
-      });
-    }
-
-    statusEl.textContent='Found '+uniqueTrades.length+' completed trades across both seasons ('+playerTrades.length+' player trades, '+pickOnlyTrades.length+' pick-only). Grades compare what each side received: average of (50-game value before the trade) and (50-game value now).';
-  } catch(e){
-    statusEl.classList.add('error');
-    statusEl.textContent='Could not load trades: '+e.message;
-  }
-}
 
 async function loadAccolades(){
   const statusEl = document.getElementById('awardsStatus');
   const table = document.getElementById('awardsTable');
   const body = document.getElementById('awardsBody');
-  const hist = document.getElementById('awardsHistory');
   const trackerBlock = document.getElementById('awardTrackerBlock');
   const tracker = document.getElementById('awardTracker');
   if (!window.PatioBoysAwards){
@@ -946,8 +343,7 @@ async function loadAccolades(){
     });
     table.style.display = '';
 
-    /* Podium finishes (runner-up / 3rd) for completed seasons live on GOAT Race;
-       also surface current-season finals result if decided. */
+    /* Current-season podium only; completed prior seasons live on History. */
     const podiumRows = (cur.rows || []).filter(r => r.runnerUp || r.thirdPlace);
     if (podiumRows.length){
       podiumRows.forEach(r => {
@@ -992,36 +388,6 @@ async function loadAccolades(){
     statusEl.textContent = cur.seasonTag + (cur.pending ? ' leaders' : ' winners')
       + (coachWeeks ? ' \u00b7 Coach efficiency over ' + coachWeeks + ' scored weeks' : ' \u00b7 Coach pending (need scored weeks)')
       + '.';
-
-    const past = (pack.seasons || []).filter(s => String(s.season) !== String(cur.season) && s.complete);
-    if (past.length){
-      hist.style.display = '';
-      hist.innerHTML = past.map(s => {
-        const awardLines = (s.awards || []).filter(a => a.winner && !a.pending).map(a => {
-          const nameCls = a.id === 'champion' ? ' class="award-name medal-gold"' : '';
-          return '<tr><td' + nameCls + '>' + escapeHtml(a.name) + '</td><td>'
-            + escapeHtml(a.winner.displayName) + '</td><td>' + PatioBoysAwards.formatValue(a)
-            + '</td><td>' + escapeHtml(a.yearLabel) + '</td></tr>';
-        });
-        (s.rows || []).forEach(r => {
-          if (r.runnerUp){
-            awardLines.push('<tr><td class="award-name medal-silver">Runner-up</td><td>'
-              + escapeHtml(r.displayName) + '</td><td>Finals</td><td>'
-              + escapeHtml(PatioBoysAwards.yearLabel(s.season)) + '</td></tr>');
-          }
-          if (r.thirdPlace){
-            awardLines.push('<tr><td class="award-name medal-bronze">3rd place</td><td>'
-              + escapeHtml(r.displayName) + '</td><td>Bronze</td><td>'
-              + escapeHtml(PatioBoysAwards.yearLabel(s.season)) + '</td></tr>');
-          }
-        });
-        const lines = awardLines.join('');
-        return '<h3>' + escapeHtml(s.seasonTag) + ' finals</h3>'
-          + (lines
-            ? '<table><thead><tr><th>Award</th><th>Winner</th><th>Value</th><th>Year</th></tr></thead><tbody>' + lines + '</tbody></table>'
-            : '<p class="caption">No finalized awards on file.</p>');
-      }).join('');
-    }
   } catch (e){
     statusEl.classList.add('error');
     statusEl.textContent = 'Could not compute accolades: ' + (e.message || e);
@@ -1032,16 +398,14 @@ async function loadAccolades(){
   try {
     if (window.PatioBoysLoader) PatioBoysLoader.setLabel(document.body, 'Loading league status…');
     const currentData = await loadCurrent();
-    /* Standings are on screen — clear HQ overlay before the heavy fan-out. */
+    /* Standings are on screen — clear HQ overlay before ratings / accolades. */
     if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'league-status'});
     if (window.PatioBoysShare && PatioBoysShare.fetchPlayersNba){
       PatioBoysShare.fetchPlayersNba().catch(function(){});
     }
-    const historyData = await loadHistory(currentData?currentData.league:null);
     Promise.all([
       loadRatings(currentData),
-      loadAccolades(),
-      loadTrades(currentData, historyData)
+      loadAccolades()
     ]).catch(function(err){
       console.warn('League Status secondary load failed.', err);
     });

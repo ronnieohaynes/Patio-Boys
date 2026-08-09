@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patio Boys — League History</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14181F; --surface:#1B212C; --surface-2:#222A37;
+    --ink:#ECEEF3; --ink-dim:#8B93A6; --hairline:#2E3645;
+    --gold:#C9963A; --coral:#D8553A; --teal:#1D9E75;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;line-height:1.55}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 80px}
+  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:0 0 10px}
+  .display{font-family:'Anton',sans-serif;text-transform:uppercase;line-height:.95;margin:0}
+  .topbar{padding:20px 0;border-bottom:1px solid var(--hairline);font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.08em}
+  .hero{padding:40px 0 32px;border-bottom:1px solid var(--hairline)}
+  .hero .display{font-size:clamp(30px,6vw,52px)}
+  .hero p{max-width:640px;color:var(--ink-dim);margin:14px 0 0}
+  section{margin-top:48px}
+  section h2{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:24px;margin:0 0 4px}
+  .status{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--gold);margin:14px 0 16px}
+  .status.error{color:var(--coral)}
+  table{width:100%;border-collapse:collapse;font-family:'IBM Plex Mono',monospace;font-size:13px;margin-top:8px}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--hairline)}
+  th{color:var(--ink-dim);font-weight:400;text-transform:uppercase;font-size:11px;letter-spacing:.06em}
+  tr:hover td{background:var(--surface)}
+  .caption{font-size:13px;color:var(--ink-dim);margin-top:14px}
+  .seasonblock{margin-top:28px}
+  .seasonblock h3{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink-dim);text-transform:uppercase;letter-spacing:.06em;margin:0 0 4px;font-weight:500}
+  .award-name.medal-gold{color:#E8C547;font-weight:600}
+  .award-name.medal-silver{color:#C5CDD8;font-weight:600}
+  .award-name.medal-bronze{color:#D4926A;font-weight:600}
+  body.embed .topbar,
+  body.embed .hero{display:none}
+  body.embed .wrap{max-width:none;padding:12px 14px 24px}
+  body.embed section{margin-top:28px}
+  body.embed section:first-of-type{margin-top:0}
+  body.embed table{font-size:12px}
+  body.embed th,body.embed td{padding:7px 8px}
+</style>
+</head>
+<body>
+<link rel="stylesheet" href="hq-loader.css">
+<div class="pb-boot-loader" id="pbBootLoader" role="status" aria-live="polite">
+  <div class="pb-boot-mark" aria-hidden="true">PB</div>
+  <p class="pb-boot-label">Loading league history…</p>
+</div>
+<script src="hq-loader.js"></script>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
+
+<div class="wrap topbar">Patio Boys &middot; League History</div>
+
+<div class="wrap hero">
+  <p class="eyebrow">Prior seasons &middot; Final standings &middot; Locked awards</p>
+  <h1 class="display">What Already<br>Happened</h1>
+  <p>Previous-season standings and finalized accolades. This season’s live board stays on Status; career GOAT scoring stays on GOAT Race; trades stay on Transactions.</p>
+</div>
+
+<div class="wrap">
+  <section>
+    <p class="eyebrow">Last Two Seasons</p>
+    <h2>Standings History</h2>
+    <p class="status" id="historyStatus">Loading historical seasons&hellip;</p>
+    <div id="historyBlocks"></div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Completed Seasons</p>
+    <h2>Past Accolades</h2>
+    <p class="caption" style="margin-top:0">Finalized awards from prior seasons. Live leaders for the current year stay on Status.</p>
+    <p class="status" id="awardsStatus">Loading past accolades&hellip;</p>
+    <div id="awardsHistory" class="seasonblock" style="display:none"></div>
+  </section>
+</div>
+
+<script>
+(function(){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-history';
+  var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js'];
+  var i = 0;
+  function next(){
+    if (i >= files.length){
+      window.dispatchEvent(new Event('pb-deps-ready'));
+      return;
+    }
+    var s = document.createElement('script');
+    s.src = files[i++] + '?v=' + encodeURIComponent(v);
+    s.onload = function(){ setTimeout(next, 0); };
+    s.onerror = function(){ setTimeout(next, 0); };
+    document.head.appendChild(s);
+  }
+  next();
+})();
+</script>
+<script>
+window.addEventListener('pb-deps-ready', function pbHistoryMain(){
+window.removeEventListener('pb-deps-ready', pbHistoryMain);
+const LEAGUE_ID = '1350649177381552128';
+
+function fmtPts(s){
+  if (s.fpts == null) return '--';
+  return s.fpts + (s.fpts_decimal ? '.' + String(s.fpts_decimal).padStart(2,'0') : '');
+}
+
+function buildStandingsRows(users, rosters){
+  const userById = {};
+  users.forEach(u => { userById[u.user_id] = u; });
+  return rosters.map(r => {
+    const u = userById[r.owner_id] || {};
+    const teamName = (u.metadata && u.metadata.team_name) ? u.metadata.team_name : (u.display_name || 'Unknown');
+    const s = r.settings || {};
+    const wins = s.wins||0, losses = s.losses||0, ties = s.ties||0;
+    const rawPf = (s.fpts||0) + (s.fpts_decimal||0)/100;
+    const rawPa = (s.fpts_against||0) + (s.fpts_against_decimal||0)/100;
+    return {
+      teamName, manager: u.display_name||'Unknown', ownerId: r.owner_id||('roster-'+r.roster_id),
+      record: wins+'-'+losses+(ties?'-'+ties:''),
+      pf: fmtPts(s),
+      pa: s.fpts_against!=null ? s.fpts_against+(s.fpts_against_decimal?'.'+s.fpts_against_decimal:'') : '--',
+      rawPf, rawPa, wins, losses, ties,
+      rosterId: r.roster_id
+    };
+  }).sort((a,b) => b.wins-a.wins || b.rawPf-a.rawPf);
+}
+
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+async function loadHistory(){
+  const statusEl = document.getElementById('historyStatus');
+  const blocksEl = document.getElementById('historyBlocks');
+  try {
+    const leagueRes = await fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID);
+    if (!leagueRes.ok) throw new Error('Sleeper league request failed');
+    const currentLeague = await leagueRes.json();
+    const seasons = [];
+    let prevId = currentLeague.previous_league_id;
+    let guard = 0;
+    while (prevId && seasons.length < 2 && guard < 5){
+      guard++;
+      const prevLeagueRes = await fetch('https://api.sleeper.app/v1/league/' + prevId);
+      if (!prevLeagueRes.ok) break;
+      const league = await prevLeagueRes.json();
+      const [usersRes, rostersRes] = await Promise.all([
+        fetch('https://api.sleeper.app/v1/league/' + prevId + '/users'),
+        fetch('https://api.sleeper.app/v1/league/' + prevId + '/rosters')
+      ]);
+      const users = usersRes.ok ? await usersRes.json() : [];
+      const rosters = rostersRes.ok ? await rostersRes.json() : [];
+      seasons.push({ league, rows: buildStandingsRows(users, rosters) });
+      prevId = league.previous_league_id;
+    }
+    if (!seasons.length){
+      statusEl.textContent = 'No previous seasons found.';
+      return;
+    }
+    statusEl.textContent = 'Loaded ' + seasons.length + ' previous season'
+      + (seasons.length === 1 ? '' : 's') + '.';
+    if (seasons.length > 1){
+      const combined = {};
+      seasons.forEach(s => {
+        s.rows.forEach(row => {
+          const key = row.ownerId;
+          if (!combined[key]){
+            combined[key] = {
+              teamName: row.teamName, manager: row.manager,
+              wins: 0, losses: 0, ties: 0, rawPf: 0, rawPa: 0, seasonsPlayed: 0
+            };
+          }
+          combined[key].wins += row.wins;
+          combined[key].losses += row.losses;
+          combined[key].ties += row.ties;
+          combined[key].rawPf += row.rawPf;
+          combined[key].rawPa += row.rawPa;
+          combined[key].seasonsPlayed += 1;
+          combined[key].teamName = row.teamName;
+          combined[key].manager = row.manager;
+        });
+      });
+      const combinedRows = Object.values(combined).sort((a,b) => b.wins-a.wins || b.rawPf-a.rawPf);
+      const block = document.createElement('div');
+      block.className = 'seasonblock';
+      block.innerHTML = '<h3>Combined record, '
+        + seasons.map(s => s.league.season).join(' + ') + '</h3>';
+      const t = document.createElement('table');
+      t.innerHTML = '<thead><tr><th>Team</th><th>Manager</th><th>Combined Record</th><th>Total Pts For</th><th>Total Pts Against</th><th>Seasons</th></tr></thead>';
+      const tb = document.createElement('tbody');
+      combinedRows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + escapeHtml(row.teamName) + '</td><td>' + escapeHtml(row.manager)
+          + '</td><td>' + row.wins + '-' + row.losses + (row.ties ? '-' + row.ties : '')
+          + '</td><td>' + row.rawPf.toFixed(1) + '</td><td>' + row.rawPa.toFixed(1)
+          + '</td><td>' + row.seasonsPlayed + '</td>';
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb);
+      block.appendChild(t);
+      block.appendChild(Object.assign(document.createElement('p'), {
+        className: 'caption',
+        textContent: 'Matched by Sleeper user ID across seasons. Fewer seasons counted means the manager changed or joined late.'
+      }));
+      blocksEl.appendChild(block);
+    }
+    seasons.forEach(s => {
+      const block = document.createElement('div');
+      block.className = 'seasonblock';
+      block.innerHTML = '<h3>Season ' + escapeHtml(String(s.league.season))
+        + ' (final standings, by record)</h3>';
+      const t = document.createElement('table');
+      t.innerHTML = '<thead><tr><th>Team</th><th>Manager</th><th>Record</th><th>Pts For</th><th>Pts Against</th></tr></thead>';
+      const tb = document.createElement('tbody');
+      s.rows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + escapeHtml(row.teamName) + '</td><td>' + escapeHtml(row.manager)
+          + '</td><td>' + escapeHtml(row.record) + '</td><td>' + escapeHtml(row.pf)
+          + '</td><td>' + escapeHtml(row.pa) + '</td>';
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb);
+      block.appendChild(t);
+      blocksEl.appendChild(block);
+    });
+  } catch (e){
+    statusEl.classList.add('error');
+    statusEl.textContent = 'Could not load history: ' + (e.message || e);
+  }
+}
+
+async function loadPastAccolades(){
+  const statusEl = document.getElementById('awardsStatus');
+  const hist = document.getElementById('awardsHistory');
+  if (!window.PatioBoysAwards){
+    statusEl.classList.add('error');
+    statusEl.textContent = 'Accolades module missing.';
+    return;
+  }
+  try {
+    statusEl.textContent = 'Loading finalized awards from prior seasons\u2026';
+    const pack = await PatioBoysAwards.compute(LEAGUE_ID);
+    const cur = pack.current;
+    const past = (pack.seasons || []).filter(s =>
+      String(s.season) !== String(cur.season) && s.complete
+    );
+    if (!past.length){
+      statusEl.textContent = 'No completed prior seasons with locked awards yet.';
+      return;
+    }
+    hist.style.display = '';
+    hist.innerHTML = past.map(s => {
+      const awardLines = (s.awards || []).filter(a => a.winner && !a.pending).map(a => {
+        const nameCls = a.id === 'champion' ? ' class="award-name medal-gold"' : '';
+        return '<tr><td' + nameCls + '>' + escapeHtml(a.name) + '</td><td>'
+          + escapeHtml(a.winner.displayName) + '</td><td>' + PatioBoysAwards.formatValue(a)
+          + '</td><td>' + escapeHtml(a.yearLabel) + '</td></tr>';
+      });
+      (s.rows || []).forEach(r => {
+        if (r.runnerUp){
+          awardLines.push('<tr><td class="award-name medal-silver">Runner-up</td><td>'
+            + escapeHtml(r.displayName) + '</td><td>Finals</td><td>'
+            + escapeHtml(PatioBoysAwards.yearLabel(s.season)) + '</td></tr>');
+        }
+        if (r.thirdPlace){
+          awardLines.push('<tr><td class="award-name medal-bronze">3rd place</td><td>'
+            + escapeHtml(r.displayName) + '</td><td>Bronze</td><td>'
+            + escapeHtml(PatioBoysAwards.yearLabel(s.season)) + '</td></tr>');
+        }
+      });
+      const lines = awardLines.join('');
+      return '<h3>' + escapeHtml(s.seasonTag) + ' finals</h3>'
+        + (lines
+          ? '<table><thead><tr><th>Award</th><th>Winner</th><th>Value</th><th>Year</th></tr></thead><tbody>'
+            + lines + '</tbody></table>'
+          : '<p class="caption">No finalized awards on file.</p>');
+    }).join('');
+    statusEl.classList.remove('error');
+    statusEl.textContent = past.length + ' completed season'
+      + (past.length === 1 ? '' : 's') + ' with locked awards.';
+  } catch (e){
+    statusEl.classList.add('error');
+    statusEl.textContent = 'Could not load past accolades: ' + (e.message || e);
+  }
+}
+
+(async()=>{
+  try {
+    if (window.PatioBoysLoader) PatioBoysLoader.setLabel(document.body, 'Loading league history…');
+    await loadHistory();
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'league-history'});
+    await loadPastAccolades();
+  } catch (e) {
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'league-history', error: true});
+  }
+})();
+}); // pb-deps-ready
+</script>
+</body>
+</html>

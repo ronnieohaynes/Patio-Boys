@@ -521,6 +521,7 @@
       </div>
       <div class="nav-secondary" id="navSecondary" role="tablist" aria-label="League panels">
         <button class="nav-sub active" id="tabBtnStatus" type="button" role="tab" aria-selected="true" aria-controls="tabStatus" data-group="league" data-tab="status">Status</button>
+        <button class="nav-sub" id="tabBtnHistory" type="button" role="tab" aria-selected="false" aria-controls="tabHistory" data-group="league" data-tab="history">History</button>
         <button class="nav-sub" id="tabBtnIntel" type="button" role="tab" aria-selected="false" aria-controls="tabIntel" data-group="league" data-tab="intel">Intel</button>
         <button class="nav-sub" id="tabBtnGoat" type="button" role="tab" aria-selected="false" aria-controls="tabGoat" data-group="league" data-tab="goat">GOAT</button>
         <button class="nav-sub" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa" data-group="moves" data-tab="fa" hidden>FA</button>
@@ -591,6 +592,9 @@
     </div>
     <div class="boardsection status-panel" id="tabStatus" role="tabpanel" aria-labelledby="tabBtnStatus">
       <iframe class="status-frame" id="leagueStatusFrame" title="League Status" src="about:blank"></iframe>
+    </div>
+    <div class="boardsection status-panel" id="tabHistory" role="tabpanel" aria-labelledby="tabBtnHistory" hidden>
+      <iframe class="status-frame" id="leagueHistoryFrame" title="League History" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabIntel" role="tabpanel" aria-labelledby="tabBtnIntel" hidden>
       <iframe class="status-frame" id="teamIntelFrame" title="Team Intel" src="about:blank"></iframe>
@@ -2286,9 +2290,10 @@ const HQ_NAV = {
     label: 'League',
     defaultTab: 'status',
     tabs: {
-      status: { panel: 'tabStatus', btn: 'tabBtnStatus', frame: 'leagueStatusFrame', src: 'league-status.html?embed=1&v=20260808-fast', loaded: 'statusFrameLoaded' },
-      intel:  { panel: 'tabIntel',  btn: 'tabBtnIntel',  frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260808-fast', loaded: 'intelFrameLoaded' },
-      goat:   { panel: 'tabGoat',   btn: 'tabBtnGoat',   frame: 'goatTrackerFrame',   src: 'goat-tracker.html?embed=1&v=20260808-fast', loaded: 'goatFrameLoaded' }
+      status:  { panel: 'tabStatus',  btn: 'tabBtnStatus',  frame: 'leagueStatusFrame',  src: 'league-status.html?embed=1&v=20260809-history', loaded: 'statusFrameLoaded' },
+      history: { panel: 'tabHistory', btn: 'tabBtnHistory', frame: 'leagueHistoryFrame', src: 'league-history.html?embed=1&v=20260809-history', loaded: 'historyFrameLoaded' },
+      intel:   { panel: 'tabIntel',   btn: 'tabBtnIntel',   frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260808-fast', loaded: 'intelFrameLoaded' },
+      goat:    { panel: 'tabGoat',    btn: 'tabBtnGoat',    frame: 'goatTrackerFrame',   src: 'goat-tracker.html?embed=1&v=20260808-fast', loaded: 'goatFrameLoaded' }
     }
   },
   moves: {
@@ -2328,6 +2333,7 @@ Object.keys(HQ_NAV).forEach(group => {
 
 const hqFrameLoaded = {
   statusFrameLoaded: false,
+  historyFrameLoaded: false,
   intelFrameLoaded: false,
   goatFrameLoaded: false,
   mockFrameLoaded: false,
@@ -2340,6 +2346,7 @@ const hqFrameLoaded = {
 };
 /* Back-compat aliases used elsewhere in this file. */
 let statusFrameLoaded = false;
+let historyFrameLoaded = false;
 let intelFrameLoaded = false;
 let goatFrameLoaded = false;
 let mockFrameLoaded = false;
@@ -2352,6 +2359,7 @@ let charterFrameLoaded = false;
 
 function syncFrameLoadedFlags(){
   statusFrameLoaded = hqFrameLoaded.statusFrameLoaded;
+  historyFrameLoaded = hqFrameLoaded.historyFrameLoaded;
   intelFrameLoaded = hqFrameLoaded.intelFrameLoaded;
   goatFrameLoaded = hqFrameLoaded.goatFrameLoaded;
   mockFrameLoaded = hqFrameLoaded.mockFrameLoaded;
@@ -2435,6 +2443,7 @@ const hqFrameReady = {};
 function tabLoaderLabel(tab){
   const labels = {
     status: 'Loading league status…',
+    history: 'Loading league history…',
     intel: 'Loading team intel…',
     goat: 'Loading GOAT race…',
     fa: 'Loading free agents…',
