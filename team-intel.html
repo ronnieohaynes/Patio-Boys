@@ -198,35 +198,6 @@
     text-align:right;line-height:1.5;text-transform:uppercase;letter-spacing:.05em;
   }
 
-  /* Owned draft picks */
-  #picksPanel{margin-top:16px}
-  .picks-year{
-    margin:0 0 12px;
-  }
-  .picks-year:last-child{margin-bottom:0}
-  .picks-year h3{
-    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;
-    text-transform:uppercase;color:var(--ink-dim);margin:0 0 6px;
-  }
-  .picks-chips{
-    display:flex;flex-wrap:wrap;gap:6px;
-  }
-  .pick-chip{
-    font-family:'IBM Plex Mono',monospace;font-size:11px;
-    padding:5px 8px;border-radius:6px;
-    border:1px solid var(--hairline);
-    background:var(--surface-2);color:var(--ink);
-    white-space:nowrap;
-  }
-  .pick-chip strong{color:var(--gold);font-weight:600}
-  .pick-chip .via{
-    color:var(--ink-dim);font-size:10px;margin-left:4px;
-  }
-  .pick-chip.via-trade{
-    border-color:color-mix(in srgb, var(--gold) 45%, var(--hairline));
-    background:color-mix(in srgb, var(--gold) 10%, var(--surface-2));
-  }
-
   /* status observations */
   ul.obs{list-style:none;margin:0;padding:0}
   ul.obs li{
@@ -498,11 +469,6 @@
       <div class="panel-body" id="depthBody"><p class="pending">Building depth chart&hellip;</p></div>
     </div>
 
-    <div class="panel" id="picksPanel">
-      <div class="panel-head"><h2>Draft Picks</h2><span class="tag" id="picksTag"></span></div>
-      <div class="panel-body" id="picksBody"><p class="pending">Loading owned picks&hellip;</p></div>
-    </div>
-
     <!-- Lineup / Bench kept in DOM for data hooks but hidden from the UI. -->
     <div hidden>
       <div id="lineupBody"></div><span id="lineupTag"></span>
@@ -528,7 +494,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-picks';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260807-prime-10';
   ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -615,11 +581,7 @@ const state = {
   freeAgentsSettled: false,
   freeAgentsError: null,
   movesByKey: {},       // franchise key -> {fa:[], cuts:...}
-  depthByKey: {},       // franchise key -> depth chart pack
-  draftPicksByRosterId: null, // rosterId -> [{season, round, originalRosterId, viaTrade}]
-  draftPickSeasons: [],
-  picksReady: false,
-  picksError: null
+  depthByKey: {}        // franchise key -> depth chart pack
 };
 
 function setLoadNote(text, isError){
@@ -1945,20 +1907,8 @@ function buildDepthChart(team){
         !claimed.has(String(r.id))
         && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
       )
-      .sort((a, b) => {
-        /* Same Lock rank: mono-eligible prefer CORE; multi prefer G/F/UTIL. */
-        const possA = TeamNeedsModel.positions(a.positions);
-        const possB = TeamNeedsModel.positions(b.positions);
-        const fitA = TeamNeedsModel.slotFitBonus
-          ? TeamNeedsModel.slotFitBonus(possA, row.slot)
-          : 0;
-        const fitB = TeamNeedsModel.slotFitBonus
-          ? TeamNeedsModel.slotFitBonus(possB, row.slot)
-          : 0;
-        return b.rankVal - a.rankVal
-          || fitB - fitA
-          || String(a.name).localeCompare(String(b.name));
-      })[0];
+      .sort((a, b) => b.rankVal - a.rankVal
+        || String(a.name).localeCompare(String(b.name)))[0];
     if (!pick) return;
     row.starter = pick;
     claimed.add(String(pick.id));
@@ -2086,7 +2036,6 @@ function renderDepthChart(t){
     + '<p class="lineup-foot">Same ' + pack.slots.length + ' starting slots as Team Needs ('
     + escapeHtml(pack.slots.join(', '))
     + '). <strong>1st string</strong> = legal starters by hold value (Lock OVR × situation path). '
-    + 'Mono-eligible players prefer their CORE slot; multi-eligible prefer G/F/UTIL so flex stays open. '
     + '<strong>Top 8</strong> = the next ' + (pack.top8Spots || DEPTH_TOP8)
     + ' best remaining by <strong>Lock OVR</strong> (overall, not tied to Pos). '
     + '<strong>Taxi</strong> holds up to ' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
@@ -2887,150 +2836,6 @@ function renderTrades(t){
   }).join('');
 }
 
-/* ---------- owned draft picks ---------- */
-
-function roundOrdinal(n){
-  const r = Number(n);
-  if (r === 1) return '1st';
-  if (r === 2) return '2nd';
-  if (r === 3) return '3rd';
-  if (Number.isFinite(r)) return r + 'th';
-  return String(n);
-}
-
-function teamByRosterId(rosterId){
-  const id = Number(rosterId);
-  return (state.teams || []).find(t => Number(t.rosterId) === id) || null;
-}
-
-/* Sleeper only lists traded picks. Start from each roster owning its own
-   rounds for the next 3 draft years, then apply /traded_picks ownership. */
-function synthesizeOwnedDraftPicks(league, rosters, tradedPicks, drafts){
-  const season = Number(league && league.season);
-  const rounds = Number(league && league.settings && league.settings.draft_rounds) || 5;
-  const draftDone = (drafts || []).some(d =>
-      String(d.season) === String(season) && d.status === 'complete')
-    || league.status === 'in_season'
-    || league.status === 'complete';
-  const startSeason = draftDone ? season + 1 : season;
-  const seasons = [startSeason, startSeason + 1, startSeason + 2].map(String);
-
-  const owner = new Map();
-  (rosters || []).forEach(r => {
-    const rid = Number(r.roster_id);
-    seasons.forEach(s => {
-      for (let round = 1; round <= rounds; round++){
-        owner.set(s + '|' + round + '|' + rid, rid);
-      }
-    });
-  });
-
-  (tradedPicks || []).forEach(pk => {
-    const key = String(pk.season) + '|' + pk.round + '|' + pk.roster_id;
-    if (!owner.has(key)) return;
-    owner.set(key, Number(pk.owner_id));
-  });
-
-  const byOwner = {};
-  owner.forEach((ownerId, key) => {
-    const parts = key.split('|');
-    const s = parts[0];
-    const round = Number(parts[1]);
-    const originalRosterId = Number(parts[2]);
-    const oid = Number(ownerId);
-    if (!byOwner[oid]) byOwner[oid] = [];
-    byOwner[oid].push({
-      season: s,
-      round,
-      originalRosterId,
-      ownerRosterId: oid,
-      viaTrade: originalRosterId !== oid
-    });
-  });
-  Object.keys(byOwner).forEach(id => {
-    byOwner[id].sort((a, b) =>
-      Number(a.season) - Number(b.season)
-      || a.round - b.round
-      || a.originalRosterId - b.originalRosterId
-    );
-  });
-  return {byOwner, seasons, rounds, draftDone};
-}
-
-async function loadDraftPicks(){
-  const [tradedRes, draftsRes, rostersRes] = await Promise.all([
-    fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/traded_picks'),
-    fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/drafts'),
-    fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters')
-  ]);
-  if (!tradedRes.ok) throw new Error('traded_picks HTTP ' + tradedRes.status);
-  if (!rostersRes.ok) throw new Error('rosters HTTP ' + rostersRes.status);
-  const traded = await tradedRes.json();
-  const drafts = draftsRes.ok ? await draftsRes.json() : [];
-  const rosters = await rostersRes.json();
-  const pack = synthesizeOwnedDraftPicks(state.league, rosters, traded, drafts);
-  state.draftPicksByRosterId = pack.byOwner;
-  state.draftPickSeasons = pack.seasons;
-  state.picksReady = true;
-  state.picksError = null;
-}
-
-function renderDraftPicks(t){
-  const body = document.getElementById('picksBody');
-  const tag = document.getElementById('picksTag');
-  if (!body || !tag) return;
-  if (state.picksError){
-    tag.textContent = '';
-    body.innerHTML = '<p class="pending">Could not load draft picks: '
-      + escapeHtml(state.picksError) + '</p>';
-    return;
-  }
-  if (!state.picksReady || !state.draftPicksByRosterId){
-    tag.textContent = '';
-    body.innerHTML = '<p class="pending">Loading owned picks&hellip;</p>';
-    return;
-  }
-  const picks = state.draftPicksByRosterId[Number(t.rosterId)] || [];
-  const tradedN = picks.filter(p => p.viaTrade).length;
-  tag.textContent = picks.length
-    ? (picks.length + ' owned'
-      + (tradedN ? ' · ' + tradedN + ' via trade' : ''))
-    : 'None';
-
-  if (!picks.length){
-    body.innerHTML = '<p class="pending">No future draft picks on this roster.</p>';
-    return;
-  }
-
-  const bySeason = {};
-  picks.forEach(p => {
-    if (!bySeason[p.season]) bySeason[p.season] = [];
-    bySeason[p.season].push(p);
-  });
-  const years = Object.keys(bySeason).sort((a, b) => Number(a) - Number(b));
-  body.innerHTML = years.map(season => {
-    const chips = bySeason[season].map(p => {
-      const orig = teamByRosterId(p.originalRosterId);
-      const via = p.viaTrade
-        ? ('<span class="via">via '
-          + escapeHtml((orig && (orig.abbrev || orig.displayName)) || ('R' + p.originalRosterId))
-          + '</span>')
-        : '';
-      return '<span class="pick-chip' + (p.viaTrade ? ' via-trade' : '') + '">'
-        + '<strong>' + escapeHtml(roundOrdinal(p.round)) + '</strong>'
-        + via
-        + '</span>';
-    }).join('');
-    return '<div class="picks-year"><h3>' + escapeHtml(season) + ' draft</h3>'
-      + '<div class="picks-chips">' + chips + '</div></div>';
-  }).join('')
-    + '<p class="lineup-foot">Future picks only'
-    + (state.draftPickSeasons && state.draftPickSeasons.length
-      ? (' (' + escapeHtml(state.draftPickSeasons.join(' · ')) + ')')
-      : '')
-    + '. Own picks are plain; traded picks show the original franchise.</p>';
-}
-
 function renderTeam(){
   const t = state.teamsByKey[state.selected];
   if (!t) return;
@@ -3055,11 +2860,12 @@ function renderTeam(){
   renderBench(t);
   renderLockIn(t);
   renderDepthChart(t);
-  renderDraftPicks(t);
   renderObservations(t);
   renderRosterMoves(t);
   renderTrades(t);
 }
+
+/* ---------- boot ---------- */
 
 async function loadAwards(){
   if (!window.PatioBoysAwards) return;
@@ -3120,12 +2926,7 @@ async function loadAwards(){
     }).finally(() => { state.projSettled = true; }),
     ceilingsPromise,
     prevSeasonsPromise.then(prev => loadTrades(prev)).catch(e => console.warn('Team Intel: trades failed.', e)),
-    playerDbPromise.then(() => loadAwards()).catch(e => console.warn('Team Intel: awards failed.', e)),
-    loadDraftPicks().catch(e => {
-      state.picksError = e.message || String(e);
-      state.picksReady = false;
-      console.warn('Team Intel: draft picks failed.', e);
-    })
+    playerDbPromise.then(() => loadAwards()).catch(e => console.warn('Team Intel: awards failed.', e))
   ];
 
   tasks.forEach(p => p.then(() => { renderNav(); renderTeam(); }));
