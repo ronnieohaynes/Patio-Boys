@@ -1,23 +1,29 @@
 /* Draft-pick Trade ★ for Patio Boys (16-keeper fringe model).
-   Round base = league median Trade ★ of each team's Nth-best rostered
-   player (17th→1st … 21st→5th). Next draft year applies a slot mult from
-   projected finish (standings when meaningful; else team quality). Later
-   years use team-quality mult + a soft year discount. Pick slot always
-   follows the original franchise (Sleeper traded_picks roster_id). */
+   Round bases are a frozen snapshot of league median Trade ★ at each
+   team's Nth-best rostered player (17th→1st … 21st→5th). Do not rebuild
+   those medians on page load — refresh SNAPSHOT_ROUND_BASE manually if
+   the league's keeper/fringe philosophy changes.
+
+   Next draft year applies a slot mult from projected finish (standings
+   when meaningful; else team quality). Later years use team-quality mult
+   + a soft year discount. Pick slot always follows the original franchise
+   (Sleeper traded_picks roster_id). */
 (function (global) {
   'use strict';
 
   const KEEPER_COUNT = 16;
   const FRINGE_START = 17; /* roster rank → round 1 */
   const DEFAULT_ROUNDS = 5;
-  /* Snapshot fallbacks if live medians cannot be built yet. */
-  const FALLBACK_ROUND_BASE = {
+  /* Frozen once from 16-keeper fringe medians (ranks 17–21 → rounds 1–5). */
+  const SNAPSHOT_ROUND_BASE = {
     1: 67.7,
     2: 66.7,
     3: 65.1,
     4: 62.0,
     5: 61.4
   };
+  /* Alias kept for older call sites. */
+  const FALLBACK_ROUND_BASE = SNAPSHOT_ROUND_BASE;
   /* yearsOut from the next unsettled draft season. */
   const YEAR_DISCOUNT = [1.0, 0.92, 0.85];
 
@@ -144,10 +150,31 @@
     return Number.isFinite(Number(raw)) ? Number(raw) : null;
   }
 
-  /* Median Trade ★ at roster ranks 17–21 → round bases 1–5. */
+  function snapshotRoundBases(rounds) {
+    const n = Number(rounds) || DEFAULT_ROUNDS;
+    const bases = {};
+    for (let r = 1; r <= n; r++) {
+      bases[r] = SNAPSHOT_ROUND_BASE[r] != null ? SNAPSHOT_ROUND_BASE[r] : 60;
+    }
+    return {
+      bases,
+      usedLive: false,
+      fromSnapshot: true,
+      keeperCount: KEEPER_COUNT,
+      fringeStart: FRINGE_START,
+      sampleCounts: Object.fromEntries(
+        Array.from({length: n}, (_, i) => [String(i + 1), 0])
+      )
+    };
+  }
+
+  /* Offline helper: rebuild medians from a Trade ★ map. Not used on load —
+     round bases stay on SNAPSHOT_ROUND_BASE. Pass { live: true } to force. */
   function fringeMediansByRound(teamPlayerIds, tradeScoreByPid, opts) {
     const options = opts || {};
     const rounds = Number(options.rounds) || DEFAULT_ROUNDS;
+    if (!options.live) return snapshotRoundBases(rounds);
+
     const keeperCount = Number(options.keeperCount) || KEEPER_COUNT;
     const fringeStart = Number(options.fringeStart) || FRINGE_START;
     const byRank = {};
@@ -171,12 +198,13 @@
         bases[r] = Math.round(med * 100) / 100;
         usedLive = true;
       } else {
-        bases[r] = FALLBACK_ROUND_BASE[r] != null ? FALLBACK_ROUND_BASE[r] : 60;
+        bases[r] = SNAPSHOT_ROUND_BASE[r] != null ? SNAPSHOT_ROUND_BASE[r] : 60;
       }
     }
     return {
       bases,
       usedLive,
+      fromSnapshot: !usedLive,
       keeperCount,
       fringeStart,
       sampleCounts: Object.fromEntries(
@@ -261,9 +289,9 @@
   function valuePick(pick, ctx) {
     const context = ctx || {};
     const round = Number(pick && pick.round) || 1;
-    const bases = context.roundBases || FALLBACK_ROUND_BASE;
+    const bases = context.roundBases || SNAPSHOT_ROUND_BASE;
     const base = Number(bases[round] != null ? bases[round]
-      : (FALLBACK_ROUND_BASE[round] != null ? FALLBACK_ROUND_BASE[round] : 60));
+      : (SNAPSHOT_ROUND_BASE[round] != null ? SNAPSHOT_ROUND_BASE[round] : 60));
     const nextSeason = String(context.nextDraftSeason || pick.season);
     const yearsOut = Math.max(0, Number(pick.season) - Number(nextSeason));
     const ym = yearMult(yearsOut);
@@ -349,7 +377,7 @@
     return byId;
   }
 
-  /* One-shot: synthesize ownership, build bases, attach values. */
+  /* Ownership from Sleeper + snapshot bases + slot/quality mults. */
   function valueLeaguePicks(opts) {
     const options = opts || {};
     const pack = synthesizeOwnedDraftPicks(
@@ -365,10 +393,7 @@
         if (t.qualityRank != null) t.standingsRank = t.standingsRank || t.qualityRank;
       });
     }
-    const teamPlayerIds = teams.map(t => t.playerIds || t.players || []);
-    const fringe = fringeMediansByRound(teamPlayerIds, options.tradeScoreByPid, {
-      rounds: pack.rounds
-    });
+    const fringe = snapshotRoundBases(pack.rounds);
     const ctx = {
       roundBases: fringe.bases,
       nextDraftSeason: pack.nextDraftSeason,
@@ -393,6 +418,7 @@
   global.DraftPickValue = {
     KEEPER_COUNT,
     FRINGE_START,
+    SNAPSHOT_ROUND_BASE,
     FALLBACK_ROUND_BASE,
     YEAR_DISCOUNT,
     median,
@@ -400,6 +426,7 @@
     pickAssetId,
     parsePickAssetId,
     synthesizeOwnedDraftPicks,
+    snapshotRoundBases,
     fringeMediansByRound,
     standingsMeaningful,
     finishBand,
