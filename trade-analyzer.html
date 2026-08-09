@@ -413,7 +413,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-grades';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   var i = 0;
@@ -778,19 +778,25 @@ async function loadSleeperProjMaps(scoring, season){
   return { byId, byName, count: byId.size };
 }
 
+/* Ratio is smaller haul ÷ larger haul (1.0 = perfectly even). */
 function fairnessGrade(ratio){
-  if (ratio >= 0.94) return 'A+';
-  if (ratio >= 0.88) return 'A';
-  if (ratio >= 0.80) return 'B+';
-  if (ratio >= 0.72) return 'B';
-  if (ratio >= 0.62) return 'C+';
-  if (ratio >= 0.52) return 'C';
-  if (ratio >= 0.40) return 'D';
+  if (ratio >= 0.97) return 'A+';
+  if (ratio >= 0.94) return 'A';
+  if (ratio >= 0.90) return 'A-';
+  if (ratio >= 0.87) return 'B+';
+  if (ratio >= 0.84) return 'B';
+  if (ratio >= 0.80) return 'B-';
+  if (ratio >= 0.77) return 'C+';
+  if (ratio >= 0.74) return 'C';
+  if (ratio >= 0.70) return 'C-';
+  if (ratio >= 0.67) return 'D+';
+  if (ratio >= 0.64) return 'D';
+  if (ratio >= 0.60) return 'D-';
   return 'F';
 }
 
-const FINDER_FAIR_SOFT = 0.80;
-const FINDER_FAIR_HARD = 0.62;
+const FINDER_FAIR_SOFT = 0.80; /* below B- → caution */
+const FINDER_FAIR_HARD = 0.70; /* below C- → block */
 const KEEPER_COUNT = 16;
 
 const state = {
@@ -1100,7 +1106,7 @@ function analyze(){
   const winner = valueToA === valueToB ? null
     : (valueToA > valueToB ? aName : bName);
   const loser = winner == null ? null : (winner === aName ? bName : aName);
-  const unfair = ratio < 0.62 || (high - low) >= 12;
+  const unfair = ratio < FINDER_FAIR_HARD || (high - low) >= 12;
 
   const afterA = new Set(teamA.playerIds);
   const afterB = new Set(teamB.playerIds);
@@ -1157,7 +1163,7 @@ function analyze(){
   const verdictCls = unfair ? 'unfair' : (runaway ? 'runaway' : '');
   let headline = 'Balanced enough on trade value';
   if (unfair && winner) headline = 'Lopsided — favors ' + winner;
-  else if (winner && ratio < 0.80) headline = 'Edge to ' + winner;
+  else if (winner && ratio < FINDER_FAIR_SOFT) headline = 'Edge to ' + winner;
   else if (winner) headline = 'Slight edge to ' + winner;
 
   const flags = [];
@@ -1235,7 +1241,8 @@ function analyze(){
   let ruling = 'allow';
   let rulingTitle = 'Allow this trade';
   let rulingWhy = 'Trade value is close enough and Max Points stay within the league band.';
-  const softEdge = !unfair && !runaway && (ratio < 0.80 || grade === 'C+' || grade === 'C');
+  const softEdge = !unfair && !runaway
+    && (ratio < FINDER_FAIR_SOFT || /^[CD]/.test(grade));
   const softMismatch = !unfair && !runaway && mismatch.softCaution;
   if (unfair && runaway){
     ruling = 'block';

@@ -64,14 +64,20 @@
     return res.json();
   }
 
+  /* Ratio is smaller haul ÷ larger haul (1.0 = perfectly even). */
   function fairnessGrade(ratio){
-    if (ratio >= 0.94) return 'A+';
-    if (ratio >= 0.88) return 'A';
-    if (ratio >= 0.80) return 'B+';
-    if (ratio >= 0.72) return 'B';
-    if (ratio >= 0.62) return 'C+';
-    if (ratio >= 0.52) return 'C';
-    if (ratio >= 0.40) return 'D';
+    if (ratio >= 0.97) return 'A+';
+    if (ratio >= 0.94) return 'A';
+    if (ratio >= 0.90) return 'A-';
+    if (ratio >= 0.87) return 'B+';
+    if (ratio >= 0.84) return 'B';
+    if (ratio >= 0.80) return 'B-';
+    if (ratio >= 0.77) return 'C+';
+    if (ratio >= 0.74) return 'C';
+    if (ratio >= 0.70) return 'C-';
+    if (ratio >= 0.67) return 'D+';
+    if (ratio >= 0.64) return 'D';
+    if (ratio >= 0.60) return 'D-';
     return 'F';
   }
 
