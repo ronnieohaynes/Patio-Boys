@@ -1522,13 +1522,14 @@ function setMode(mode){
   const lede = document.getElementById('ledeText');
   if (state.mode === 'finder'){
     lede.innerHTML = 'Trade Finder scans for <strong>1–3 asset</strong> packages (players + picks), including mismatched counts. '
-      + 'It grades Trade ★ fairness and whether the pile clears a 16-keeper fringe. '
+      + 'It grades Trade ★ fairness, 16-keeper fringe, and starter-lineup <strong>need</strong>. '
       + '<strong>Shop</strong> = offers for your guy; <strong>Find</strong> = what you can send. Click to open in Analyze.';
     renderFinder();
   } else {
     lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending. '
-      + 'Player value is <strong>Trade ★</strong>; picks use 16-keeper fringe medians × slot/quality. '
-      + 'Mismatched piles get a keeper-seat check (fake depth → Caution). Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
+      + 'Player value is <strong>Trade ★</strong>; picks use snapshot fringe bases × slot/quality. '
+      + 'Mismatched piles get a keeper-seat check; starter-lineup need can nudge Allow → Caution. '
+      + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
   }
 }
 
