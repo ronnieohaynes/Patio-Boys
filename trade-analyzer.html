@@ -335,7 +335,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Lineup <strong>need</strong> (starter FP/G fit) can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -413,7 +413,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-grades';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-need';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   var i = 0;
@@ -798,11 +798,14 @@ function fairnessGrade(ratio){
 const FINDER_FAIR_SOFT = 0.80; /* below B- → caution */
 const FINDER_FAIR_HARD = 0.70; /* below C- → block */
 const KEEPER_COUNT = 16;
+/* Starter-lineup FP/G swing that counts as a real need hit/help (FA uses 0.5 to crack). */
+const NEED_SOFT = 1.0;
 
 const state = {
   teams: [],
   playersById: new Map(),
   picksById: new Map(),
+  slots: null,
   sendA: new Set(),
   sendB: new Set(),
   draftPickRoundBases: null,
@@ -881,6 +884,108 @@ function teamSeatThresholds(team){
       : (scores.length ? scores[scores.length - 1] : null),
     ranked: scores.length
   };
+}
+
+/* ---------- lineup need (TeamNeedsModel starter FP/G) ---------- */
+
+function needPlayerRec(p){
+  if (!p || p.kind === 'pick') return null;
+  const Needs = window.TeamNeedsModel;
+  const positions = p.positions && p.positions.length
+    ? p.positions
+    : (Needs && typeof Needs.positions === 'function' ? Needs.positions(p.pos) : []);
+  return {
+    id: String(p.id),
+    name: p.name || String(p.id),
+    positions: positions || [],
+    metric: Number.isFinite(Number(p.metric)) ? Number(p.metric) : 0,
+    age: p.age != null ? Number(p.age) : null
+  };
+}
+
+function needRecsForIds(ids){
+  return (ids || []).map(id => {
+    const p = state.playersById.get(String(id));
+    return needPlayerRec(p);
+  }).filter(Boolean);
+}
+
+function lineupTotalForIds(ids){
+  const Needs = window.TeamNeedsModel;
+  if (!Needs || typeof Needs.optimize !== 'function' || !state.slots || !state.slots.length){
+    return null;
+  }
+  const opt = Needs.optimize(needRecsForIds(ids), state.slots);
+  return Number(opt.total) || 0;
+}
+
+function rosterIdsAfterTrade(team, sendAssets, receiveAssets){
+  const send = new Set(
+    (sendAssets || [])
+      .filter(a => a && a.kind !== 'pick' && a.id != null)
+      .map(a => String(a.id))
+  );
+  const after = (team.playerIds || []).map(String).filter(id => !send.has(id));
+  (receiveAssets || []).forEach(a => {
+    if (!a || a.kind === 'pick' || a.id == null) return;
+    const id = String(a.id);
+    if (!after.includes(id)) after.push(id);
+  });
+  return after;
+}
+
+function fmtNeedDelta(v){
+  const n = Number(v) || 0;
+  return (n >= 0 ? '+' : '') + n.toFixed(1);
+}
+
+/* Before/after starter FP/G for both sides. Soft-caution only — never hard-blocks. */
+function evaluateNeedFit(teamA, teamB, fromA, fromB){
+  const flags = [];
+  let softNeed = false;
+  const beforeA = lineupTotalForIds(teamA.playerIds);
+  const beforeB = lineupTotalForIds(teamB.playerIds);
+  if (beforeA == null || beforeB == null){
+    return {softNeed, flags, deltaA: null, deltaB: null};
+  }
+  const afterA = lineupTotalForIds(rosterIdsAfterTrade(teamA, fromA, fromB));
+  const afterB = lineupTotalForIds(rosterIdsAfterTrade(teamB, fromB, fromA));
+  if (afterA == null || afterB == null){
+    return {softNeed, flags, deltaA: null, deltaB: null};
+  }
+  const deltaA = afterA - beforeA;
+  const deltaB = afterB - beforeB;
+  const helpedA = deltaA >= NEED_SOFT;
+  const helpedB = deltaB >= NEED_SOFT;
+  const hurtA = deltaA <= -NEED_SOFT;
+  const hurtB = deltaB <= -NEED_SOFT;
+  const spread = Math.abs(deltaA - deltaB);
+
+  softNeed = (helpedA && hurtB) || (helpedB && hurtA)
+    || (spread >= NEED_SOFT && (hurtA || hurtB));
+
+  if (softNeed){
+    const winner = deltaA >= deltaB ? teamA.displayName : teamB.displayName;
+    const loser = deltaA >= deltaB ? teamB.displayName : teamA.displayName;
+    const winD = Math.max(deltaA, deltaB);
+    const loseD = Math.min(deltaA, deltaB);
+    flags.push({
+      cls: 'warn',
+      title: 'Need mismatch',
+      text: loser + ' loses starter-lineup juice (' + fmtNeedDelta(loseD)
+        + ' FP/G) while ' + winner + ' gains (' + fmtNeedDelta(winD)
+        + '). Trade ★ can look fair while the fit does not.'
+    });
+  } else {
+    flags.push({
+      cls: 'ok',
+      title: 'Lineup need',
+      text: teamA.displayName + ' ' + fmtNeedDelta(deltaA)
+        + ' FP/G starters · ' + teamB.displayName + ' ' + fmtNeedDelta(deltaB)
+        + ' FP/G starters (proj lineup). Need fit is balanced enough.'
+    });
+  }
+  return {softNeed, flags, deltaA, deltaB};
 }
 
 function packageSeatCheck(assets, receiverTeam){
@@ -1210,6 +1315,8 @@ function analyze(){
 
   const mismatch = evaluateMismatch(fromA, fromB, teamA, teamB);
   mismatch.flags.forEach(f => flags.push(f));
+  const needFit = evaluateNeedFit(teamA, teamB, fromA, fromB);
+  needFit.flags.forEach(f => flags.push(f));
 
   function sideHtml(title, color, receives, value, maxDelta){
     const items = receives.length
@@ -1237,13 +1344,14 @@ function analyze(){
   const bDelta = afterMap[teamB.rosterId].total - (beforeStandings.find(r => String(r.rosterId) === String(bId)) || {before:0}).before;
 
   /* League ruling: block lopsided value or Max Points runaways; soft imbalances → review.
-     Fake-depth / weak pick hauls nudge Allow → Caution; they do not hard-block alone. */
+     Fake-depth / weak pick hauls / need mismatch nudge Allow → Caution; they do not hard-block alone. */
   let ruling = 'allow';
   let rulingTitle = 'Allow this trade';
-  let rulingWhy = 'Trade value is close enough and Max Points stay within the league band.';
+  let rulingWhy = 'Trade value is close enough, Max Points stay in band, and starter-lineup need is balanced.';
   const softEdge = !unfair && !runaway
     && (ratio < FINDER_FAIR_SOFT || /^[CD]/.test(grade));
   const softMismatch = !unfair && !runaway && mismatch.softCaution;
+  const softNeed = !unfair && !runaway && needFit.softNeed;
   if (unfair && runaway){
     ruling = 'block';
     rulingTitle = 'Do not allow';
@@ -1261,18 +1369,23 @@ function analyze(){
     rulingTitle = 'Do not allow';
     rulingWhy = 'Blocked — ' + leader.team + ' would pull too far ahead in Max Points (+'
       + gap.toFixed(1) + ' over ' + second.team + '). League balance breaks even if the trade haul looks fine.';
-  } else if (softEdge || softMismatch){
+  } else if (softEdge || softMismatch || softNeed){
     ruling = 'review';
     rulingTitle = 'Allow with caution';
-    if (softEdge && softMismatch){
-      rulingWhy = 'Passable on raw Trade ★ (fairness ' + grade + '), but the asset mismatch looks soft'
-        + ' (fake depth or weak pick capital). Fine to allow if the league likes the construction.';
-    } else if (softMismatch){
+    const softBits = [];
+    if (softEdge) softBits.push('Trade ★ edge (fairness ' + grade + ')');
+    if (softMismatch) softBits.push('soft package shape (fake depth / weak pick capital)');
+    if (softNeed) softBits.push('starter-lineup need mismatch');
+    if (softNeed && !softEdge && !softMismatch){
+      rulingWhy = 'Trade ★ is close enough, but one side takes a clear starter-lineup hit while the other gains. Allow with caution.';
+    } else if (softMismatch && !softEdge && !softNeed){
       rulingWhy = 'Trade ★ is close enough, but keeper-seat / pick-haul checks say the pile may not'
         + ' be real depth for a 16-keeper roster. Allow with caution.';
-    } else {
+    } else if (softEdge && !softMismatch && !softNeed){
       rulingWhy = 'Passable, but ' + (winner || 'one side') + ' gets a clear edge (fairness '
         + grade + '). Fine to allow unless the league wants a stricter bar.';
+    } else {
+      rulingWhy = 'Passable on raw Trade ★, but review for: ' + softBits.join('; ') + '.';
     }
   }
 
@@ -1497,9 +1610,26 @@ function packagesMatchingValue(giver, targetVal, opts){
     if (ratio < FINDER_FAIR_HARD) return;
     const delta = Math.abs(sendVal - targetVal);
     const seat = receiver ? packageSeatCheck(assets, receiver) : null;
-    const softCaution = !!(seat && isFakeDepth(seat, againstCount));
+    const fakeDepth = !!(seat && isFakeDepth(seat, againstCount));
+    const againstAssets = options.againstAssets || [];
+    const needFit = (receiver && againstAssets.length)
+      ? evaluateNeedFit(giver, receiver, assets, againstAssets)
+      : null;
+    const softCaution = fakeDepth || !!(needFit && needFit.softNeed);
     let ruling = finderRuling(ratio, delta, softCaution);
     if (ruling === 'block' && !options.includeBlocked) return;
+    let mismatchNote = '';
+    if (fakeDepth && seat){
+      mismatchNote = 'Fake depth risk: ' + seat.clearFringeN + '/' + assets.length
+        + ' clear receiver fringe';
+    } else if (needFit && needFit.softNeed){
+      mismatchNote = 'Need mismatch: giver '
+        + fmtNeedDelta(needFit.deltaA) + ' / receiver '
+        + fmtNeedDelta(needFit.deltaB) + ' starter FP/G';
+    } else if (seat){
+      mismatchNote = seat.clearFringeN + '/' + assets.length + ' clear fringe'
+        + (seat.clearKeeperN ? (', ' + seat.clearKeeperN + ' keeper-seat') : '');
+    }
     const pack = {
       kind: packageKindLabel(assets, againstCount),
       assets: assets.slice(),
@@ -1513,13 +1643,7 @@ function packagesMatchingValue(giver, targetVal, opts){
       softCaution,
       clearFringeN: seat ? seat.clearFringeN : null,
       clearKeeperN: seat ? seat.clearKeeperN : null,
-      mismatchNote: seat
-        ? (softCaution
-          ? ('Fake depth risk: ' + seat.clearFringeN + '/' + assets.length
-            + ' clear receiver fringe')
-          : (seat.clearFringeN + '/' + assets.length + ' clear fringe'
-            + (seat.clearKeeperN ? (', ' + seat.clearKeeperN + ' keeper-seat') : '')))
-        : ''
+      mismatchNote
     };
     pack.score = scoreFinderPack(pack, targetVal);
     out.push(pack);
@@ -1608,7 +1732,8 @@ function buildFinderOffers(){
       const packs = packagesMatchingValue(other, targetVal, {
         excludeIds: [anchor.id],
         receiverTeam: mine,
-        againstCount: 1
+        againstCount: 1,
+        againstAssets: [anchor]
       });
       if (!packs.length) return;
       groups.push({
@@ -1626,7 +1751,8 @@ function buildFinderOffers(){
     const packs = packagesMatchingValue(mine, targetVal, {
       excludeIds: [anchor.id],
       receiverTeam: owner,
-      againstCount: 1
+      againstCount: 1,
+      againstAssets: [anchor]
     });
     if (!packs.length) return [];
     groups.push({
@@ -1897,6 +2023,9 @@ async function load(){
     const users = await usersRes.json();
     const rosters = await rostersRes.json();
     const scoring = league.scoring_settings || {};
+    state.slots = (window.TeamNeedsModel && typeof TeamNeedsModel.parseSlots === 'function')
+      ? TeamNeedsModel.parseSlots(league.roster_positions || [])
+      : null;
 
     status.textContent = 'Building Lock OVR + Trade stars from smash samples\u2026';
     const projMaps = buildConsensusProjMaps(scoring);
