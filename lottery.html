@@ -515,20 +515,21 @@
   <section class="stream-main">
     <nav class="hq-nav" aria-label="Patio Boys HQ">
       <div class="nav-primary" role="tablist" aria-label="HQ sections">
-        <button class="nav-group active" id="navGroupLeague" type="button" role="tab" aria-selected="true" data-group="league">League</button>
+        <button class="nav-group active" id="navGroupHistory" type="button" role="tab" aria-selected="true" data-group="history">History</button>
+        <button class="nav-group" id="navGroupLeague" type="button" role="tab" aria-selected="false" data-group="league">League</button>
         <button class="nav-group" id="navGroupMoves" type="button" role="tab" aria-selected="false" data-group="moves">Moves</button>
         <button class="nav-group" id="navGroupDraft" type="button" role="tab" aria-selected="false" data-group="draft" hidden>Draft</button>
         <button class="nav-group" id="navGroupRules" type="button" role="tab" aria-selected="false" data-group="rules" hidden>Rules</button>
       </div>
-      <div class="nav-secondary" id="navSecondary" role="tablist" aria-label="League panels">
-        <button class="nav-sub active" id="tabBtnStatus" type="button" role="tab" aria-selected="true" aria-controls="tabStatus" data-group="league" data-tab="status">Status</button>
-        <button class="nav-sub" id="tabBtnHistory" type="button" role="tab" aria-selected="false" aria-controls="tabHistory" data-group="league" data-tab="history">History</button>
-        <button class="nav-sub" id="tabBtnIntel" type="button" role="tab" aria-selected="false" aria-controls="tabIntel" data-group="league" data-tab="intel">Intel</button>
-        <button class="nav-sub" id="tabBtnGoat" type="button" role="tab" aria-selected="false" aria-controls="tabGoat" data-group="league" data-tab="goat">GOAT</button>
+      <div class="nav-secondary" id="navSecondary" role="tablist" aria-label="History panels">
+        <button class="nav-sub active" id="tabBtnStatus" type="button" role="tab" aria-selected="true" aria-controls="tabStatus" data-group="history" data-tab="status">Status</button>
+        <button class="nav-sub" id="tabBtnOffseason" type="button" role="tab" aria-selected="false" aria-controls="tabOffseason" data-group="history" data-tab="offseason" hidden>Report</button>
+        <button class="nav-sub" id="tabBtnGoat" type="button" role="tab" aria-selected="false" aria-controls="tabGoat" data-group="history" data-tab="goat" hidden>GOAT</button>
+        <button class="nav-sub" id="tabBtnIntel" type="button" role="tab" aria-selected="false" aria-controls="tabIntel" data-group="league" data-tab="intel" hidden>Intel</button>
+        <button class="nav-sub" id="tabBtnPast" type="button" role="tab" aria-selected="false" aria-controls="tabPast" data-group="league" data-tab="past" hidden>Past</button>
         <button class="nav-sub" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa" data-group="moves" data-tab="fa" hidden>FA</button>
         <button class="nav-sub" id="tabBtnTx" type="button" role="tab" aria-selected="false" aria-controls="tabTx" data-group="moves" data-tab="tx" hidden>Transactions</button>
         <button class="nav-sub" id="tabBtnTrade" type="button" role="tab" aria-selected="false" aria-controls="tabTrade" data-group="moves" data-tab="trade" hidden>Analyzer</button>
-        <button class="nav-sub" id="tabBtnOffseason" type="button" role="tab" aria-selected="false" aria-controls="tabOffseason" data-group="moves" data-tab="offseason" hidden>Report</button>
         <button class="nav-sub" id="tabBtnBoard" type="button" role="tab" aria-selected="false" aria-controls="tabBoard" data-group="draft" data-tab="board" hidden>Board</button>
         <button class="nav-sub" id="tabBtnGrades" type="button" role="tab" aria-selected="false" aria-controls="tabGrades" data-group="draft" data-tab="grades" hidden>Grades</button>
         <button class="nav-sub" id="tabBtnMock" type="button" role="tab" aria-selected="false" aria-controls="tabMock" data-group="draft" data-tab="mock" hidden>Mock</button>
@@ -594,8 +595,8 @@
     <div class="boardsection status-panel" id="tabStatus" role="tabpanel" aria-labelledby="tabBtnStatus">
       <iframe class="status-frame" id="leagueStatusFrame" title="League Status" src="about:blank"></iframe>
     </div>
-    <div class="boardsection status-panel" id="tabHistory" role="tabpanel" aria-labelledby="tabBtnHistory" hidden>
-      <iframe class="status-frame" id="leagueHistoryFrame" title="League History" src="about:blank"></iframe>
+    <div class="boardsection status-panel" id="tabPast" role="tabpanel" aria-labelledby="tabBtnPast" hidden>
+      <iframe class="status-frame" id="leagueHistoryFrame" title="Past Seasons" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabIntel" role="tabpanel" aria-labelledby="tabBtnIntel" hidden>
       <iframe class="status-frame" id="teamIntelFrame" title="Team Intel" src="about:blank"></iframe>
@@ -2287,24 +2288,30 @@ document.getElementById('runBtn').addEventListener('click', () => {
 /* HQ nav: primary groups + secondary tabs. Draft/Rules stay in the map for
    easy re-enable, but are hidden from the menu so they never lazy-load. */
 const HQ_NAV = {
-  league: {
-    label: 'League',
+  history: {
+    label: 'History',
     defaultTab: 'status',
     tabs: {
-      status:  { panel: 'tabStatus',  btn: 'tabBtnStatus',  frame: 'leagueStatusFrame',  src: 'league-status.html?embed=1&v=20260809-tabs', loaded: 'statusFrameLoaded' },
-      history: { panel: 'tabHistory', btn: 'tabBtnHistory', frame: 'leagueHistoryFrame', src: 'league-history.html?embed=1&v=20260809-tabs', loaded: 'historyFrameLoaded' },
-      intel:   { panel: 'tabIntel',   btn: 'tabBtnIntel',   frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260809-tabs', loaded: 'intelFrameLoaded' },
-      goat:    { panel: 'tabGoat',    btn: 'tabBtnGoat',    frame: 'goatTrackerFrame',   src: 'goat-tracker.html?embed=1&v=20260809-tabs', loaded: 'goatFrameLoaded' }
+      status:    { panel: 'tabStatus',    btn: 'tabBtnStatus',    frame: 'leagueStatusFrame',    src: 'league-status.html?embed=1&v=20260809-histnav', loaded: 'statusFrameLoaded' },
+      offseason: { panel: 'tabOffseason', btn: 'tabBtnOffseason', frame: 'offseasonReportFrame', src: 'offseason-report.html?embed=1&v=20260809-histnav', loaded: 'offseasonFrameLoaded' },
+      goat:      { panel: 'tabGoat',      btn: 'tabBtnGoat',      frame: 'goatTrackerFrame',     src: 'goat-tracker.html?embed=1&v=20260809-histnav', loaded: 'goatFrameLoaded' }
+    }
+  },
+  league: {
+    label: 'League',
+    defaultTab: 'intel',
+    tabs: {
+      intel: { panel: 'tabIntel', btn: 'tabBtnIntel', frame: 'teamIntelFrame',     src: 'team-intel.html?embed=1&v=20260809-histnav', loaded: 'intelFrameLoaded' },
+      past:  { panel: 'tabPast',  btn: 'tabBtnPast',  frame: 'leagueHistoryFrame', src: 'league-history.html?embed=1&v=20260809-histnav', loaded: 'historyFrameLoaded' }
     }
   },
   moves: {
     label: 'Moves',
     defaultTab: 'fa',
     tabs: {
-      fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',     src: 'free-agents.html?embed=1&v=20260809-tabs', loaded: 'faFrameLoaded' },
-      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',   src: 'transactions.html?embed=1&v=20260809-tabs', loaded: 'txFrameLoaded' },
-      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame',  src: 'trade-analyzer.html?embed=1&v=20260809-tabs', loaded: 'tradeFrameLoaded' },
-      offseason: { panel: 'tabOffseason', btn: 'tabBtnOffseason', frame: 'offseasonReportFrame', src: 'offseason-report.html?embed=1&v=20260809-tabs', loaded: 'offseasonFrameLoaded' }
+      fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',    src: 'free-agents.html?embed=1&v=20260809-histnav', loaded: 'faFrameLoaded' },
+      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',  src: 'transactions.html?embed=1&v=20260809-histnav', loaded: 'txFrameLoaded' },
+      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame', src: 'trade-analyzer.html?embed=1&v=20260809-histnav', loaded: 'tradeFrameLoaded' }
     }
   },
   draft: {
@@ -2373,12 +2380,13 @@ function syncFrameLoadedFlags(){
 }
 
 const hqLastTab = {
-  league: 'status',
+  history: 'status',
+  league: 'intel',
   moves: 'fa',
   draft: 'board',
   rules: 'charter'
 };
-let hqActiveGroup = 'league';
+let hqActiveGroup = 'history';
 let hqActiveTab = 'status';
 
 function setHqGroup(group){
@@ -2449,7 +2457,7 @@ const hqFrameReady = {};
 function tabLoaderLabel(tab){
   const labels = {
     status: 'Loading league status…',
-    history: 'Loading league history…',
+    past: 'Loading past seasons…',
     intel: 'Loading team intel…',
     goat: 'Loading GOAT race…',
     fa: 'Loading free agents…',
@@ -2604,7 +2612,9 @@ if (refreshBtn){
   refreshBtn.setAttribute('aria-label', 'Refresh and clear cache');
 }
 
-const bootTab = new URLSearchParams(location.search).get('tab');
+let bootTab = new URLSearchParams(location.search).get('tab');
+/* Old ?tab=history pointed at prior seasons; that panel is now Past. */
+if (bootTab === 'history') bootTab = 'past';
 const bootGroup = bootTab ? HQ_TAB_TO_GROUP[bootTab] : null;
 setMainTab(bootGroup && HQ_NAV[bootGroup] && !HQ_NAV[bootGroup].hidden ? bootTab : 'status');
 const leagueDataPromise = loadLeagueData();
