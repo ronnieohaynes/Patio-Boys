@@ -1,10 +1,11 @@
-/* Patio Boys HQ loading emblem */
+/* Patio Boys HQ loading emblem + progress */
 .pb-boot-loader{
   position:fixed;inset:0;z-index:9999;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
   background:color-mix(in srgb, var(--bg, #14181F) 92%, #000);
   color:var(--ink, #ECEEF3);
   transition:opacity .28s ease, visibility .28s ease;
+  padding:24px;
 }
 .pb-boot-loader[hidden],
 .pb-boot-loader.is-done{
@@ -36,10 +37,38 @@
   font-family:'IBM Plex Mono', ui-monospace, monospace;
   font-size:11px;letter-spacing:.12em;text-transform:uppercase;
   color:var(--ink-dim, #8B93A6);
+  text-align:center;
+  max-width:280px;
+}
+.pb-boot-bar{
+  width:min(220px, 70vw);
+  height:6px;
+  border-radius:999px;
+  background:color-mix(in srgb, var(--hairline, #2E3645) 80%, #000);
+  overflow:hidden;
+  border:1px solid color-mix(in srgb, var(--gold, #C9963A) 28%, transparent);
+}
+.pb-boot-bar-fill{
+  height:100%;
+  width:0%;
+  border-radius:inherit;
+  background:linear-gradient(90deg,
+    color-mix(in srgb, var(--gold, #C9963A) 70%, #fff),
+    var(--gold, #C9963A));
+  transition:width .18s ease-out;
+}
+.pb-boot-pct{
+  margin:0;
+  font-family:'IBM Plex Mono', ui-monospace, monospace;
+  font-size:13px;font-weight:600;letter-spacing:.08em;
+  color:var(--gold, #C9963A);
+  tabular-nums:true;
+  font-variant-numeric:tabular-nums;
 }
 @keyframes pbBootSpin{
   to{transform:rotate(360deg)}
 }
 @media (prefers-reduced-motion: reduce){
   .pb-boot-mark::before{animation:none;border-color:var(--gold, #C9963A)}
+  .pb-boot-bar-fill{transition:none}
 }

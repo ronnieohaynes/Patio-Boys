@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="hq-loader.css?v=20260809-progress">
 <style>
   :root{
     --bg:#14181F; --surface:#1B212C; --surface-2:#222A37;
@@ -324,7 +325,22 @@
     background:color-mix(in srgb, var(--gold) 14%, var(--surface));
     color:var(--gold);border-color:color-mix(in srgb, var(--gold) 55%, var(--hairline));
   }
+  /* Instant click confirmation before the panel paints. */
+  .nav-group.is-armed,.nav-sub.is-armed{
+    color:var(--gold)!important;border-color:var(--gold)!important;
+    background:color-mix(in srgb, var(--gold) 18%, var(--surface))!important;
+  }
+  .nav-group.is-flash,.nav-sub.is-flash{
+    animation:hqNavFlash .38s ease;
+  }
+  @keyframes hqNavFlash{
+    0%{filter:brightness(1.45);box-shadow:0 0 0 2px color-mix(in srgb, var(--gold) 70%, transparent)}
+    100%{filter:brightness(1);box-shadow:none}
+  }
   .nav-group:focus-visible,.nav-sub:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+  @media (prefers-reduced-motion: reduce){
+    .nav-group.is-flash,.nav-sub.is-flash{animation:none}
+  }
   .boardsection.rules-panel{
     padding:0;
     overflow:hidden;
@@ -2292,26 +2308,26 @@ const HQ_NAV = {
     label: 'League',
     defaultTab: 'intel',
     tabs: {
-      intel: { panel: 'tabIntel', btn: 'tabBtnIntel', frame: 'teamIntelFrame', src: 'team-intel.html?embed=1&v=20260809-uiresp2', loaded: 'intelFrameLoaded' }
+      intel: { panel: 'tabIntel', btn: 'tabBtnIntel', frame: 'teamIntelFrame', src: 'team-intel.html?embed=1&v=20260809-progress', loaded: 'intelFrameLoaded' }
     }
   },
   moves: {
     label: 'Moves',
     defaultTab: 'fa',
     tabs: {
-      fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',    src: 'free-agents.html?embed=1&v=20260809-histnav', loaded: 'faFrameLoaded' },
-      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',  src: 'transactions.html?embed=1&v=20260809-grades', loaded: 'txFrameLoaded' },
-      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame', src: 'trade-analyzer.html?embed=1&v=20260809-uiresp2', loaded: 'tradeFrameLoaded' }
+      fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',    src: 'free-agents.html?embed=1&v=20260809-progress', loaded: 'faFrameLoaded' },
+      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',  src: 'transactions.html?embed=1&v=20260809-progress', loaded: 'txFrameLoaded' },
+      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame', src: 'trade-analyzer.html?embed=1&v=20260809-progress', loaded: 'tradeFrameLoaded' }
     }
   },
   history: {
     label: 'History',
     defaultTab: 'status',
     tabs: {
-      status:    { panel: 'tabStatus',    btn: 'tabBtnStatus',    frame: 'leagueStatusFrame',    src: 'league-status.html?embed=1&v=20260809-navorder', loaded: 'statusFrameLoaded' },
-      offseason: { panel: 'tabOffseason', btn: 'tabBtnOffseason', frame: 'offseasonReportFrame', src: 'offseason-report.html?embed=1&v=20260809-histnav', loaded: 'offseasonFrameLoaded' },
-      goat:      { panel: 'tabGoat',      btn: 'tabBtnGoat',      frame: 'goatTrackerFrame',     src: 'goat-tracker.html?embed=1&v=20260809-histnav', loaded: 'goatFrameLoaded' },
-      past:      { panel: 'tabPast',      btn: 'tabBtnPast',      frame: 'leagueHistoryFrame',   src: 'league-history.html?embed=1&v=20260809-navorder', loaded: 'historyFrameLoaded' }
+      status:    { panel: 'tabStatus',    btn: 'tabBtnStatus',    frame: 'leagueStatusFrame',    src: 'league-status.html?embed=1&v=20260809-progress', loaded: 'statusFrameLoaded' },
+      offseason: { panel: 'tabOffseason', btn: 'tabBtnOffseason', frame: 'offseasonReportFrame', src: 'offseason-report.html?embed=1&v=20260809-progress', loaded: 'offseasonFrameLoaded' },
+      goat:      { panel: 'tabGoat',      btn: 'tabBtnGoat',      frame: 'goatTrackerFrame',     src: 'goat-tracker.html?embed=1&v=20260809-progress', loaded: 'goatFrameLoaded' },
+      past:      { panel: 'tabPast',      btn: 'tabBtnPast',      frame: 'leagueHistoryFrame',   src: 'league-history.html?embed=1&v=20260809-progress', loaded: 'historyFrameLoaded' }
     }
   },
   draft: {
@@ -2412,6 +2428,8 @@ function setMainTab(tab){
     const on = btn.dataset.group === group;
     btn.classList.toggle('active', on);
     btn.setAttribute('aria-selected', String(on));
+    if (on) flashNavButton(btn);
+    else btn.classList.remove('is-armed');
   });
 
   document.querySelectorAll('.nav-sub').forEach(btn => {
@@ -2420,6 +2438,8 @@ function setMainTab(tab){
     btn.hidden = !inGroup;
     btn.classList.toggle('active', on);
     btn.setAttribute('aria-selected', String(on));
+    if (on) flashNavButton(btn);
+    else if (!inGroup) btn.classList.remove('is-armed', 'is-flash');
   });
 
   Object.keys(HQ_NAV).forEach(g => {
@@ -2435,21 +2455,23 @@ function setMainTab(tab){
     const panel = document.getElementById(conf.panel);
     const frame = document.getElementById(conf.frame);
     if (frame && panel){
-      /* Loader + iframe src after paint so the click highlight is never blocked. */
-      requestAnimationFrame(function(){
-        if (!hqFrameLoaded[conf.loaded]){
-          showHqPanelLoader(panel, tabLoaderLabel(tab));
-          const src = hqFrameSrc(conf.src);
-          hqFrameLoaded[conf.loaded] = true;
-          syncFrameLoadedFlags();
+      /* Show loader + % immediately so the click is acknowledged. */
+      if (!hqFrameLoaded[conf.loaded]){
+        showHqPanelLoader(panel, tabLoaderLabel(tab), 0);
+        const src = hqFrameSrc(conf.src);
+        hqFrameLoaded[conf.loaded] = true;
+        syncFrameLoadedFlags();
+        requestAnimationFrame(function(){
           setTimeout(function(){ frame.src = src; }, 0);
-        } else if (!hqFrameReady[conf.frame]){
-          showHqPanelLoader(panel, tabLoaderLabel(tab));
-        } else {
-          hideHqPanelLoader(panel);
-        }
-      });
+        });
+      } else if (!hqFrameReady[conf.frame]){
+        showHqPanelLoader(panel, tabLoaderLabel(tab), Number(panel.dataset.pbLoadPct || 8));
+      } else {
+        hideHqPanelLoader(panel);
+      }
     }
+  } else {
+    /* Non-iframe panels (board/rules): still flash confirmation only. */
   }
 }
 
@@ -2471,22 +2493,86 @@ function tabLoaderLabel(tab){
   return labels[tab] || 'Loading Patio Boys…';
 }
 const hqLoaderTimers = {};
-function showHqPanelLoader(panel, label){
+const hqProgressTimers = {};
+function ensureHqLoaderDom(el){
+  if (!el.querySelector('.pb-boot-bar')){
+    const bar = document.createElement('div');
+    bar.className = 'pb-boot-bar';
+    bar.setAttribute('aria-hidden', 'true');
+    bar.innerHTML = '<div class="pb-boot-bar-fill"></div>';
+    el.appendChild(bar);
+  }
+  if (!el.querySelector('.pb-boot-pct')){
+    const pct = document.createElement('p');
+    pct.className = 'pb-boot-pct';
+    pct.textContent = '0%';
+    el.appendChild(pct);
+  }
+  el.setAttribute('role', 'progressbar');
+  el.setAttribute('aria-valuemin', '0');
+  el.setAttribute('aria-valuemax', '100');
+}
+function setHqPanelProgress(panel, pct, label){
+  if (!panel) return;
+  let el = panel.querySelector(':scope > .pb-boot-loader');
+  if (!el){
+    showHqPanelLoader(panel, label || 'Loading…', pct);
+    el = panel.querySelector(':scope > .pb-boot-loader');
+  }
+  if (!el) return;
+  ensureHqLoaderDom(el);
+  const n = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+  const prev = Number(panel.dataset.pbLoadPct || 0);
+  const next = Math.max(prev, n);
+  panel.dataset.pbLoadPct = String(next);
+  el.dataset.pbPct = String(next);
+  el.setAttribute('aria-valuenow', String(next));
+  el.hidden = false;
+  el.classList.remove('is-done');
+  const fill = el.querySelector('.pb-boot-bar-fill');
+  if (fill) fill.style.width = next + '%';
+  const pctEl = el.querySelector('.pb-boot-pct');
+  if (pctEl) pctEl.textContent = next + '%';
+  if (label){
+    const p = el.querySelector('.pb-boot-label');
+    if (p) p.textContent = label;
+  }
+}
+function startHqOptimisticProgress(panel){
+  const id = panel.id || 'panel';
+  if (hqProgressTimers[id]) clearInterval(hqProgressTimers[id]);
+  hqProgressTimers[id] = setInterval(function(){
+    if (panel.hidden) return;
+    const cur = Number(panel.dataset.pbLoadPct || 0);
+    if (cur >= 90) return;
+    /* Ease toward 90% while waiting for embed progress / ready. */
+    const step = Math.max(0.6, (90 - cur) * 0.07);
+    setHqPanelProgress(panel, cur + step);
+  }, 120);
+}
+function showHqPanelLoader(panel, label, pct){
   if (!panel) return;
   let el = panel.querySelector(':scope > .pb-boot-loader');
   if (!el){
     el = document.createElement('div');
     el.className = 'pb-boot-loader pb-panel-loader';
-    el.setAttribute('role', 'status');
+    el.setAttribute('role', 'progressbar');
     el.setAttribute('aria-live', 'polite');
     el.innerHTML = '<div class="pb-boot-mark" aria-hidden="true">PB</div>'
-      + '<p class="pb-boot-label"></p>';
+      + '<p class="pb-boot-label"></p>'
+      + '<div class="pb-boot-bar" aria-hidden="true"><div class="pb-boot-bar-fill"></div></div>'
+      + '<p class="pb-boot-pct">0%</p>';
     panel.appendChild(el);
   }
+  ensureHqLoaderDom(el);
+  panel.dataset.pbLoadPct = '0';
+  el.dataset.pbPct = '0';
   const p = el.querySelector('.pb-boot-label');
   if (p) p.textContent = label || 'Loading…';
   el.hidden = false;
   el.classList.remove('is-done');
+  setHqPanelProgress(panel, pct != null ? pct : 0, label);
+  startHqOptimisticProgress(panel);
   const id = panel.id || 'panel';
   if (hqLoaderTimers[id]) clearTimeout(hqLoaderTimers[id]);
   hqLoaderTimers[id] = setTimeout(function(){
@@ -2506,26 +2592,59 @@ function hideHqPanelLoader(panel){
     clearTimeout(hqLoaderTimers[id]);
     delete hqLoaderTimers[id];
   }
+  if (hqProgressTimers[id]){
+    clearInterval(hqProgressTimers[id]);
+    delete hqProgressTimers[id];
+  }
+  setHqPanelProgress(panel, 100);
   const el = panel.querySelector(':scope > .pb-boot-loader');
   if (!el) return;
-  el.classList.add('is-done');
-  el.hidden = true;
+  setTimeout(function(){
+    el.classList.add('is-done');
+    el.hidden = true;
+  }, 140);
 }
-window.addEventListener('message', function(ev){
-  const data = ev && ev.data;
-  if (!data || data.type !== 'pb-ready') return;
+function hqPanelForFrameSource(sourceWin){
+  let found = null;
   Object.keys(HQ_NAV).forEach(g => {
     Object.keys(HQ_NAV[g].tabs).forEach(t => {
       const conf = HQ_NAV[g].tabs[t];
-      if (!conf.frame) return;
+      if (!conf.frame || found) return;
       const frame = document.getElementById(conf.frame);
-      if (!frame || !ev.source || frame.contentWindow !== ev.source) return;
-      hqFrameReady[conf.frame] = true;
-      const panel = document.getElementById(conf.panel);
-      if (panel && !panel.hidden) hideHqPanelLoader(panel);
+      if (frame && sourceWin && frame.contentWindow === sourceWin){
+        found = {conf, panel: document.getElementById(conf.panel)};
+      }
     });
   });
+  return found;
+}
+window.addEventListener('message', function(ev){
+  const data = ev && ev.data;
+  if (!data || (data.type !== 'pb-ready' && data.type !== 'pb-progress')) return;
+  const hit = hqPanelForFrameSource(ev.source);
+  if (!hit || !hit.panel) return;
+  if (data.type === 'pb-progress'){
+    const label = data.detail && data.detail.label ? data.detail.label : null;
+    setHqPanelProgress(hit.panel, data.pct, label);
+    return;
+  }
+  hqFrameReady[hit.conf.frame] = true;
+  if (!hit.panel.hidden) hideHqPanelLoader(hit.panel);
 });
+
+function flashNavButton(btn){
+  if (!btn) return;
+  btn.classList.add('is-armed');
+  btn.classList.remove('is-flash');
+  void btn.offsetWidth;
+  btn.classList.add('is-flash');
+  if (btn._hqFlashTimer) clearTimeout(btn._hqFlashTimer);
+  btn._hqFlashTimer = setTimeout(function(){
+    btn.classList.remove('is-flash');
+    /* Keep armed until active state takes over on the chosen tab. */
+    if (!btn.classList.contains('active')) btn.classList.remove('is-armed');
+  }, 420);
+}
 
 /* Stamp iframe URLs so Refresh / nocache also busts nested script caches. */
 function hqCacheToken(){
@@ -2548,9 +2667,11 @@ if (charterNav && !charterNav.hidden){
   });
 }
 document.querySelectorAll('.nav-group').forEach(btn => {
+  btn.addEventListener('pointerdown', () => flashNavButton(btn));
   btn.addEventListener('click', () => setHqGroup(btn.dataset.group));
 });
 document.querySelectorAll('.nav-sub').forEach(btn => {
+  btn.addEventListener('pointerdown', () => flashNavButton(btn));
   btn.addEventListener('click', () => setMainTab(btn.dataset.tab));
 });
 

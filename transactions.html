@@ -112,9 +112,11 @@
 </head>
 <body>
 <link rel="stylesheet" href="hq-loader.css">
-<div class="pb-boot-loader" id="pbBootLoader" role="status" aria-live="polite">
+<div class="pb-boot-loader" id="pbBootLoader" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
   <div class="pb-boot-mark" aria-hidden="true">PB</div>
   <p class="pb-boot-label">Loading trades…</p>
+  <div class="pb-boot-bar" aria-hidden="true"><div class="pb-boot-bar-fill"></div></div>
+  <p class="pb-boot-pct">0%</p>
 </div>
 <script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
@@ -163,15 +165,22 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-grades';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-progress';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js','transactions.js'];
+  function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
+  if (window.PatioBoysLoader && typeof PatioBoysLoader.loadScripts === 'function'){
+    PatioBoysLoader.loadScripts(files, {
+      version: v,
+      label: 'Loading trades…',
+      startPct: 8,
+      endPct: 45
+    }).then(ready);
+    return;
+  }
   var i = 0;
   function next(){
-    if (i >= files.length){
-      window.dispatchEvent(new Event('pb-deps-ready'));
-      return;
-    }
+    if (i >= files.length){ ready(); return; }
     var s = document.createElement('script');
     s.src = files[i++] + '?v=' + encodeURIComponent(v);
     s.onload = function(){ setTimeout(next, 0); };
@@ -313,7 +322,20 @@ async function boot(){
   try {
     const pack = await PatioBoysTransactions.compute(LEAGUE_ID, {
       tradesOnly: true,
-      onProgress: msg => { status.textContent = msg; }
+      onProgress: msg => {
+        status.textContent = msg;
+        if (window.PatioBoysLoader){
+          /* Map compute stages into the mid/late progress band. */
+          const m = String(msg || '').toLowerCase();
+          let pct = 55;
+          if (m.indexOf('walk') >= 0 || m.indexOf('season') >= 0) pct = 52;
+          else if (m.indexOf('player') >= 0) pct = 58;
+          else if (m.indexOf('fetch') >= 0 || m.indexOf('trade') >= 0) pct = 66;
+          else if (m.indexOf('lock') >= 0 || m.indexOf('value') >= 0) pct = 74;
+          else if (m.indexOf('grad') >= 0) pct = 86;
+          PatioBoysLoader.reportProgress(pct, {label: msg});
+        }
+      }
     });
     state.pack = pack;
     const seasonSel = document.getElementById('seasonFilter');

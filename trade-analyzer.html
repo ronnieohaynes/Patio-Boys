@@ -322,9 +322,11 @@
 </head>
 <body>
 <link rel="stylesheet" href="hq-loader.css">
-<div class="pb-boot-loader" id="pbBootLoader" role="status" aria-live="polite">
+<div class="pb-boot-loader" id="pbBootLoader" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
   <div class="pb-boot-mark" aria-hidden="true">PB</div>
   <p class="pb-boot-label">Loading trade analyzer…</p>
+  <div class="pb-boot-bar" aria-hidden="true"><div class="pb-boot-bar-fill"></div></div>
+  <p class="pb-boot-pct">0%</p>
 </div>
 <script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
@@ -413,15 +415,22 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-uiresp2';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-progress';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
+  function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
+  if (window.PatioBoysLoader && typeof PatioBoysLoader.loadScripts === 'function'){
+    PatioBoysLoader.loadScripts(files, {
+      version: v,
+      label: 'Loading trade analyzer…',
+      startPct: 8,
+      endPct: 45
+    }).then(ready);
+    return;
+  }
   var i = 0;
   function next(){
-    if (i >= files.length){
-      window.dispatchEvent(new Event('pb-deps-ready'));
-      return;
-    }
+    if (i >= files.length){ ready(); return; }
     var s = document.createElement('script');
     s.src = files[i++] + '?v=' + encodeURIComponent(v);
     s.onload = function(){ setTimeout(next, 0); };
@@ -2139,6 +2148,9 @@ async function load(){
       : null;
 
     status.textContent = 'Building Lock OVR + Trade stars from smash samples\u2026';
+    if (window.PatioBoysLoader){
+      PatioBoysLoader.reportProgress(52, {label: 'Building Lock OVR + Trade ★…'});
+    }
     const projMaps = buildConsensusProjMaps(scoring);
     const projError = projMaps.meta.count ? null
       : 'nba-proj-consensus.js missing or empty — run build-proj-consensus.py';
@@ -2231,6 +2243,9 @@ async function load(){
     });
 
     await yieldToMain();
+    if (window.PatioBoysLoader){
+      PatioBoysLoader.reportProgress(82, {label: 'Readying trade boards…'});
+    }
 
     const selA = document.getElementById('teamA');
     const selB = document.getElementById('teamB');
