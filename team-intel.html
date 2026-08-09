@@ -543,7 +543,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-tabs';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   var i = 0;
@@ -3183,13 +3183,23 @@ async function loadAwards(){
     });
   });
 
+  let signaledReady = false;
+  function signalIntelReady(){
+    if (signaledReady) return;
+    signaledReady = true;
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'team-intel'});
+  }
+
   try {
     await loadCore();
     setLoadNote('Loaded ' + state.teams.length + ' franchises from "' + (state.league.name || 'Sleeper league') + '" · season ' + state.league.season + '. Pulling stats, players, and trades…');
     renderNav();
     renderTeam();
+    /* Clear HQ overlay after first team paint — keep filling in behind. */
+    signalIntelReady();
   } catch (e){
     setLoadNote('Could not load live league data: ' + e.message, true);
+    signalIntelReady();
     return;
   }
 
@@ -3251,7 +3261,7 @@ async function loadAwards(){
   renderTeam();
   setLoadNote(null);
   } finally {
-    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'team-intel'});
+    signalIntelReady();
   }
 })();
 }); // pb-deps-ready

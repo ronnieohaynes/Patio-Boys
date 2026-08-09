@@ -137,7 +137,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-history';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-tabs';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js','lock-in-dist.js'];
   var i = 0;
@@ -394,21 +394,29 @@ async function loadAccolades(){
   }
 }
 
+function runWhenIdle(fn, timeoutMs){
+  if (window.PatioBoysShare && typeof PatioBoysShare.runWhenIdle === 'function'){
+    PatioBoysShare.runWhenIdle(fn, timeoutMs);
+    return;
+  }
+  setTimeout(fn, 120);
+}
+
 (async()=>{
   try {
     if (window.PatioBoysLoader) PatioBoysLoader.setLabel(document.body, 'Loading league status…');
     const currentData = await loadCurrent();
-    /* Standings are on screen — clear HQ overlay before ratings / accolades. */
+    /* Standings are on screen — clear HQ overlay. Heavy ratings/accolades wait for
+       idle so tab clicks on the parent HQ shell stay responsive. */
     if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'league-status'});
-    if (window.PatioBoysShare && PatioBoysShare.fetchPlayersNba){
-      PatioBoysShare.fetchPlayersNba().catch(function(){});
-    }
-    Promise.all([
-      loadRatings(currentData),
-      loadAccolades()
-    ]).catch(function(err){
-      console.warn('League Status secondary load failed.', err);
-    });
+    runWhenIdle(function(){
+      Promise.resolve()
+        .then(function(){ return loadRatings(currentData); })
+        .then(function(){ return loadAccolades(); })
+        .catch(function(err){
+          console.warn('League Status secondary load failed.', err);
+        });
+    }, 2000);
   } catch (e) {
     if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'league-status', error: true});
   }
