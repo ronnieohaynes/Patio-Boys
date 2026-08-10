@@ -456,6 +456,8 @@
   .trade-row .sent{color:var(--coral)}
   .trade-row strong{color:var(--ink);font-weight:600}
 
+  /* HQ League menu owns team tabs — hide the in-page selector when embedded. */
+  body.embed .team-nav{display:none}
   body.embed .wrap{max-width:none;padding:0 12px 24px}
   body.embed .hero{margin-top:12px;padding:14px 16px}
   body.embed .hstat{padding:10px 18px;min-width:104px}
@@ -545,7 +547,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260810-coach-taxi';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260810-team-tabs';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -630,6 +632,7 @@ const state = {
   teams: [],            // sorted by standings
   teamsByKey: {},
   selected: null,
+  pendingTeam: null,
   playerDb: null,
   ceilings: null,       // pid -> per-game ceiling (mean + 1σ of game samples)
   lockInByPid: null,    // pid -> LockInDist playerDist
@@ -734,7 +737,12 @@ async function loadCore(){
   state.teams = buildTeams(users, rosters);
   state.teamsByKey = {};
   state.teams.forEach(t => { state.teamsByKey[t.key] = t; });
-  if (!state.selected || !state.teamsByKey[state.selected]) state.selected = state.teams[0] && state.teams[0].key;
+  const want = state.pendingTeam
+    || new URLSearchParams(location.search).get('team')
+    || state.selected;
+  if (!selectTeamByKey(want)){
+    state.selected = state.teams[0] && state.teams[0].key;
+  }
 }
 
 /* ---------- previous seasons (history + trade roster maps) ---------- */
@@ -1125,8 +1133,39 @@ function awardBadgesHtml(key){
   }).join('');
 }
 
+function resolveTeamKey(raw){
+  if (!raw) return null;
+  if (state.teamsByKey[raw]) return raw;
+  const norm = normalizeTeamName(raw);
+  const hit = (state.teams || []).find(t =>
+    normalizeTeamName(t.key) === norm
+    || normalizeTeamName(t.displayName) === norm
+    || normalizeTeamName(t.manager) === norm
+  );
+  return hit ? hit.key : null;
+}
+
+function selectTeamByKey(raw){
+  const key = resolveTeamKey(raw);
+  if (!key){
+    if (raw) state.pendingTeam = raw;
+    return false;
+  }
+  state.pendingTeam = null;
+  if (state.selected === key){
+    if (!document.body.classList.contains('embed')) renderNav();
+    return true;
+  }
+  state.selected = key;
+  if (!document.body.classList.contains('embed')) renderNav();
+  renderTeam();
+  return true;
+}
+
 function renderNav(){
   const nav = document.getElementById('teamNav');
+  if (!nav) return;
+  /* Team name tabs only — accolades live on the hero, not the selector. */
   nav.innerHTML = '';
   state.teams.forEach(t => {
     const btn = document.createElement('button');
@@ -1134,18 +1173,18 @@ function renderNav(){
     btn.className = 'team-chip' + (t.key === state.selected ? ' active' : '');
     btn.style.setProperty('--chip-color', t.color);
     btn.setAttribute('aria-pressed', String(t.key === state.selected));
-    const badges = awardBadgesHtml(t.key);
     btn.innerHTML = '<span class="dot" style="background:' + t.color + '"></span>'
-      + escapeHtml(t.displayName)
-      + (badges ? '<span class="chip-awards">' + badges + '</span>' : '');
-    btn.addEventListener('click', () => {
-      state.selected = t.key;
-      renderNav();
-      renderTeam();
-    });
+      + escapeHtml(t.displayName);
+    btn.addEventListener('click', () => selectTeamByKey(t.key));
     nav.appendChild(btn);
   });
 }
+
+window.addEventListener('message', function(ev){
+  const data = ev && ev.data;
+  if (!data || data.type !== 'patio-boys-select-team') return;
+  selectTeamByKey(data.team);
+});
 
 function renderLineup(t){
   const body = document.getElementById('lineupBody');
