@@ -338,8 +338,49 @@
     return 0;
   }
 
-  /* Projected points are always primary. Filling legal slots and keeping
-     stronger players out of broad utility slots are tie-breakers only. */
+  /* How many CORE tags a player holds (PG-only = 1; PG/SG = 2). */
+  function corePosCount(poss){
+    let n = 0;
+    CORE.forEach(c => { if (poss && poss.includes(c)) n++; });
+    return n;
+  }
+
+  function isMonoEligible(poss){
+    return corePosCount(poss) === 1;
+  }
+
+  /*
+   * Flex preservation (weekly lock-in style):
+   *   • Mono-eligible (LaMelo = PG only) → prefer their CORE slot
+   *   • Multi-eligible (Reaves = PG/SG) → prefer G / F / UTIL
+   * So a locked great PG game doesn't block a later multi-pos smash from
+   * landing in the semi-flex. Preference only — never overrides FP total.
+   */
+  function slotFitBonus(poss, slot){
+    slot = String(slot || '').toUpperCase();
+    const mono = isMonoEligible(poss);
+    const isCore = CORE.includes(slot);
+    const isSemi = slot === 'G' || slot === 'F';
+    if (mono){
+      if (isCore && poss && poss.includes(slot)) return 4;
+      if (isSemi) return 1;
+      return 0;
+    }
+    if (slot === 'UTIL' || slot === 'UT') return 4;
+    if (isSemi) return 3;
+    if (isCore) return 0;
+    return 1;
+  }
+
+  function assignPreference(value, poss, slot, slotTierValue){
+    const v = Number(value) || 0;
+    const tier = slotTierValue != null ? Number(slotTierValue) : slotTier(slot);
+    /* Fit dominates among equal-FP assignments; mild tier × value still breaks leftovers. */
+    return slotFitBonus(poss, slot) * 1000 + v * tier;
+  }
+
+  /* Projected points are always primary. Filling legal slots, then flex
+     preservation (mono→CORE, multi→G/F/UTIL), are tie-breakers only. */
   function better(score, filled, preference, oldScore, oldFilled, oldPreference){
     if (score > oldScore + EPS) return true;
     if (oldScore > score + EPS) return false;
@@ -355,7 +396,9 @@
 
   /* Max-value assignment of players to slots (each player fills <=1 slot,
      each slot holds <=1 player) via DP over the slot bitmask. */
-  function assignmentValue(recs, slotCount, forbidBit){
+  function assignmentValue(recs, slots, forbidBit){
+    const slotCount = slots.length;
+    if (slotCount > 12) return {score:0, filled:0, preference:0};
     const size = 1 << slotCount;
     let scores = new Float64Array(size).fill(-1);
     let filled = new Int16Array(size).fill(-1);
@@ -376,9 +419,10 @@
           const bit = avail & -avail;
           const nm = mask | bit;
           const slotIndex = Math.round(Math.log2(bit));
+          const slot = slots[slotIndex];
           const score = scores[mask] + r.v;
           const fill = filled[mask] + 1;
-          const pref = preference[mask] + r.v * r.tiers[slotIndex];
+          const pref = preference[mask] + assignPreference(r.v, r.poss, slot);
           if (better(score, fill, pref, nextScores[nm], nextFilled[nm], nextPreference[nm])){
             nextScores[nm] = score;
             nextFilled[nm] = fill;
@@ -403,6 +447,16 @@
 
   function optimize(players, slots){
     const slotCount = slots.length;
+    /* Bitmask DP is O(players × 2^slots). Cap protects HQ from pathological
+       league configs that would freeze the tab (the old flex hang risk). */
+    if (slotCount > 12){
+      console.warn('TeamNeedsModel.optimize: refusing ' + slotCount + ' slots (max 12).');
+      return {
+        slots, total:0, fills:new Array(slotCount).fill(null),
+        withoutSlot:slots.map(() => ({score:0, filled:0, preference:0})),
+        playerCount:0, filledCount:0, preferenceScore:0
+      };
+    }
     const tiers = slots.map(slotTier);
     const recs = (players || []).filter(Boolean).map((p, inputIndex) => {
       const poss = positions(p.positions || p.pos);
@@ -442,9 +496,10 @@
           const bit = avail & -avail;
           const nm = mask | bit;
           const slotIndex = Math.round(Math.log2(bit));
+          const slot = slots[slotIndex];
           const score = scores[mask] + r.v;
           const fill = filled[mask] + 1;
-          const pref = preference[mask] + r.v * tiers[slotIndex];
+          const pref = preference[mask] + assignPreference(r.v, r.poss, slot);
           if (better(score, fill, pref, nextScores[nm], nextFilled[nm], nextPreference[nm])){
             nextScores[nm] = score;
             nextFilled[nm] = fill;
@@ -489,11 +544,12 @@
         const bit = avail & -avail;
         const prevMask = mask ^ bit;
         const slotIndex = Math.round(Math.log2(bit));
+        const slot = slots[slotIndex];
         if (scoreLevels[i - 1][prevMask] >= 0
           && sameState(
             scoreLevels[i - 1][prevMask] + r.v,
             fillLevels[i - 1][prevMask] + 1,
-            preferenceLevels[i - 1][prevMask] + r.v * tiers[slotIndex],
+            preferenceLevels[i - 1][prevMask] + assignPreference(r.v, r.poss, slot),
             curScore, curFilled, curPreference
           )){
           fills[slotIndex] = {slot:slots[slotIndex], slotIndex, player:r.p, value:r.v, hasMetric:r.hasMetric};
@@ -505,7 +561,7 @@
     }
 
     // Optimal roster-only value with each slot individually removed.
-    const withoutSlot = slots.map((_, i) => assignmentValue(use, slotCount, 1 << i));
+    const withoutSlot = slots.map((_, i) => assignmentValue(use, slots, 1 << i));
 
     return {
       slots, total, fills, withoutSlot, playerCount:recs.length,
@@ -534,7 +590,7 @@
       const filled = 1 + without.filled;
       const displaced = opt.fills[i] ? opt.fills[i].player : null;
       const ageBonus = youthUpgradeBonus(candidate, displaced);
-      const preference = v * slotTier(slot) + without.preference + ageBonus;
+      const preference = assignPreference(v, poss, slot) + without.preference + ageBonus;
       if (better(score, filled, preference, best.score, best.filled, best.preference)){
         best = {score, filled, preference, ageBonus, slotIndex:i};
       }
@@ -842,7 +898,8 @@
     recentGoodContract, contractSalaryMult, contractProfile, contractTradeMult,
     contractTerms, formatContractMillions, formatContractTerms,
     contractsSnapshot,
-    positions, eligibleForSlot, slotTier, optimize, candidateGain,
+    positions, eligibleForSlot, slotTier, corePosCount, isMonoEligible,
+    slotFitBonus, assignPreference, optimize, candidateGain,
     ageBand, agePressure, youthUpgradeBonus, AGE_BAND_ORDER
   };
 })(window);
