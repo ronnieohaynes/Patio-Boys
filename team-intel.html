@@ -401,6 +401,33 @@
   }
 
   #depthPanel{margin-top:16px}
+  .depth-actions{
+    display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-left:auto;
+  }
+  .depth-actions button{
+    margin:0;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
+    letter-spacing:.06em;text-transform:uppercase;padding:5px 9px;border-radius:5px;
+    border:1px solid var(--hairline);background:var(--surface);color:var(--ink-dim);
+    cursor:pointer;
+  }
+  .depth-actions button:hover{color:var(--ink);border-color:var(--ink-dim)}
+  .depth-actions button.primary{
+    color:var(--gold);border-color:color-mix(in srgb, var(--gold) 55%, var(--hairline));
+    background:color-mix(in srgb, var(--gold) 12%, var(--surface));
+  }
+  .depth-actions .saved-note{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--gold);
+    letter-spacing:.04em;text-transform:uppercase;
+  }
+  table.depth select.slot-pick{
+    width:100%;max-width:100%;box-sizing:border-box;
+    font:inherit;font-size:12px;color:var(--ink);background:var(--surface-2);
+    border:1px solid var(--hairline);border-radius:5px;padding:4px 6px;
+  }
+  table.depth .slot-manual{
+    font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--gold);
+    letter-spacing:.06em;text-transform:uppercase;margin-left:6px;
+  }
   table.depth{width:100%;border-collapse:collapse;font-size:12.5px}
   table.depth th{
     font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.07em;
@@ -513,7 +540,17 @@
     </div>
 
     <div class="panel" id="depthPanel">
-      <div class="panel-head"><h2>Depth Chart</h2><span class="tag" id="depthTag"></span></div>
+      <div class="panel-head">
+        <h2>Depth Chart</h2>
+        <span class="tag" id="depthTag"></span>
+        <div class="depth-actions" id="depthActions" hidden>
+          <span class="saved-note" id="depthSavedNote" hidden>Saved</span>
+          <button type="button" id="depthEditBtn">Edit lineup</button>
+          <button type="button" id="depthSaveBtn" class="primary" hidden>Save</button>
+          <button type="button" id="depthCancelBtn" hidden>Cancel</button>
+          <button type="button" id="depthResetBtn" hidden>Reset auto</button>
+        </div>
+      </div>
       <div class="panel-body" id="depthBody"><p class="pending">Building depth chart&hellip;</p></div>
     </div>
 
@@ -547,7 +584,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260810-flex';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260810-lineup-edit';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -576,6 +613,43 @@
 window.addEventListener('pb-deps-ready', function pbIntelMain(){
 window.removeEventListener('pb-deps-ready', pbIntelMain);
 const LEAGUE_ID = '1350649177381552128';
+const LINEUP_LS_KEY = 'patioBoysLineups_' + LEAGUE_ID + '_v1';
+
+function loadSavedLineups(){
+  try {
+    const raw = localStorage.getItem(LINEUP_LS_KEY);
+    if (!raw) return {};
+    const data = JSON.parse(raw);
+    return (data && data.teams && typeof data.teams === 'object') ? data.teams : {};
+  } catch (e){
+    console.warn('Team Intel: could not load saved lineups.', e);
+    return {};
+  }
+}
+function persistSavedLineups(){
+  try {
+    localStorage.setItem(LINEUP_LS_KEY, JSON.stringify({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      teams: state.savedLineups || {}
+    }));
+  } catch (e){
+    console.warn('Team Intel: could not save lineups.', e);
+  }
+}
+function savedLineupForTeam(team){
+  if (!team) return null;
+  const byRoster = state.savedLineups && state.savedLineups[String(team.rosterId)];
+  if (byRoster && byRoster.slots) return byRoster;
+  return null;
+}
+function lineupDraftFromPack(pack){
+  const draft = {};
+  (pack.rows || []).forEach(row => {
+    draft[row.key] = row.starter ? String(row.starter.id) : null;
+  });
+  return draft;
+}
 const TWO_K = window.TWO_K_SNAPSHOT || {ratings:[]};
 function normalizePlayerName(name){
   return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -657,6 +731,9 @@ const state = {
   freeAgentsError: null,
   movesByKey: {},       // franchise key -> {fa:[], cuts:...}
   depthByKey: {},       // franchise key -> depth chart pack
+  lineupEdit: false,    // depth chart edit mode
+  lineupDraft: null,    // {slotKey: playerId|null} while editing
+  savedLineups: {},     // rosterId -> {slots:{slotKey:pid}, updatedAt}
   draftPicksByRosterId: null, // rosterId -> valued picks
   draftPicksRawByRosterId: null,
   draftPickMeta: null,
@@ -1156,6 +1233,10 @@ function selectTeamByKey(raw){
     if (!document.body.classList.contains('embed')) renderNav();
     return true;
   }
+  /* Drop in-progress edits when switching franchises. */
+  state.lineupEdit = false;
+  state.lineupEditRosterId = null;
+  state.lineupDraft = null;
   state.selected = key;
   if (!document.body.classList.contains('embed')) renderNav();
   renderTeam();
@@ -2033,7 +2114,28 @@ function buildDepthChart(team){
   });
 
   const claimed = new Set();
-  const order = rows.slice().sort((a, b) => {
+  const recordsById = {};
+  records.forEach(r => { recordsById[String(r.id)] = r; });
+
+  /* Apply manually saved 1st-string assignments first (eligible + still rostered). */
+  const saved = savedLineupForTeam(team);
+  const manualKeys = new Set();
+  if (saved && saved.slots && typeof saved.slots === 'object'){
+    rows.forEach(row => {
+      const pid = saved.slots[row.key];
+      if (pid == null || pid === '') return;
+      const rec = recordsById[String(pid)];
+      if (!rec || claimed.has(String(rec.id))) return;
+      if (!TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(rec.positions))) return;
+      row.starter = rec;
+      row.manual = true;
+      claimed.add(String(rec.id));
+      manualKeys.add(row.key);
+    });
+  }
+
+  /* Auto-fill remaining empty starter slots by hold value. */
+  const order = rows.filter(r => !r.starter).slice().sort((a, b) => {
     const ca = records.filter(r =>
       !claimed.has(String(r.id))
       && TeamNeedsModel.eligibleForSlot(a.slot, TeamNeedsModel.positions(r.positions))
@@ -2054,25 +2156,45 @@ function buildDepthChart(team){
         !claimed.has(String(r.id))
         && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
       )
-      .sort((a, b) => {
-        /* Same Lock rank: mono-eligible prefer CORE; multi prefer G/F/UTIL. */
-        const possA = TeamNeedsModel.positions(a.positions);
-        const possB = TeamNeedsModel.positions(b.positions);
-        const fitA = TeamNeedsModel.slotFitBonus
-          ? TeamNeedsModel.slotFitBonus(possA, row.slot)
-          : 0;
-        const fitB = TeamNeedsModel.slotFitBonus
-          ? TeamNeedsModel.slotFitBonus(possB, row.slot)
-          : 0;
-        return b.rankVal - a.rankVal
-          || fitB - fitA
-          || String(a.name).localeCompare(String(b.name));
-      })[0];
+      .sort((a, b) => b.rankVal - a.rankVal
+        || String(a.name).localeCompare(String(b.name)))[0];
     if (!pick) return;
     row.starter = pick;
+    row.manual = false;
     claimed.add(String(pick.id));
   });
 
+  /* While editing, overlay the in-progress draft on top of auto/saved. */
+  if (state.lineupEdit && state.lineupDraft && String(team.rosterId) === String(state.lineupEditRosterId)){
+    const used = new Set();
+    rows.forEach(row => {
+      const pid = state.lineupDraft[row.key];
+      if (pid == null || pid === ''){
+        row.starter = null;
+        row.manual = true;
+        return;
+      }
+      const rec = recordsById[String(pid)];
+      if (!rec || used.has(String(rec.id))){
+        row.starter = null;
+        row.manual = true;
+        return;
+      }
+      if (!TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(rec.positions))){
+        row.starter = null;
+        row.manual = true;
+        return;
+      }
+      row.starter = rec;
+      row.manual = true;
+      used.add(String(rec.id));
+    });
+    /* Rebuild claimed for Top 8 / taxi from draft starters. */
+    claimed.clear();
+    rows.forEach(row => {
+      if (row.starter) claimed.add(String(row.starter.id));
+    });
+  }
   /* Top 8: next best remaining by Lock OVR only (overall, not position-tied). */
   function top8Rank(rec){
     if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr);
@@ -2133,8 +2255,83 @@ function buildDepthChart(team){
     records,
     slots,
     filled: claimed.size,
-    roster: records.length
+    roster: records.length,
+    hasSaved: !!(saved && saved.slots && Object.keys(saved.slots).length),
+    manualCount: rows.filter(r => r.manual && r.starter).length
   };
+}
+
+function depthStarterCellHtml(row, pack, editing){
+  if (!editing){
+    if (!row.starter) return '<td class="slot-empty">—</td>';
+    const stars = (window.LockInDist && LockInDist.formatStarsHtml && row.starter.tradeStars != null)
+      ? LockInDist.formatStarsHtml(row.starter.tradeStars, {className: 'trade-stars'})
+      : '';
+    const ovr = row.starter.lockOvr != null
+      ? '<span class="slot-ovr">' + Math.round(row.starter.lockOvr) + '</span>' + stars
+      : '';
+    const proj = row.starter.metric != null && Number.isFinite(Number(row.starter.metric))
+      ? '<span>' + Number(row.starter.metric).toFixed(1) + ' proj</span>'
+      : '';
+    const meta = [ovr, proj].filter(Boolean).join('<span style="opacity:.35"> · </span>');
+    return '<td>'
+      + '<span class="slot-name">' + escapeHtml(row.starter.name) + '</span>'
+      + (row.manual ? '<span class="slot-manual">saved</span>' : '')
+      + (meta ? '<span class="slot-meta">' + meta + '</span>' : '')
+      + '</td>';
+  }
+
+  const selected = row.starter ? String(row.starter.id) : '';
+  const usedElsewhere = new Set();
+  (pack.rows || []).forEach(r => {
+    if (r.key === row.key || !r.starter) return;
+    usedElsewhere.add(String(r.starter.id));
+  });
+  const options = (pack.records || [])
+    .filter(r =>
+      TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
+      && (!usedElsewhere.has(String(r.id)) || String(r.id) === selected)
+    )
+    .slice()
+    .sort((a, b) => (b.rankVal || 0) - (a.rankVal || 0)
+      || String(a.name).localeCompare(String(b.name)));
+
+  let html = '<td><select class="slot-pick" data-slot-key="' + escapeHtml(row.key) + '" aria-label="'
+    + escapeHtml(row.label) + ' starter">';
+  html += '<option value="">— empty —</option>';
+  options.forEach(r => {
+    const ovr = r.lockOvr != null ? (' · ' + Math.round(r.lockOvr)) : '';
+    html += '<option value="' + escapeHtml(String(r.id)) + '"'
+      + (String(r.id) === selected ? ' selected' : '') + '>'
+      + escapeHtml(r.name) + ovr
+      + '</option>';
+  });
+  html += '</select></td>';
+  return html;
+}
+
+function syncDepthActions(pack){
+  const actions = document.getElementById('depthActions');
+  const editBtn = document.getElementById('depthEditBtn');
+  const saveBtn = document.getElementById('depthSaveBtn');
+  const cancelBtn = document.getElementById('depthCancelBtn');
+  const resetBtn = document.getElementById('depthResetBtn');
+  const note = document.getElementById('depthSavedNote');
+  if (!actions) return;
+  if (!pack){
+    actions.hidden = true;
+    return;
+  }
+  actions.hidden = false;
+  const editing = !!state.lineupEdit;
+  if (editBtn) editBtn.hidden = editing;
+  if (saveBtn) saveBtn.hidden = !editing;
+  if (cancelBtn) cancelBtn.hidden = !editing;
+  if (resetBtn) resetBtn.hidden = editing || !pack.hasSaved;
+  if (note){
+    note.hidden = editing || !pack.hasSaved;
+    note.textContent = pack.hasSaved ? 'Saved lineup' : '';
+  }
 }
 
 function renderDepthChart(t){
@@ -2145,11 +2342,13 @@ function renderDepthChart(t){
   if (!state.playerDb){
     tag.textContent = '';
     body.innerHTML = '<p class="pending">Waiting on player database&hellip;</p>';
+    syncDepthActions(null);
     return;
   }
   if (!window.TeamNeedsModel || !state.league){
     tag.textContent = '';
     body.innerHTML = '<p class="pending">Depth model unavailable.</p>';
+    syncDepthActions(null);
     return;
   }
 
@@ -2159,19 +2358,25 @@ function renderDepthChart(t){
   if (!pack || !pack.roster){
     tag.textContent = '';
     body.innerHTML = '<p class="pending">No players on this roster.</p>';
+    syncDepthActions(null);
     return;
   }
   if (!pack.rows || !pack.rows.length){
     tag.textContent = '';
     body.innerHTML = '<p class="pending">No starting slots found for this league.</p>';
+    syncDepthActions(null);
     return;
   }
 
+  const editing = !!state.lineupEdit
+    && String(state.lineupEditRosterId) === String(t.rosterId);
   const top8N = (pack.top8 || []).length;
   const taxiFilled = (pack.taxi || []).length;
   tag.textContent = pack.slots.length + ' starters · Top '
     + top8N + '/' + (pack.top8Spots || DEPTH_TOP8)
     + ' · Taxi ' + taxiFilled + '/' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
+    + (pack.hasSaved && !editing ? ' · saved' : '')
+    + (editing ? ' · editing' : '')
     + ' · Lock OVR';
   const head = '<tr><th>Pos</th><th>1st string</th><th>Top 8</th><th>Taxi</th></tr>';
   const rowHtml = pack.rows.map((row, i) => {
@@ -2184,7 +2389,7 @@ function renderDepthChart(t){
       ? depthCellHtml(taxiPlayer, {taxi: true})
       : '<td class="slot-empty slot-taxi">—</td>';
     return '<tr><td class="pos">' + escapeHtml(row.label) + '</td>'
-      + depthCellHtml(row.starter)
+      + depthStarterCellHtml(row, pack, editing)
       + top8Cell
       + taxiCell
       + '</tr>';
@@ -2194,8 +2399,9 @@ function renderDepthChart(t){
   body.innerHTML = '<table class="depth"><thead>' + head + '</thead><tbody>' + rowHtml + '</tbody></table>'
     + '<p class="lineup-foot">Same ' + pack.slots.length + ' starting slots as Team Needs ('
     + escapeHtml(pack.slots.join(', '))
-    + '). <strong>1st string</strong> = legal starters by hold value (Lock OVR × situation path). '
-    + 'Mono-eligible players prefer their CORE slot; multi-eligible prefer G/F/UTIL so flex stays open. '
+    + '). <strong>1st string</strong> = legal starters by hold value (Lock OVR × situation path)'
+    + (pack.hasSaved ? ', or your saved lineup' : '')
+    + '. Use <strong>Edit lineup</strong> to place players yourself — changes save in this browser. '
     + '<strong>Top 8</strong> = the next ' + (pack.top8Spots || DEPTH_TOP8)
     + ' best remaining by <strong>Lock OVR</strong> (overall, not tied to Pos). '
     + '<strong>Taxi</strong> holds up to ' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
@@ -2204,6 +2410,98 @@ function renderDepthChart(t){
       ? (offN + ' player' + (offN === 1 ? '' : 's') + ' off the chart → ranked drop candidates in Roster Moves. ')
       : 'Full chart coverage — no off-chart drops. ')
     + 'Each player appears once.</p>';
+
+  syncDepthActions(pack);
+
+  if (editing){
+    body.querySelectorAll('select.slot-pick').forEach(sel => {
+      sel.addEventListener('change', () => {
+        if (!state.lineupDraft) state.lineupDraft = {};
+        const key = sel.getAttribute('data-slot-key');
+        const val = sel.value || null;
+        /* If this player is already in another slot, clear that slot (swap). */
+        if (val){
+          Object.keys(state.lineupDraft).forEach(k => {
+            if (k !== key && String(state.lineupDraft[k]) === String(val)){
+              state.lineupDraft[k] = null;
+            }
+          });
+        }
+        state.lineupDraft[key] = val;
+        renderDepthChart(t);
+      });
+    });
+  }
+}
+
+function beginLineupEdit(team){
+  if (!team) return;
+  state.lineupEdit = false;
+  state.lineupDraft = null;
+  const seed = buildDepthChart(team);
+  state.lineupEdit = true;
+  state.lineupEditRosterId = team.rosterId;
+  state.lineupDraft = lineupDraftFromPack(seed || {rows: []});
+  renderDepthChart(team);
+}
+function cancelLineupEdit(team){
+  state.lineupEdit = false;
+  state.lineupEditRosterId = null;
+  state.lineupDraft = null;
+  if (team) renderDepthChart(team);
+}
+function saveLineupEdit(team){
+  if (!team || !state.lineupDraft) return;
+  const slots = {};
+  Object.keys(state.lineupDraft).forEach(k => {
+    const pid = state.lineupDraft[k];
+    if (pid != null && pid !== '') slots[k] = String(pid);
+  });
+  state.savedLineups[String(team.rosterId)] = {
+    slots,
+    updatedAt: new Date().toISOString(),
+    teamKey: team.key,
+    displayName: team.displayName
+  };
+  persistSavedLineups();
+  state.lineupEdit = false;
+  state.lineupEditRosterId = null;
+  state.lineupDraft = null;
+  renderDepthChart(team);
+}
+function resetLineupAuto(team){
+  if (!team) return;
+  delete state.savedLineups[String(team.rosterId)];
+  persistSavedLineups();
+  state.lineupEdit = false;
+  state.lineupEditRosterId = null;
+  state.lineupDraft = null;
+  renderDepthChart(team);
+}
+
+function bindDepthActions(){
+  const editBtn = document.getElementById('depthEditBtn');
+  const saveBtn = document.getElementById('depthSaveBtn');
+  const cancelBtn = document.getElementById('depthCancelBtn');
+  const resetBtn = document.getElementById('depthResetBtn');
+  if (editBtn) editBtn.addEventListener('click', () => {
+    const t = state.teamsByKey[state.selected];
+    beginLineupEdit(t);
+  });
+  if (saveBtn) saveBtn.addEventListener('click', () => {
+    const t = state.teamsByKey[state.selected];
+    saveLineupEdit(t);
+  });
+  if (cancelBtn) cancelBtn.addEventListener('click', () => {
+    const t = state.teamsByKey[state.selected];
+    cancelLineupEdit(t);
+  });
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    const t = state.teamsByKey[state.selected];
+    if (t && window.confirm('Clear the saved lineup for ' + (t.displayName || 'this team') + ' and restore auto starters?')){
+      resetLineupAuto(t);
+    }
+  });
 }
 
 function needsPlayerRecord(pid){
@@ -3239,6 +3537,8 @@ async function loadAwards(){
 
 (async () => {
   try {
+  state.savedLineups = loadSavedLineups();
+  bindDepthActions();
   document.querySelectorAll('#dynastyPanel .view-toggle button[data-view]').forEach(btn => {
     btn.addEventListener('click', () => {
       const view = btn.getAttribute('data-view') === 'adv' ? 'adv' : 'basic';
