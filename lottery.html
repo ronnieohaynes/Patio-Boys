@@ -2423,13 +2423,13 @@ function setMainTab(tab){
     secondary.setAttribute('aria-label', HQ_NAV[group].label + ' panels');
   }
 
-  /* Paint active tab + panel swap first so the click feels instant. */
+  /* Exactly one menu + one tab highlighted. Clear arm/flash on everyone
+     else so pointerdown confirm never leaves a second gold button. */
   document.querySelectorAll('.nav-group').forEach(btn => {
     const on = btn.dataset.group === group;
     btn.classList.toggle('active', on);
     btn.setAttribute('aria-selected', String(on));
-    if (on) flashNavButton(btn);
-    else btn.classList.remove('is-armed');
+    if (!on) btn.classList.remove('is-armed', 'is-flash');
   });
 
   document.querySelectorAll('.nav-sub').forEach(btn => {
@@ -2438,9 +2438,13 @@ function setMainTab(tab){
     btn.hidden = !inGroup;
     btn.classList.toggle('active', on);
     btn.setAttribute('aria-selected', String(on));
-    if (on) flashNavButton(btn);
-    else if (!inGroup) btn.classList.remove('is-armed', 'is-flash');
+    if (!on) btn.classList.remove('is-armed', 'is-flash');
   });
+
+  const activeGroupBtn = document.querySelector('.nav-group[data-group="' + group + '"]');
+  const activeTabBtn = document.querySelector('.nav-sub[data-tab="' + tab + '"]');
+  flashNavButton(activeGroupBtn);
+  flashNavButton(activeTabBtn);
 
   Object.keys(HQ_NAV).forEach(g => {
     Object.keys(HQ_NAV[g].tabs).forEach(t => {
@@ -2634,6 +2638,12 @@ window.addEventListener('message', function(ev){
 
 function flashNavButton(btn){
   if (!btn) return;
+  const kind = btn.classList.contains('nav-group') ? 'nav-group' : 'nav-sub';
+  /* Disarm siblings first — only one menu and one tab may look selected. */
+  document.querySelectorAll('.' + kind).forEach(other => {
+    if (other === btn) return;
+    other.classList.remove('is-armed', 'is-flash');
+  });
   btn.classList.add('is-armed');
   btn.classList.remove('is-flash');
   void btn.offsetWidth;
@@ -2641,8 +2651,8 @@ function flashNavButton(btn){
   if (btn._hqFlashTimer) clearTimeout(btn._hqFlashTimer);
   btn._hqFlashTimer = setTimeout(function(){
     btn.classList.remove('is-flash');
-    /* Keep armed until active state takes over on the chosen tab. */
-    if (!btn.classList.contains('active')) btn.classList.remove('is-armed');
+    /* Drop arm polish once the flash ends; .active keeps the real selection. */
+    btn.classList.remove('is-armed');
   }, 420);
 }
 
