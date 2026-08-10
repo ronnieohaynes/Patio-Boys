@@ -83,7 +83,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260810-coach-taxi';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260810-goat-pf';
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
   if (window.PatioBoysLoader && typeof PatioBoysLoader.loadScripts === 'function'){
@@ -125,6 +125,7 @@ function buildStandingsRows(users, rosters){
     const teamName = (u.metadata && u.metadata.team_name) ? u.metadata.team_name : (u.display_name || 'Unknown');
     const s = r.settings || {};
     const wins = s.wins||0, losses = s.losses||0, ties = s.ties||0;
+    const gp = wins + losses + ties;
     const rawPf = (s.fpts||0) + (s.fpts_decimal||0)/100;
     const rawPa = (s.fpts_against||0) + (s.fpts_against_decimal||0)/100;
     return {
@@ -132,7 +133,8 @@ function buildStandingsRows(users, rosters){
       record: wins+'-'+losses+(ties?'-'+ties:''),
       pf: fmtPts(s),
       pa: s.fpts_against!=null ? s.fpts_against+(s.fpts_against_decimal?'.'+s.fpts_against_decimal:'') : '--',
-      rawPf, rawPa, wins, losses, ties,
+      rawPf, rawPa, wins, losses, ties, gp,
+      avgPf: gp > 0 ? rawPf / gp : null,
       rosterId: r.roster_id
     };
   }).sort((a,b) => b.wins-a.wins || b.rawPf-a.rawPf);
@@ -182,7 +184,7 @@ async function loadHistory(){
           if (!combined[key]){
             combined[key] = {
               teamName: row.teamName, manager: row.manager,
-              wins: 0, losses: 0, ties: 0, rawPf: 0, rawPa: 0, seasonsPlayed: 0
+              wins: 0, losses: 0, ties: 0, rawPf: 0, rawPa: 0, gp: 0, seasonsPlayed: 0
             };
           }
           combined[key].wins += row.wins;
@@ -190,6 +192,7 @@ async function loadHistory(){
           combined[key].ties += row.ties;
           combined[key].rawPf += row.rawPf;
           combined[key].rawPa += row.rawPa;
+          combined[key].gp += row.gp || (row.wins + row.losses + row.ties);
           combined[key].seasonsPlayed += 1;
           combined[key].teamName = row.teamName;
           combined[key].manager = row.manager;
@@ -201,13 +204,16 @@ async function loadHistory(){
       block.innerHTML = '<h3>Combined record, '
         + seasons.map(s => s.league.season).join(' + ') + '</h3>';
       const t = document.createElement('table');
-      t.innerHTML = '<thead><tr><th>Team</th><th>Manager</th><th>Combined Record</th><th>Total Pts For</th><th>Total Pts Against</th><th>Seasons</th></tr></thead>';
+      t.innerHTML = '<thead><tr><th>Team</th><th>Manager</th><th>Combined Record</th><th>Total Pts For</th><th>Avg Pts For</th><th>Total Pts Against</th><th>Seasons</th></tr></thead>';
       const tb = document.createElement('tbody');
       combinedRows.forEach(row => {
+        const avg = row.gp > 0 ? (row.rawPf / row.gp) : null;
         const tr = document.createElement('tr');
         tr.innerHTML = '<td>' + escapeHtml(row.teamName) + '</td><td>' + escapeHtml(row.manager)
           + '</td><td>' + row.wins + '-' + row.losses + (row.ties ? '-' + row.ties : '')
-          + '</td><td>' + row.rawPf.toFixed(1) + '</td><td>' + row.rawPa.toFixed(1)
+          + '</td><td>' + row.rawPf.toFixed(1)
+          + '</td><td>' + (avg != null ? avg.toFixed(1) : '\u2014')
+          + '</td><td>' + row.rawPa.toFixed(1)
           + '</td><td>' + row.seasonsPlayed + '</td>';
         tb.appendChild(tr);
       });
@@ -225,12 +231,13 @@ async function loadHistory(){
       block.innerHTML = '<h3>Season ' + escapeHtml(String(s.league.season))
         + ' (final standings, by record)</h3>';
       const t = document.createElement('table');
-      t.innerHTML = '<thead><tr><th>Team</th><th>Manager</th><th>Record</th><th>Pts For</th><th>Pts Against</th></tr></thead>';
+      t.innerHTML = '<thead><tr><th>Team</th><th>Manager</th><th>Record</th><th>Pts For</th><th>Avg Pts For</th><th>Pts Against</th></tr></thead>';
       const tb = document.createElement('tbody');
       s.rows.forEach(row => {
         const tr = document.createElement('tr');
         tr.innerHTML = '<td>' + escapeHtml(row.teamName) + '</td><td>' + escapeHtml(row.manager)
           + '</td><td>' + escapeHtml(row.record) + '</td><td>' + escapeHtml(row.pf)
+          + '</td><td>' + (row.avgPf != null ? row.avgPf.toFixed(1) : '\u2014')
           + '</td><td>' + escapeHtml(row.pa) + '</td>';
         tb.appendChild(tr);
       });

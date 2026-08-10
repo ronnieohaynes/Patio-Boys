@@ -43,11 +43,15 @@
      Good Season = NBA-style ~50-win bar: regular-season win% >= 61% (locks when season completes).
      Win Streak = any regular-season streak of WIN_STREAK_THRESHOLD+ (rare; pays once per streak).
      Wins score in integer bundles only (no per-win decimals): every 10 RS wins = 5 pts,
-     every 2 playoff wins = 3 pts. */
+     every 2 playoff wins = 3 pts. Career RS Points For: every 5000 PF = 3 pts.
+     Accolade lead bonus: +1 GOAT pt for leading (or tying the lead) in each accolade count,
+     plus +1 for leading career Avg PF (ties share). */
   const GOOD_SEASON_WIN_PCT = 0.610;
   const WIN_STREAK_THRESHOLD = 10;
   const RS_WIN_BUNDLE_SIZE = 10;
   const PLAYOFF_WIN_BUNDLE_SIZE = 2;
+  const PF_BUNDLE_SIZE = 5000;
+  const PPG_LEAD_MIN_GAMES = 10;
   const GOAT_POINTS = {
     champion: 10,
     mvp: 7,
@@ -56,10 +60,34 @@
     mip: 3,
     win: 5,           /* points per RS_WIN_BUNDLE_SIZE career regular-season wins */
     playoff_win: 3,   /* points per PLAYOFF_WIN_BUNDLE_SIZE career playoff wins */
+    pf: 3,            /* points per PF_BUNDLE_SIZE career regular-season Points For */
+    lead: 1,          /* per accolade (or Avg PF) you lead or tie for the lead in */
     runner_up: 5,
     third_place: 3,
     good_season: 3,
     win_streak: 3
+  };
+
+  /* Count-based accolades that pay a +1 lead bonus to whoever has the most. */
+  const GOAT_LEAD_COUNT_IDS = [
+    'champion', 'runner_up', 'third_place', 'playoff_win',
+    'mvp', 'coach', 'gm', 'mip',
+    'good_season', 'win_streak', 'win', 'pf'
+  ];
+  const GOAT_LEAD_LABELS = {
+    champion: 'Champion',
+    runner_up: 'Runner-up',
+    third_place: '3rd place',
+    playoff_win: 'Playoff wins',
+    mvp: 'MVP',
+    coach: 'Coach',
+    gm: 'GM',
+    mip: 'MIP',
+    good_season: 'Good Season',
+    win_streak: 'Win streak',
+    win: 'RS wins',
+    pf: 'Points For',
+    pf_avg: 'Avg PF'
   };
 
   function normalizeTeamName(name){
@@ -935,12 +963,17 @@
       awardPoints: 0,
       winPoints: 0,
       playoffWinPoints: 0,
+      pfPoints: 0,
+      leadPoints: 0,
       runnerUpPoints: 0,
       thirdPlacePoints: 0,
       goodSeasonPoints: 0,
       winStreakPoints: 0,
       seasonWins: 0,
       playoffWins: 0,
+      careerPf: 0,
+      careerGp: 0,
+      careerPpg: null,
       runnerUps: 0,
       thirdPlaces: 0,
       goodSeasons: 0,
@@ -949,6 +982,7 @@
       lineupEffWeeks: 0,
       lineupEfficiency: null,
       counts: {},
+      leads: [],
       hardware: [],
       rank: null
     };
@@ -968,6 +1002,8 @@
     const byKey = {};
     const winBundlePts = Number(GOAT_POINTS.win) || 0;
     const playoffBundlePts = Number(GOAT_POINTS.playoff_win) || 0;
+    const pfBundlePts = Number(GOAT_POINTS.pf) || 0;
+    const leadPts = Number(GOAT_POINTS.lead) || 0;
     const runnerPts = Number(GOAT_POINTS.runner_up) || 0;
     const thirdPts = Number(GOAT_POINTS.third_place) || 0;
     const goodPts = Number(GOAT_POINTS.good_season) || 0;
@@ -980,6 +1016,12 @@
         if (!row) return;
         const w = Number(r.wins) || 0;
         if (w > 0) row.seasonWins += w;
+        const gp = Number(r.gp) || gamesPlayed(r) || 0;
+        const pf = Number(r.pf);
+        if (Number.isFinite(pf) && pf > 0){
+          row.careerPf += pf;
+          if (gp > 0) row.careerGp += gp;
+        }
         /* Career lineup efficiency (display only — no GOAT points). */
         const eff = Number(r.coachEff);
         const effWeeks = Number(r.coachWeeks) || 0;
@@ -1098,11 +1140,14 @@
       });
     });
 
-    /* Career win bundles — integer only, no leftover fractional points.
+    /* Career win / PF bundles — integer only, no leftover fractional points.
        Lineup efficiency is tracked for the board only (no GOAT points). */
     Object.values(byKey).forEach(row => {
       if (row.lineupEffWeeks > 0){
         row.lineupEfficiency = row.lineupEffSum / row.lineupEffWeeks;
+      }
+      if (row.careerGp > 0){
+        row.careerPpg = row.careerPf / row.careerGp;
       }
       const rsBundles = Math.floor((Number(row.seasonWins) || 0) / RS_WIN_BUNDLE_SIZE);
       if (rsBundles > 0 && winBundlePts){
@@ -1138,7 +1183,73 @@
           value: poBundles * PLAYOFF_WIN_BUNDLE_SIZE
         });
       }
+      const pfBundles = Math.floor((Number(row.careerPf) || 0) / PF_BUNDLE_SIZE);
+      if (pfBundles > 0 && pfBundlePts){
+        const pts = pfBundles * pfBundlePts;
+        row.pfPoints = pts;
+        row.points += pts;
+        row.counts.pf = pfBundles;
+        row.hardware.push({
+          id: 'pf',
+          name: 'Career Points For bundles',
+          short: 'PF',
+          season: 'career',
+          yearLabel: 'Career',
+          seasonTag: 'career',
+          points: pts,
+          value: Math.floor(row.careerPf)
+        });
+      }
     });
+
+    /* +1 GOAT pt for leading (or tying) each accolade count, and for career Avg PF. */
+    if (leadPts){
+      const leadRows = Object.values(byKey);
+      function awardLeads(accoladeId, metricFn){
+        let best = -Infinity;
+        leadRows.forEach(r => {
+          const v = metricFn(r);
+          if (Number.isFinite(v) && v > best) best = v;
+        });
+        if (!(best > 0) || !Number.isFinite(best)) return;
+        leadRows.forEach(r => {
+          const v = metricFn(r);
+          if (!(Number.isFinite(v) && Math.abs(v - best) < 1e-9)) return;
+          r.points += leadPts;
+          r.leadPoints = (r.leadPoints || 0) + leadPts;
+          r.counts.lead = (r.counts.lead || 0) + 1;
+          r.leads.push(accoladeId);
+          const label = GOAT_LEAD_LABELS[accoladeId] || accoladeId;
+          r.hardware.push({
+            id: 'lead',
+            name: 'Leads in ' + label,
+            short: 'Lead',
+            season: 'career',
+            yearLabel: 'Career',
+            seasonTag: 'career',
+            points: leadPts,
+            value: v,
+            leadId: accoladeId
+          });
+        });
+      }
+      GOAT_LEAD_COUNT_IDS.forEach(id => {
+        awardLeads(id, r => {
+          if (id === 'runner_up') return Number(r.runnerUps || r.counts.runner_up) || 0;
+          if (id === 'third_place') return Number(r.thirdPlaces || r.counts.third_place) || 0;
+          if (id === 'playoff_win') return Number(r.playoffWins) || 0;
+          if (id === 'win') return Number(r.seasonWins) || 0;
+          if (id === 'good_season') return Number(r.goodSeasons || r.counts.good_season) || 0;
+          if (id === 'win_streak') return Number(r.winStreaks || r.counts.win_streak) || 0;
+          if (id === 'pf') return Number(r.careerPf) || 0;
+          return Number(r.counts[id]) || 0;
+        });
+      });
+      awardLeads('pf_avg', r => {
+        if (!(Number(r.careerGp) >= PPG_LEAD_MIN_GAMES)) return 0;
+        return Number(r.careerPpg) || 0;
+      });
+    }
 
     const rows = Object.values(byKey).sort((a, b) =>
       b.points - a.points
@@ -1153,6 +1264,7 @@
       || (b.counts.win_streak || 0) - (a.counts.win_streak || 0)
       || b.playoffWins - a.playoffWins
       || b.seasonWins - a.seasonWins
+      || (b.careerPf || 0) - (a.careerPf || 0)
       || String(a.displayName).localeCompare(String(b.displayName))
     );
     rows.forEach((r, i) => { r.rank = i + 1; });
@@ -1163,6 +1275,10 @@
       winStreakThreshold: WIN_STREAK_THRESHOLD,
       rsWinBundleSize: RS_WIN_BUNDLE_SIZE,
       playoffWinBundleSize: PLAYOFF_WIN_BUNDLE_SIZE,
+      pfBundleSize: PF_BUNDLE_SIZE,
+      ppgLeadMinGames: PPG_LEAD_MIN_GAMES,
+      leadCountIds: GOAT_LEAD_COUNT_IDS.slice(),
+      leadLabels: Object.assign({}, GOAT_LEAD_LABELS),
       rows,
       goat: goat ? {
         key: goat.key,
@@ -1180,6 +1296,12 @@
         goodSeasons: goat.goodSeasons,
         winStreaks: goat.winStreaks,
         lineupEfficiency: goat.lineupEfficiency,
+        careerPf: goat.careerPf,
+        careerGp: goat.careerGp,
+        careerPpg: goat.careerPpg,
+        leads: (goat.leads || []).slice(),
+        leadPoints: goat.leadPoints || 0,
+        pfPoints: goat.pfPoints || 0,
         awardPoints: goat.awardPoints,
         winPoints: goat.winPoints,
         playoffWinPoints: goat.playoffWinPoints,
@@ -1423,6 +1545,10 @@
     WIN_STREAK_THRESHOLD,
     RS_WIN_BUNDLE_SIZE,
     PLAYOFF_WIN_BUNDLE_SIZE,
+    PF_BUNDLE_SIZE,
+    PPG_LEAD_MIN_GAMES,
+    GOAT_LEAD_COUNT_IDS,
+    GOAT_LEAD_LABELS,
     franchiseKey,
     yearLabel,
     seasonTag,

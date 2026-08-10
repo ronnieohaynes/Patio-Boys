@@ -121,14 +121,14 @@
 <div class="wrap hero">
   <p class="eyebrow">Career &middot; Managers &middot; Finalized awards + wins</p>
   <h1 class="display">Who Owns<br>This League</h1>
-  <p>Every playoff accolade, yearly award, and regular-season milestone pays GOAT points. The manager with the most GOAT points leads the GOAT Race &mdash; a career title that updates as wins land and seasons lock.</p>
+  <p>Every playoff accolade, yearly award, and regular-season milestone pays GOAT points. Leading (or tying) any accolade also pays. The manager with the most GOAT points leads the GOAT Race &mdash; a career title that updates as wins land and seasons lock.</p>
 </div>
 
 <div class="wrap">
   <section>
     <p class="eyebrow">Point Values</p>
     <h2>How It Scores</h2>
-    <p class="caption" style="margin-top:0">GOAT points follow the manager, not the franchise name. Scoring stacks in three lanes: playoff accolades first, then yearly awards, then regular-season grind. Live wins and win streaks count as they happen; yearly awards and Good Seasons only land when the season locks. Career lineup efficiency is shown for context (same metric as Coach of the Year) but awards no GOAT points. The GOAT title itself is worth 0 &mdash; it is the scoreboard, not another stackable award.</p>
+    <p class="caption" style="margin-top:0">GOAT points follow the manager, not the franchise name. Scoring stacks in four lanes: playoff accolades, yearly awards, regular-season grind (wins, streaks, Good Seasons, career Points For), then lead bonuses &mdash; +1 for each accolade you lead or tie, including career Avg PF. Live wins and win streaks count as they happen; yearly awards and Good Seasons only land when the season locks. Career lineup efficiency is shown for context (same metric as Coach of the Year) but awards no GOAT points. The GOAT title itself is worth 0 &mdash; it is the scoreboard, not another stackable award.</p>
     <div class="score-groups" id="pointsLegend"></div>
   </section>
 
@@ -153,9 +153,12 @@
           <th>GM</th>
           <th>MIP</th>
           <th>Wins</th>
+          <th title="Career regular-season Points For">Total PF</th>
+          <th title="Career regular-season Points For per game">Avg PF</th>
           <th title="Career lineup efficiency (starter FP / optimal starters+bench lineup; taxi/IR excluded). Display only — no GOAT points.">Eff</th>
           <th>GS</th>
           <th>WS</th>
+          <th title="Accolade / Avg PF categories this manager leads or ties">Leads</th>
           <th>Hardware</th>
         </tr>
       </thead>
@@ -174,7 +177,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260810-coach-taxi';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260810-goat-pf';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -182,7 +185,7 @@
 </script>
 <script>
 const LEAGUE_ID = '1350649177381552128';
-/* Display / sort order: playoff accolades → yearly awards → regular season. */
+/* Display / sort order: playoff → yearly → regular season → lead bonuses. */
 const SCORE_GROUPS = [
   {
     id: 'playoff',
@@ -197,10 +200,16 @@ const SCORE_GROUPS = [
   {
     id: 'regular',
     title: 'Regular season',
-    ids: ['good_season', 'win_streak', 'win']
+    ids: ['good_season', 'win_streak', 'win', 'pf']
+  },
+  {
+    id: 'leads',
+    title: 'Lead bonuses',
+    ids: ['lead']
   }
 ];
 const ORDER = SCORE_GROUPS.reduce((acc, g) => acc.concat(g.ids), []);
+const BUNDLE_LOG_IDS = { win: 1, playoff_win: 1, pf: 1, lead: 1 };
 
 function fmtPts(n){
   if (window.PatioBoysAwards && PatioBoysAwards.formatGoatPoints){
@@ -226,8 +235,29 @@ function effCell(v){
   return (n * 100).toFixed(1) + '%';
 }
 
+function pfCell(v){
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return '<span class="dim">\u2014</span>';
+  return n.toFixed(1);
+}
+
+function avgPfCell(v){
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return '<span class="dim">\u2014</span>';
+  return n.toFixed(1);
+}
+
+function leadsCell(row){
+  const labels = (window.PatioBoysAwards && PatioBoysAwards.GOAT_LEAD_LABELS) || {};
+  const leads = row.leads || [];
+  if (!leads.length) return '<span class="dim">\u2014</span>';
+  return '<div class="chip-row">' + leads.map(id =>
+    '<span class="chip">' + escapeHtml(labels[id] || id) + '</span>'
+  ).join('') + '</div>';
+}
+
 function chipsHtml(row){
-  const wins = (row.hardware || []).filter(w => w.id !== 'win' && w.id !== 'playoff_win')
+  const wins = (row.hardware || []).filter(w => !BUNDLE_LOG_IDS[w.id])
     .slice().sort((a, b) => Number(b.season) - Number(a.season)
       || ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
   if (!wins.length) return '<span class="dim">\u2014</span>';
@@ -267,15 +297,19 @@ async function boot(){
     runner_up: 'Runner-up',
     third_place: '3rd place',
     win: '10 RS wins',
-    playoff_win: '2 playoff wins'
+    playoff_win: '2 playoff wins',
+    pf: '5,000 career PF',
+    lead: 'Accolade lead'
   };
   const goodPct = Number(PatioBoysAwards.GOOD_SEASON_WIN_PCT || 0.610);
   const streakN = Number(PatioBoysAwards.WIN_STREAK_THRESHOLD || 10);
   const rsBundle = Number(PatioBoysAwards.RS_WIN_BUNDLE_SIZE || 10);
   const poBundle = Number(PatioBoysAwards.PLAYOFF_WIN_BUNDLE_SIZE || 2);
+  const pfBundle = Number(PatioBoysAwards.PF_BUNDLE_SIZE || 5000);
   names.win_streak = streakN + '+ win streak';
   names.win = rsBundle + ' RS wins';
   names.playoff_win = poBundle + ' playoff wins';
+  names.pf = pfBundle.toLocaleString() + ' career PF';
 
   function legendCard(id){
     const medal = PatioBoysAwards.medalClass ? PatioBoysAwards.medalClass(id) : '';
@@ -283,7 +317,8 @@ async function boot(){
     let detail = fmtPts(val) + ' GOAT point' + (val === 1 ? '' : 's');
     if (id === 'good_season') detail += ' · ' + Math.round(goodPct * 100) + '%+ win rate';
     if (id === 'win_streak') detail += ' · regular season';
-    if (id === 'win' || id === 'playoff_win') detail += ' · career bundle';
+    if (id === 'win' || id === 'playoff_win' || id === 'pf') detail += ' · career bundle';
+    if (id === 'lead') detail += ' · per accolade (or Avg PF) you lead or tie';
     return '<div class="legend-item' + (medal ? ' ' + medal : '') + '"><p class="nm">'
       + escapeHtml(names[id]) + '</p>'
       + '<p class="val">' + escapeHtml(detail) + '</p></div>';
@@ -311,11 +346,14 @@ async function boot(){
         + (leader.franchise ? ' &middot; ' + escapeHtml(leader.franchise) : '')
         + ' &middot; ' + Number(leader.seasonWins || 0) + ' wins'
         + ' &middot; ' + Number(leader.playoffWins || 0) + ' playoff wins'
+        + (Number(leader.careerPf) > 0 ? ' &middot; ' + Number(leader.careerPf).toFixed(1) + ' PF' : '')
+        + (Number(leader.careerPpg) > 0 ? ' &middot; ' + Number(leader.careerPpg).toFixed(1) + ' Avg PF' : '')
         + ' &middot; ' + Number(leader.goodSeasons || 0) + ' good seasons'
         + ' &middot; ' + Number(leader.winStreaks || 0) + ' win streaks'
+        + ' &middot; ' + Number((leader.leads || []).length) + ' leads'
         + ' &middot; ' + Number(leader.runnerUps || 0) + ' runner-up'
         + ' &middot; ' + Number(leader.thirdPlaces || 0) + ' third'
-        + ' &middot; ties break Champ &rarr; Runner-up &rarr; 3rd &rarr; MVP &rarr; Coach &rarr; GM &rarr; MIP &rarr; Good Season &rarr; Win Streak &rarr; Playoff W &rarr; Wins</p>';
+        + ' &middot; ties break Champ &rarr; Runner-up &rarr; 3rd &rarr; MVP &rarr; Coach &rarr; GM &rarr; MIP &rarr; Good Season &rarr; Win Streak &rarr; Playoff W &rarr; Wins &rarr; PF</p>';
     } else {
       banner.hidden = false;
       banner.innerHTML =
@@ -342,9 +380,12 @@ async function boot(){
         + '<td>' + countCell(r.counts.gm) + '</td>'
         + '<td>' + countCell(r.counts.mip) + '</td>'
         + '<td>' + countCell(r.seasonWins) + '</td>'
+        + '<td>' + pfCell(r.careerPf) + '</td>'
+        + '<td>' + avgPfCell(r.careerPpg) + '</td>'
         + '<td>' + effCell(r.lineupEfficiency) + '</td>'
         + '<td>' + countCell(r.goodSeasons || r.counts.good_season) + '</td>'
         + '<td>' + countCell(r.winStreaks || r.counts.win_streak) + '</td>'
+        + '<td>' + leadsCell(r) + '</td>'
         + '<td>' + chipsHtml(r) + '</td>';
       body.appendChild(tr);
     });
@@ -352,7 +393,7 @@ async function boot(){
 
     const log = [];
     rows.forEach(r => (r.hardware || []).forEach(w => {
-      if (w.id === 'win' || w.id === 'playoff_win') return;
+      if (BUNDLE_LOG_IDS[w.id]) return;
       log.push({
         yearLabel: w.yearLabel,
         season: w.season,
@@ -381,12 +422,16 @@ async function boot(){
     ).length;
     const totalWins = rows.reduce((s, r) => s + (r.seasonWins || 0), 0);
     const totalPw = rows.reduce((s, r) => s + (r.playoffWins || 0), 0);
+    const totalPf = rows.reduce((s, r) => s + (Number(r.careerPf) || 0), 0);
+    const totalLeads = rows.reduce((s, r) => s + ((r.leads || []).length), 0);
     const totalGs = rows.reduce((s, r) => s + (r.goodSeasons || 0), 0);
     const totalWs = rows.reduce((s, r) => s + (r.winStreaks || 0), 0);
     const totalRu = rows.reduce((s, r) => s + (r.runnerUps || 0), 0);
     const total3 = rows.reduce((s, r) => s + (r.thirdPlaces || 0), 0);
     statusEl.textContent = totalWins + ' regular wins (every ' + rsBundle + ' = +' + fmtPts(pts.win || 0) + ')'
       + ' \u00b7 ' + totalPw + ' playoff wins (every ' + poBundle + ' = +' + fmtPts(pts.playoff_win || 0) + ')'
+      + ' \u00b7 ' + totalPf.toFixed(0) + ' career PF (every ' + pfBundle.toLocaleString() + ' = +' + fmtPts(pts.pf || 0) + ')'
+      + ' \u00b7 ' + totalLeads + ' lead bonuses (+' + fmtPts(pts.lead || 0) + ' ea)'
       + ' \u00b7 ' + totalGs + ' good seasons (+' + fmtPts(pts.good_season || 0) + ' ea)'
       + ' \u00b7 ' + totalWs + ' win streaks (+' + fmtPts(pts.win_streak || 0) + ' ea)'
       + ' \u00b7 ' + totalRu + ' runner-up (+' + fmtPts(pts.runner_up || 0) + ' ea)'
