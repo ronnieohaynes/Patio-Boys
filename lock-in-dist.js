@@ -97,6 +97,114 @@
       null;
   }
 
+  function parentGamelogHost(){
+    try {
+      if (typeof window === 'undefined') return null;
+      if (window.top && window.top !== window) return window.top;
+    } catch (e) { /* cross-origin */ }
+    return typeof window !== 'undefined' ? window : null;
+  }
+
+  function yieldToMain(){
+    if (global.PatioBoysShare && typeof global.PatioBoysShare.yieldToMain === 'function'){
+      return global.PatioBoysShare.yieldToMain();
+    }
+    if (global.scheduler && typeof global.scheduler.yield === 'function'){
+      return global.scheduler.yield();
+    }
+    return new Promise(function(resolve){ setTimeout(resolve, 0); });
+  }
+
+  /* Serialize gamelog parse + Lock scoring across same-origin HQ iframes.
+     Re-entrant: nested calls from the same heavy job run immediately. */
+  function withHeavyLock(fn){
+    const host = parentGamelogHost() || global;
+    if ((host.__PB_HEAVY_DEPTH || 0) > 0){
+      return Promise.resolve().then(fn);
+    }
+    const prev = host.__PB_HEAVY || Promise.resolve();
+    let release;
+    const gate = new Promise(function(r){ release = r; });
+    host.__PB_HEAVY = prev.then(function(){ return gate; }).catch(function(){});
+    return prev.then(async function(){
+      host.__PB_HEAVY_DEPTH = (host.__PB_HEAVY_DEPTH || 0) + 1;
+      try { return await fn(); }
+      finally {
+        host.__PB_HEAVY_DEPTH = Math.max(0, (host.__PB_HEAVY_DEPTH || 1) - 1);
+        release();
+      }
+    });
+  }
+
+  /* Lazy-load the ~1.4MB ESPN box-score snapshot so HQ tabs stay responsive.
+     Fetch as text + JSON.parse (with yields) instead of <script> eval, which
+     freezes the shared parent main thread for hundreds of ms.
+     Same-origin HQ iframes share one parse via window.top.NBA_GAMELOGS. */
+  let _gamelogLoading = null;
+  function parseGamelogScriptText(text){
+    const raw = String(text || '');
+    const eq = raw.indexOf('=');
+    if (eq < 0) throw new Error('nba-gamelogs-snapshot.js: missing assignment');
+    let jsonText = raw.slice(eq + 1).trim();
+    if (jsonText.charAt(jsonText.length - 1) === ';'){
+      jsonText = jsonText.slice(0, -1).trim();
+    }
+    return JSON.parse(jsonText);
+  }
+  function ensureGamelogsLoaded(opts){
+    const existing = gamelogSnapshot();
+    if (existing) return Promise.resolve(existing);
+    const host = parentGamelogHost();
+    if (host && host.NBA_GAMELOGS){
+      if (typeof window !== 'undefined') window.NBA_GAMELOGS = host.NBA_GAMELOGS;
+      return Promise.resolve(host.NBA_GAMELOGS);
+    }
+    if (host && host.__PB_GAMELOG_LOADING){
+      return host.__PB_GAMELOG_LOADING.then(snap => {
+        if (typeof window !== 'undefined' && snap) window.NBA_GAMELOGS = snap;
+        return snap;
+      });
+    }
+    if (_gamelogLoading) return _gamelogLoading;
+    const options = opts || {};
+    let bust = options.cacheBust;
+    if (bust == null && typeof location !== 'undefined'){
+      try { bust = new URLSearchParams(location.search).get('nocache') || '20260809-uiresp2'; }
+      catch (e) { bust = '20260809-uiresp2'; }
+    }
+    const src = options.scriptUrl || 'nba-gamelogs-snapshot.js';
+    const url = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(bust || '1');
+    const loadPromise = withHeavyLock(async function(){
+      if (gamelogSnapshot()) return gamelogSnapshot();
+      if (host && host.NBA_GAMELOGS){
+        if (typeof window !== 'undefined') window.NBA_GAMELOGS = host.NBA_GAMELOGS;
+        return host.NBA_GAMELOGS;
+      }
+      await yieldToMain();
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to load ' + url + ' (HTTP ' + res.status + ')');
+      const text = await res.text();
+      await yieldToMain();
+      const snap = parseGamelogScriptText(text);
+      await yieldToMain();
+      if (host) host.NBA_GAMELOGS = snap;
+      if (typeof window !== 'undefined') window.NBA_GAMELOGS = snap;
+      if (typeof global !== 'undefined') global.NBA_GAMELOGS = snap;
+      return snap;
+    }).then(function(snap){
+      _gamelogLoading = null;
+      if (host && host.__PB_GAMELOG_LOADING === loadPromise) host.__PB_GAMELOG_LOADING = null;
+      return snap;
+    }).catch(function(err){
+      _gamelogLoading = null;
+      if (host && host.__PB_GAMELOG_LOADING === loadPromise) host.__PB_GAMELOG_LOADING = null;
+      throw err;
+    });
+    _gamelogLoading = loadPromise;
+    if (host) host.__PB_GAMELOG_LOADING = loadPromise;
+    return loadPromise;
+  }
+
   /* Expand one compact box-score row ([pts,reb,...]) into a scoring object. */
   function rowFromGamelogFields(row, fields){
     const cols = fields && fields.length ? fields : GAMELOG_FIELDS;
@@ -113,6 +221,31 @@
      Returns {samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer}
      where per30/per36 are total FP / total min × 30/36, mpg is total min / games,
      and fpPerMin is total FP / total min. */
+  function scoreGamelogPlayer(games, fields, scoring){
+    const scored = [];
+    let fpSum = 0;
+    let minSum = 0;
+    for (let i = 0; i < (games || []).length; i++){
+      const obj = rowFromGamelogFields(games[i], fields);
+      const v = scoreGame(obj, scoring);
+      if (v == null || !Number.isFinite(v)) continue;
+      scored.push(v);
+      fpSum += v;
+      const mins = obj && Number(obj.min);
+      if (Number.isFinite(mins) && mins > 0) minSum += mins;
+    }
+    if (!scored.length) return null;
+    const out = {scored, fpSum, minSum};
+    if (minSum > 0){
+      const rate = fpSum / minSum;
+      out.fpPerMin = rate;
+      out.per30 = rate * 30;
+      out.per36 = rate * 36;
+      out.mpg = minSum / scored.length;
+    }
+    return out;
+  }
+
   function buildSamplesFromGamelogs(statsSeason, scoring){
     const snap = gamelogSnapshot();
     if (!snap || !snap.seasons) return null;
@@ -126,30 +259,49 @@
     const mpgByPlayer = {};
     const fpPerMinByPlayer = {};
     Object.keys(byPid).forEach(pid => {
-      const games = byPid[pid] || [];
-      const scored = [];
-      let fpSum = 0;
-      let minSum = 0;
-      for (let i = 0; i < games.length; i++){
-        const obj = rowFromGamelogFields(games[i], fields);
-        const v = scoreGame(obj, scoring);
-        if (v == null || !Number.isFinite(v)) continue;
-        scored.push(v);
-        fpSum += v;
-        const mins = obj && Number(obj.min);
-        if (Number.isFinite(mins) && mins > 0) minSum += mins;
-      }
-      if (scored.length){
-        samplesByPlayer[pid] = scored;
-        if (minSum > 0){
-          const rate = fpSum / minSum;
-          fpPerMinByPlayer[pid] = rate;
-          per30ByPlayer[pid] = rate * 30;
-          per36ByPlayer[pid] = rate * 36;
-          mpgByPlayer[pid] = minSum / scored.length;
-        }
+      const packed = scoreGamelogPlayer(byPid[pid], fields, scoring);
+      if (!packed) return;
+      samplesByPlayer[pid] = packed.scored;
+      if (packed.fpPerMin != null){
+        fpPerMinByPlayer[pid] = packed.fpPerMin;
+        per30ByPlayer[pid] = packed.per30;
+        per36ByPlayer[pid] = packed.per36;
+        mpgByPlayer[pid] = packed.mpg;
       }
     });
+    return {samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer};
+  }
+
+  /* Chunked scoring so HQ tab clicks can paint between batches. */
+  async function buildSamplesFromGamelogsAsync(statsSeason, scoring, opts){
+    const options = opts || {};
+    const chunk = Math.max(20, Number(options.chunk) || 40);
+    const snap = gamelogSnapshot();
+    if (!snap || !snap.seasons) return null;
+    const seasonKey = String(statsSeason);
+    const byPid = snap.seasons[seasonKey];
+    if (!byPid) return null;
+    const fields = snap.fields || GAMELOG_FIELDS;
+    const pids = Object.keys(byPid);
+    const samplesByPlayer = {};
+    const per30ByPlayer = {};
+    const per36ByPlayer = {};
+    const mpgByPlayer = {};
+    const fpPerMinByPlayer = {};
+    for (let i = 0; i < pids.length; i++){
+      const pid = pids[i];
+      const packed = scoreGamelogPlayer(byPid[pid], fields, scoring);
+      if (packed){
+        samplesByPlayer[pid] = packed.scored;
+        if (packed.fpPerMin != null){
+          fpPerMinByPlayer[pid] = packed.fpPerMin;
+          per30ByPlayer[pid] = packed.per30;
+          per36ByPlayer[pid] = packed.per36;
+          mpgByPlayer[pid] = packed.mpg;
+        }
+      }
+      if ((i + 1) % chunk === 0) await yieldToMain();
+    }
     return {samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer};
   }
 
@@ -1585,6 +1737,14 @@
     return count;
   }
 
+  /* Same as attachLockValues, yielding between player batches for HQ nav. */
+  async function attachLockValuesAsync(distMap, opts){
+    await yieldToMain();
+    const n = attachLockValues(distMap, opts);
+    await yieldToMain();
+    return n;
+  }
+
   function seedDistEntry(distMap, pid, seed, source){
     const id = String(pid);
     if (distMap[id] || distMap[pid]) return false;
@@ -1608,7 +1768,12 @@
     const useMarks = marks && marks.length ? marks : DEFAULT_MARKS;
     const scoreSettings = scoring || {};
 
-    const boxPack = buildSamplesFromGamelogs(String(statsSeason), scoreSettings);
+    try { await ensureGamelogsLoaded(); }
+    catch (e) { /* fall back to Sleeper weekly samples */ }
+
+    await yieldToMain();
+    const boxPack = await buildSamplesFromGamelogsAsync(String(statsSeason), scoreSettings);
+    await yieldToMain();
     const usingBox = !!(boxPack && boxPack.samplesByPlayer
       && Object.keys(boxPack.samplesByPlayer).length);
 
@@ -1652,9 +1817,12 @@
       sampleSource = 'weekly';
     }
 
+    await yieldToMain();
     const seasonAvgByPid = seasonStats ? buildSeasonAvgMap(seasonStats, scoreSettings) : {};
     const distMap = buildDistMap(samplesByPlayer, useMarks, seasonAvgByPid);
-    Object.keys(distMap).forEach(pid => {
+    const distPids = Object.keys(distMap);
+    for (let i = 0; i < distPids.length; i++){
+      const pid = distPids[i];
       const p30 = per30ByPlayer[pid];
       if (p30 != null && Number.isFinite(p30)) distMap[pid].avgPer30 = p30;
       const p36 = per36ByPlayer[pid];
@@ -1666,7 +1834,8 @@
         distMap[pid].avgFpPerMin = fpm;
         distMap[pid].fpPerMinGrade = fpPerMinGrade(fpm);
       }
-    });
+      if ((i + 1) % 80 === 0) await yieldToMain();
+    }
     return {
       distMap,
       statsSeason: String(statsSeason),
@@ -1702,63 +1871,68 @@
       : null;
     const skipPrior = options.skipPriorSeason === true || !priorSeason;
 
-    const [primary, priorPack] = await Promise.all([
-      loadSeasonDistMap(statsSeason, scoring, fetchImpl),
-      skipPrior
-        ? Promise.resolve(null)
-        : loadSeasonDistMap(priorSeason, scoring, fetchImpl).catch(() => null)
-    ]);
-
-    const distMap = primary.distMap;
-    const priorDistMap = priorPack && priorPack.weeksFound
-      ? priorPack.distMap
-      : null;
-
-    const seedIds = new Set([...playerIds, ...rookieIds].map(String));
-    if (projById && playerDb) zeroUnsignedProjections(projById, playerDb);
-    seedIds.forEach(id => {
-      if (distMap[id]) return;
-      const p = playerDb[id] || playerDb[String(id)] || {};
-      const proj = lockProjFromMap(projById, id, p);
-      const rookie = isRookiePlayer(p, id, {rookieIds, rookieNames});
-      const earlyComp = rookie ? rookieCompFloor(p) : null;
-      const rankFloor = rookie ? rookieRankFloor(p, null, options.twoKSnapshot) : null;
-      const comp = rookie ? rookieValueFloor(p, null, options.twoKSnapshot) : null;
-      /* Unsigned: no upcoming proj seed (UI shows 0 via zeroUnsignedProjections). */
-      const seed = !playerHasNbaTeam(p)
+    /* Sequential seasons (not Promise.all) so yields between them keep HQ clickable. */
+    return withHeavyLock(async function(){
+      const primary = await loadSeasonDistMap(statsSeason, scoring, fetchImpl);
+      await yieldToMain();
+      const priorPack = skipPrior
         ? null
-        : (rookie ? blendRookieBase(proj, comp) : proj);
-      let source = 'proj';
-      if (rookie){
-        if (proj != null && earlyComp != null) source = 'rookie-proj-early';
-        else if (proj != null && rankFloor != null) source = 'rookie-proj-rank';
-        else if (earlyComp != null && rankFloor != null && comp === rankFloor && earlyComp < rankFloor){
-          source = 'rookie-rank-floor';
-        } else if (earlyComp != null) source = 'rookie-early-comp';
-        else if (rankFloor != null) source = 'rookie-rank';
-        else source = 'proj';
-      }
-      seedDistEntry(distMap, id, seed, source);
-    });
+        : await loadSeasonDistMap(priorSeason, scoring, fetchImpl).catch(() => null);
+      await yieldToMain();
 
-    const scored = attachLockValues(distMap, {
-      playerDb, projById, rookieIds, rookieNames,
-      twoKSnapshot: options.twoKSnapshot,
-      priorDistMap,
-      priorStatsSeason: priorDistMap ? priorSeason : null
+      const distMap = primary.distMap;
+      const priorDistMap = priorPack && priorPack.weeksFound
+        ? priorPack.distMap
+        : null;
+
+      const seedIds = new Set([...playerIds, ...rookieIds].map(String));
+      if (projById && playerDb) zeroUnsignedProjections(projById, playerDb);
+      let seeded = 0;
+      seedIds.forEach(id => {
+        if (distMap[id]) return;
+        const p = playerDb[id] || playerDb[String(id)] || {};
+        const proj = lockProjFromMap(projById, id, p);
+        const rookie = isRookiePlayer(p, id, {rookieIds, rookieNames});
+        const earlyComp = rookie ? rookieCompFloor(p) : null;
+        const rankFloor = rookie ? rookieRankFloor(p, null, options.twoKSnapshot) : null;
+        const comp = rookie ? rookieValueFloor(p, null, options.twoKSnapshot) : null;
+        /* Unsigned: no upcoming proj seed (UI shows 0 via zeroUnsignedProjections). */
+        const seed = !playerHasNbaTeam(p)
+          ? null
+          : (rookie ? blendRookieBase(proj, comp) : proj);
+        let source = 'proj';
+        if (rookie){
+          if (proj != null && earlyComp != null) source = 'rookie-proj-early';
+          else if (proj != null && rankFloor != null) source = 'rookie-proj-rank';
+          else if (earlyComp != null && rankFloor != null && comp === rankFloor && earlyComp < rankFloor){
+            source = 'rookie-rank-floor';
+          } else if (earlyComp != null) source = 'rookie-early-comp';
+          else if (rankFloor != null) source = 'rookie-rank';
+          else source = 'proj';
+        }
+        if (seedDistEntry(distMap, id, seed, source)) seeded++;
+      });
+      await yieldToMain();
+
+      const scored = await attachLockValuesAsync(distMap, {
+        playerDb, projById, rookieIds, rookieNames,
+        twoKSnapshot: options.twoKSnapshot,
+        priorDistMap,
+        priorStatsSeason: priorDistMap ? priorSeason : null
+      });
+      return {
+        distMap,
+        priorDistMap,
+        statsSeason: primary.statsSeason,
+        priorStatsSeason: priorDistMap ? priorSeason : null,
+        weeksFound: primary.weeksFound,
+        priorWeeksFound: priorPack ? priorPack.weeksFound : 0,
+        sampleSource: primary.sampleSource || 'weekly',
+        scored,
+        seasonAvgCount: primary.seasonAvgCount,
+        rookieSeeded: [...rookieIds].filter(id => distMap[id] && distMap[id].projOnly).length
+      };
     });
-    return {
-      distMap,
-      priorDistMap,
-      statsSeason: primary.statsSeason,
-      priorStatsSeason: priorDistMap ? priorSeason : null,
-      weeksFound: primary.weeksFound,
-      priorWeeksFound: priorPack ? priorPack.weeksFound : 0,
-      sampleSource: primary.sampleSource || 'weekly',
-      scored,
-      seasonAvgCount: primary.seasonAvgCount,
-      rookieSeeded: [...rookieIds].filter(id => distMap[id] && distMap[id].projOnly).length
-    };
   }
 
   /* Absolute FP/min letter grades (Patio Boys scoring). Not curved.
@@ -1898,8 +2072,11 @@
     buildSeasonAvgMap,
     buildSamplesByPlayer,
     buildSamplesFromGamelogs,
+    buildSamplesFromGamelogsAsync,
     rowFromGamelogFields,
     gamelogSnapshot,
+    yieldToMain,
+    withHeavyLock,
     playerDist,
     buildDistMap,
     expectedLocks,
@@ -1963,7 +2140,10 @@
     buildEffectiveNbaDepthOrders,
     nbaRoleSentence,
     attachLockValues,
+    attachLockValuesAsync,
     loadSeasonDistMap,
-    fetchLockValueIndex
+    fetchLockValueIndex,
+    ensureGamelogsLoaded,
+    gamelogSnapshot
   };
 })(window);

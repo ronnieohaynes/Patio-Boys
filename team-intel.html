@@ -222,6 +222,15 @@
   .pick-chip .via{
     color:var(--ink-dim);font-size:10px;margin-left:4px;
   }
+  .pick-chip .pick-val{
+    margin-left:6px;color:var(--ink);
+    font-variant-numeric:tabular-nums;
+  }
+  .pick-chip .pick-val .stars{
+    margin-right:3px;letter-spacing:-1px;
+  }
+  .pick-chip .pick-val .stars .star{font-size:10px;color:var(--gold)}
+  .pick-chip .pick-val .stars .star.half{opacity:.65}
   .pick-chip.via-trade{
     border-color:color-mix(in srgb, var(--gold) 45%, var(--hairline));
     background:color-mix(in srgb, var(--gold) 10%, var(--surface-2));
@@ -454,6 +463,14 @@
 </style>
 </head>
 <body>
+<link rel="stylesheet" href="hq-loader.css">
+<div class="pb-boot-loader" id="pbBootLoader" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+  <div class="pb-boot-mark" aria-hidden="true">PB</div>
+  <p class="pb-boot-label">Loading team intel…</p>
+  <div class="pb-boot-bar" aria-hidden="true"><div class="pb-boot-bar-fill"></div></div>
+  <p class="pb-boot-pct">0%</p>
+</div>
+<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
 <div class="wrap">
@@ -528,13 +545,34 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260810-picks-noflex';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
-    document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
-  });
+  var v = new URLSearchParams(location.search).get('nocache') || '20260809-progress';
+  /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
+  var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
+  function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
+  if (window.PatioBoysLoader && typeof PatioBoysLoader.loadScripts === 'function'){
+    PatioBoysLoader.loadScripts(files, {
+      version: v,
+      label: 'Loading team intel…',
+      startPct: 8,
+      endPct: 45
+    }).then(ready);
+    return;
+  }
+  var i = 0;
+  function next(){
+    if (i >= files.length){ ready(); return; }
+    var s = document.createElement('script');
+    s.src = files[i++] + '?v=' + encodeURIComponent(v);
+    s.onload = function(){ setTimeout(next, 0); };
+    s.onerror = function(){ setTimeout(next, 0); };
+    document.head.appendChild(s);
+  }
+  next();
 })();
 </script>
 <script>
+window.addEventListener('pb-deps-ready', function pbIntelMain(){
+window.removeEventListener('pb-deps-ready', pbIntelMain);
 const LEAGUE_ID = '1350649177381552128';
 const TWO_K = window.TWO_K_SNAPSHOT || {ratings:[]};
 function normalizePlayerName(name){
@@ -616,8 +654,12 @@ const state = {
   freeAgentsError: null,
   movesByKey: {},       // franchise key -> {fa:[], cuts:...}
   depthByKey: {},       // franchise key -> depth chart pack
-  draftPicksByRosterId: null, // rosterId -> [{season, round, originalRosterId, viaTrade}]
+  draftPicksByRosterId: null, // rosterId -> valued picks
+  draftPicksRawByRosterId: null,
+  draftPickMeta: null,
   draftPickSeasons: [],
+  draftPickRoundBases: null,
+  draftPickValueCtx: null,
   picksReady: false,
   picksError: null
 };
@@ -848,6 +890,10 @@ async function loadCeilings(){
 }
 
 async function loadPlayerDb(){
+  if (window.PatioBoysShare && typeof PatioBoysShare.fetchPlayersNba === 'function'){
+    state.playerDb = await PatioBoysShare.fetchPlayersNba();
+    return;
+  }
   const r = await fetch('https://api.sleeper.app/v1/players/nba');
   if (!r.ok) throw new Error('Player database unavailable');
   state.playerDb = await r.json();
@@ -858,9 +904,14 @@ async function loadPlayerDb(){
 async function loadProjections(){
   const scoring = state.league.scoring_settings || {};
   const season = state.league.season;
-  const r = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
-  if (!r.ok) throw new Error('Projections unavailable (HTTP ' + r.status + ')');
-  const rows = await r.json();
+  let rows;
+  if (window.PatioBoysShare && typeof PatioBoysShare.fetchNbaProjections === 'function'){
+    rows = await PatioBoysShare.fetchNbaProjections(season);
+  } else {
+    const r = await fetch('https://api.sleeper.com/projections/nba/' + season + '?season_type=regular');
+    if (!r.ok) throw new Error('Projections unavailable (HTTP ' + r.status + ')');
+    rows = await r.json();
+  }
   if (!Array.isArray(rows) || !rows.length) throw new Error('No ' + season + ' projections published yet');
   const byId = new Map();
   rows.forEach(row => {
@@ -1192,7 +1243,21 @@ function pct1(rate){
 
 /* Attach smash Lock OVR (50–99) once dist map exists. Recalculates when
    player DB / projections arrive. Rookies with no smash + no Sleeper proj
-   still seed from early-career comps / draft-rank bands. */
+   still seed from early-career comps / draft-rank bands.
+   Cached by signature so render paths don't re-run ~90ms attach every paint. */
+function lockAttachSignature(){
+  const lockN = state.lockInByPid ? Object.keys(state.lockInByPid).length : 0;
+  const priorN = state.priorLockInByPid ? Object.keys(state.priorLockInByPid).length : 0;
+  const dbN = state.playerDb ? Object.keys(state.playerDb).length : 0;
+  const projN = state.projById ? state.projById.size : 0;
+  return [
+    lockN, priorN, dbN, projN,
+    state.statsSeason || '',
+    state.priorStatsSeason || '',
+    state.projSettled ? '1' : '0',
+    state.ceilingSettled ? '1' : '0'
+  ].join('|');
+}
 function refreshLockValues(){
   if (!state.lockInByPid || !window.LockInDist) return false;
   applyUnsignedProjZeros();
@@ -1233,9 +1298,12 @@ function refreshLockValues(){
           samples: [], seasonAvg: null, seasonGp: null, avgSource: source,
           projOnly: true
         };
+        state._lockAttachSig = null; /* new seeds need attach */
       });
     });
   }
+  const sig = lockAttachSignature();
+  if (state._lockAttachSig === sig) return true;
   L.attachLockValues(state.lockInByPid, {
     playerDb: state.playerDb || {},
     projById: state.projById,
@@ -1245,6 +1313,7 @@ function refreshLockValues(){
     priorDistMap: state.priorLockInByPid || null,
     priorStatsSeason: state.priorStatsSeason || null
   });
+  state._lockAttachSig = sig;
   return true;
 }
 
@@ -1437,8 +1506,9 @@ function renderLockIn(t){
     return;
   }
 
+  /* Basic view: skip Monte Carlo so team switches stay snappy. */
   const summary = window.LockInDist && scored.length
-    ? LockInDist.teamLockInSummary(scored, {marks, slots, sims: 500})
+    ? LockInDist.teamLockInSummary(scored, {marks, slots, sims: basic ? 0 : 200})
     : null;
   const avgFill = summary ? summary.sim.avgFill : {};
   const expected = summary ? summary.sim.expected : {};
@@ -1945,8 +2015,20 @@ function buildDepthChart(team){
         !claimed.has(String(r.id))
         && TeamNeedsModel.eligibleForSlot(row.slot, TeamNeedsModel.positions(r.positions))
       )
-      .sort((a, b) => b.rankVal - a.rankVal
-        || String(a.name).localeCompare(String(b.name)))[0];
+      .sort((a, b) => {
+        /* Same Lock rank: mono-eligible prefer CORE; multi prefer G/F/UTIL. */
+        const possA = TeamNeedsModel.positions(a.positions);
+        const possB = TeamNeedsModel.positions(b.positions);
+        const fitA = TeamNeedsModel.slotFitBonus
+          ? TeamNeedsModel.slotFitBonus(possA, row.slot)
+          : 0;
+        const fitB = TeamNeedsModel.slotFitBonus
+          ? TeamNeedsModel.slotFitBonus(possB, row.slot)
+          : 0;
+        return b.rankVal - a.rankVal
+          || fitB - fitA
+          || String(a.name).localeCompare(String(b.name));
+      })[0];
     if (!pick) return;
     row.starter = pick;
     claimed.add(String(pick.id));
@@ -2074,6 +2156,7 @@ function renderDepthChart(t){
     + '<p class="lineup-foot">Same ' + pack.slots.length + ' starting slots as Team Needs ('
     + escapeHtml(pack.slots.join(', '))
     + '). <strong>1st string</strong> = legal starters by hold value (Lock OVR × situation path). '
+    + 'Mono-eligible players prefer their CORE slot; multi-eligible prefer G/F/UTIL so flex stays open. '
     + '<strong>Top 8</strong> = the next ' + (pack.top8Spots || DEPTH_TOP8)
     + ' best remaining by <strong>Lock OVR</strong> (overall, not tied to Pos). '
     + '<strong>Taxi</strong> holds up to ' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
@@ -2877,6 +2960,9 @@ function renderTrades(t){
 /* ---------- owned draft picks ---------- */
 
 function roundOrdinal(n){
+  if (window.DraftPickValue && typeof DraftPickValue.roundOrdinal === 'function'){
+    return DraftPickValue.roundOrdinal(n);
+  }
   const r = Number(n);
   if (r === 1) return '1st';
   if (r === 2) return '2nd';
@@ -2890,61 +2976,71 @@ function teamByRosterId(rosterId){
   return (state.teams || []).find(t => Number(t.rosterId) === id) || null;
 }
 
-/* Sleeper only lists traded picks. Start from each roster owning its own
-   rounds for the next 3 draft years, then apply /traded_picks ownership. */
-function synthesizeOwnedDraftPicks(league, rosters, tradedPicks, drafts){
-  const season = Number(league && league.season);
-  const rounds = Number(league && league.settings && league.settings.draft_rounds) || 5;
-  const draftDone = (drafts || []).some(d =>
-      String(d.season) === String(season) && d.status === 'complete')
-    || league.status === 'in_season'
-    || league.status === 'complete';
-  const startSeason = draftDone ? season + 1 : season;
-  const seasons = [startSeason, startSeason + 1, startSeason + 2].map(String);
+function tradeScoreLookup(){
+  const map = {};
+  Object.keys(state.lockInByPid || {}).forEach(id => {
+    const d = state.lockInByPid[id];
+    if (d && d.tradeScore != null) map[String(id)] = Number(d.tradeScore);
+  });
+  return map;
+}
 
-  const owner = new Map();
-  (rosters || []).forEach(r => {
-    const rid = Number(r.roster_id);
-    seasons.forEach(s => {
-      for (let round = 1; round <= rounds; round++){
-        owner.set(s + '|' + round + '|' + rid, rid);
-      }
-    });
+function draftPickValueSignature(){
+  const scores = tradeScoreLookup();
+  let n = 0;
+  let sum = 0;
+  Object.keys(scores).forEach(id => {
+    n += 1;
+    sum += Number(scores[id]) || 0;
   });
+  const maxReady = state.maxPtsReady ? '1' : '0';
+  const maxSig = (state.teams || []).map(t =>
+    String(t.rosterId) + ':' + (t.maxPts != null ? Math.round(t.maxPts) : '')
+  ).join(',');
+  return n + '|' + Math.round(sum) + '|' + maxReady + '|' + maxSig;
+}
 
-  (tradedPicks || []).forEach(pk => {
-    const key = String(pk.season) + '|' + pk.round + '|' + pk.roster_id;
-    if (!owner.has(key)) return;
-    owner.set(key, Number(pk.owner_id));
-  });
-
-  const byOwner = {};
-  owner.forEach((ownerId, key) => {
-    const parts = key.split('|');
-    const s = parts[0];
-    const round = Number(parts[1]);
-    const originalRosterId = Number(parts[2]);
-    const oid = Number(ownerId);
-    if (!byOwner[oid]) byOwner[oid] = [];
-    byOwner[oid].push({
-      season: s,
-      round,
-      originalRosterId,
-      ownerRosterId: oid,
-      viaTrade: originalRosterId !== oid
-    });
-  });
-  Object.keys(byOwner).forEach(id => {
-    byOwner[id].sort((a, b) =>
-      Number(a.season) - Number(b.season)
-      || a.round - b.round
-      || a.originalRosterId - b.originalRosterId
-    );
-  });
-  return {byOwner, seasons, rounds, draftDone};
+function valueDraftPicks(rawByOwner, seasons, meta){
+  if (!window.DraftPickValue || !state.teams){
+    state.draftPicksByRosterId = rawByOwner;
+    state.draftPickSeasons = seasons;
+    state.draftPickRoundBases = null;
+    state.draftPickValueSig = null;
+    return;
+  }
+  const sig = draftPickValueSignature();
+  if (state.draftPickValueSig === sig && state.draftPicksByRosterId){
+    state.draftPickSeasons = seasons;
+    return;
+  }
+  const D = DraftPickValue;
+  const scoreMap = tradeScoreLookup();
+  D.assignQualityRanks(state.teams, scoreMap);
+  const meaningful = D.standingsMeaningful(state.teams);
+  const fringe = D.fringeMediansByRound(
+    state.teams.map(t => t.players || []),
+    scoreMap,
+    {rounds: (meta && meta.rounds) || 5}
+  );
+  const ctx = {
+    roundBases: fringe.bases,
+    nextDraftSeason: (meta && meta.nextDraftSeason) || (seasons && seasons[0]),
+    teamsByRosterId: D.buildTeamIndex(state.teams),
+    teamCount: state.teams.length,
+    standingsMeaningful: meaningful,
+    useStandingsForNext: meaningful
+  };
+  state.draftPicksByRosterId = D.attachPickValues(rawByOwner, ctx);
+  state.draftPickSeasons = seasons;
+  state.draftPickRoundBases = fringe.bases;
+  state.draftPickValueCtx = ctx;
+  state.draftPickValueSig = sig;
 }
 
 async function loadDraftPicks(){
+  if (!window.DraftPickValue){
+    throw new Error('draft-pick-value.js failed to load');
+  }
   const [tradedRes, draftsRes, rostersRes] = await Promise.all([
     fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/traded_picks'),
     fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/drafts'),
@@ -2955,11 +3051,21 @@ async function loadDraftPicks(){
   const traded = await tradedRes.json();
   const drafts = draftsRes.ok ? await draftsRes.json() : [];
   const rosters = await rostersRes.json();
-  const pack = synthesizeOwnedDraftPicks(state.league, rosters, traded, drafts);
-  state.draftPicksByRosterId = pack.byOwner;
-  state.draftPickSeasons = pack.seasons;
+  const pack = DraftPickValue.synthesizeOwnedDraftPicks(
+    state.league, rosters, traded, drafts
+  );
+  state.draftPicksRawByRosterId = pack.byOwner;
+  state.draftPickMeta = pack;
+  valueDraftPicks(pack.byOwner, pack.seasons, pack);
   state.picksReady = true;
   state.picksError = null;
+}
+
+function pickStarsHtml(n){
+  if (window.LockInDist && typeof LockInDist.formatStarsHtml === 'function'){
+    return LockInDist.formatStarsHtml(n, {className: 'stars'});
+  }
+  return '';
 }
 
 function renderDraftPicks(t){
@@ -2977,10 +3083,22 @@ function renderDraftPicks(t){
     body.innerHTML = '<p class="pending">Loading owned picks&hellip;</p>';
     return;
   }
-  const picks = state.draftPicksByRosterId[Number(t.rosterId)] || [];
+  /* Re-value when Lock scores / Max Pts arrive after the first picks fetch. */
+  if (state.draftPicksRawByRosterId && state.lockInByPid){
+    valueDraftPicks(
+      state.draftPicksRawByRosterId,
+      state.draftPickSeasons,
+      state.draftPickMeta
+    );
+  }
+  const picks = state.draftPicksByRosterId[Number(t.rosterId)]
+    || state.draftPicksByRosterId[String(t.rosterId)]
+    || [];
   const tradedN = picks.filter(p => p.viaTrade).length;
+  const pickTotal = picks.reduce((s, p) => s + (Number(p.tradeScore) || 0), 0);
   tag.textContent = picks.length
-    ? (picks.length + ' owned'
+    ? (picks.length + ' owned · Trade Σ '
+      + pickTotal.toFixed(0)
       + (tradedN ? ' · ' + tradedN + ' via trade' : ''))
     : 'None';
 
@@ -2995,6 +3113,14 @@ function renderDraftPicks(t){
     bySeason[p.season].push(p);
   });
   const years = Object.keys(bySeason).sort((a, b) => Number(a) - Number(b));
+  const bases = state.draftPickRoundBases || {};
+  const baseBits = [1, 2, 3, 4, 5]
+    .filter(r => bases[r] != null)
+    .map(r => roundOrdinal(r) + ' ' + Number(bases[r]).toFixed(1));
+  const ctx = state.draftPickValueCtx || {};
+  const nextMode = ctx.useStandingsForNext
+    ? 'next year uses standings slot'
+    : 'next year uses team-quality slot (preseason)';
   body.innerHTML = years.map(season => {
     const chips = bySeason[season].map(p => {
       const orig = teamByRosterId(p.originalRosterId);
@@ -3003,19 +3129,28 @@ function renderDraftPicks(t){
           + escapeHtml((orig && (orig.abbrev || orig.displayName)) || ('R' + p.originalRosterId))
           + '</span>')
         : '';
+      const score = Number(p.tradeScore);
+      const val = Number.isFinite(score)
+        ? ('<span class="pick-val" title="' + escapeHtml(p.note || '') + '">'
+          + pickStarsHtml(p.tradeStars)
+          + score.toFixed(1)
+          + '</span>')
+        : '';
       return '<span class="pick-chip' + (p.viaTrade ? ' via-trade' : '') + '">'
         + '<strong>' + escapeHtml(roundOrdinal(p.round)) + '</strong>'
         + via
+        + val
         + '</span>';
     }).join('');
     return '<div class="picks-year"><h3>' + escapeHtml(season) + ' draft</h3>'
       + '<div class="picks-chips">' + chips + '</div></div>';
   }).join('')
-    + '<p class="lineup-foot">Future picks only'
-    + (state.draftPickSeasons && state.draftPickSeasons.length
-      ? (' (' + escapeHtml(state.draftPickSeasons.join(' · ')) + ')')
-      : '')
-    + '. Own picks are plain; traded picks show the original franchise.</p>';
+    + '<p class="lineup-foot">Pick Trade ★ = median fringe (16-keeper ranks 17–21)'
+    + (baseBits.length ? (' [' + escapeHtml(baseBits.join(' · ')) + ']') : '')
+    + ' × year discount × '
+    + escapeHtml(nextMode)
+    + '; later years use original-franchise quality. '
+    + 'Own picks are plain; traded picks show the original franchise.</p>';
 }
 
 function renderTeam(){
@@ -3048,8 +3183,6 @@ function renderTeam(){
   renderTrades(t);
 }
 
-/* ---------- boot ---------- */
-
 async function loadAwards(){
   if (!window.PatioBoysAwards) return;
   try {
@@ -3066,6 +3199,7 @@ async function loadAwards(){
 }
 
 (async () => {
+  try {
   document.querySelectorAll('#dynastyPanel .view-toggle button[data-view]').forEach(btn => {
     btn.addEventListener('click', () => {
       const view = btn.getAttribute('data-view') === 'adv' ? 'adv' : 'basic';
@@ -3077,15 +3211,44 @@ async function loadAwards(){
     });
   });
 
+  let signaledReady = false;
+  function signalIntelReady(){
+    if (signaledReady) return;
+    signaledReady = true;
+    if (window.PatioBoysLoader){
+      PatioBoysLoader.reportProgress(72, {label: 'Painting team intel…', page: 'team-intel'});
+      PatioBoysLoader.signalReady({page: 'team-intel'});
+    }
+  }
+
+  function runIdle(fn, timeoutMs){
+    if (window.PatioBoysShare && typeof PatioBoysShare.runWhenIdle === 'function'){
+      PatioBoysShare.runWhenIdle(fn, timeoutMs);
+      return;
+    }
+    setTimeout(fn, Math.min(80, timeoutMs == null ? 600 : timeoutMs));
+  }
+  function yieldMain(){
+    if (window.PatioBoysShare && typeof PatioBoysShare.yieldToMain === 'function'){
+      return PatioBoysShare.yieldToMain();
+    }
+    return new Promise(r => setTimeout(r, 0));
+  }
+
   try {
     await loadCore();
     setLoadNote('Loaded ' + state.teams.length + ' franchises from "' + (state.league.name || 'Sleeper league') + '" · season ' + state.league.season + '. Pulling stats, players, and trades…');
     renderNav();
     renderTeam();
+    /* Clear HQ overlay after first team paint — keep filling in behind. */
+    signalIntelReady();
   } catch (e){
     setLoadNote('Could not load live league data: ' + e.message, true);
+    signalIntelReady();
     return;
   }
+
+  await yieldMain();
 
   const prevSeasonsPromise = loadPreviousSeasons().catch(e => {
     console.warn('Team Intel: previous seasons unavailable.', e);
@@ -3094,10 +3257,18 @@ async function loadAwards(){
 
   const playerDbPromise = loadPlayerDb().catch(e => console.warn('Team Intel: player DB failed.', e));
 
-  const ceilingsPromise = loadCeilings().catch(e => {
-    state.ceilingError = e.message || String(e);
-    console.warn('Team Intel: ceilings failed.', e);
-  }).finally(() => { state.ceilingSettled = true; });
+  /* Defer smash/gamelog ceilings until idle so tab clicks stay responsive. */
+  const ceilingsPromise = new Promise(resolve => {
+    runIdle(() => {
+      loadCeilings().catch(e => {
+        state.ceilingError = e.message || String(e);
+        console.warn('Team Intel: ceilings failed.', e);
+      }).finally(() => {
+        state.ceilingSettled = true;
+        resolve();
+      });
+    }, 700);
+  });
 
   const tasks = [
     playerDbPromise,
@@ -3109,7 +3280,11 @@ async function loadAwards(){
     }).finally(() => { state.projSettled = true; }),
     ceilingsPromise,
     prevSeasonsPromise.then(prev => loadTrades(prev)).catch(e => console.warn('Team Intel: trades failed.', e)),
-    playerDbPromise.then(() => loadAwards()).catch(e => console.warn('Team Intel: awards failed.', e)),
+    playerDbPromise.then(() => new Promise(resolve => {
+      runIdle(() => {
+        loadAwards().catch(e => console.warn('Team Intel: awards failed.', e)).finally(resolve);
+      }, 1200);
+    })),
     loadDraftPicks().catch(e => {
       state.picksError = e.message || String(e);
       state.picksReady = false;
@@ -3117,23 +3292,43 @@ async function loadAwards(){
     })
   ];
 
-  tasks.forEach(p => p.then(() => { renderNav(); renderTeam(); }));
+  /* Coalesce boot re-renders — each task used to paint the whole page. */
+  let bootRenderQueued = false;
+  function queueBootRender(){
+    if (bootRenderQueued) return;
+    bootRenderQueued = true;
+    setTimeout(() => {
+      bootRenderQueued = false;
+      renderNav();
+      renderTeam();
+    }, 0);
+  }
+  tasks.forEach(p => p.then(queueBootRender));
   await Promise.allSettled(tasks);
 
   /* FA pool needs player DB + projections + smash season from ceilings. */
-  try {
-    await loadFreeAgents();
-  } catch (e){
-    state.freeAgentsError = e.message || String(e);
-    console.warn('Team Intel: free agents failed.', e);
-  } finally {
-    state.freeAgentsSettled = true;
-  }
+  await new Promise(resolve => {
+    runIdle(async () => {
+      try {
+        await loadFreeAgents();
+      } catch (e){
+        state.freeAgentsError = e.message || String(e);
+        console.warn('Team Intel: free agents failed.', e);
+      } finally {
+        state.freeAgentsSettled = true;
+        resolve();
+      }
+    }, 1400);
+  });
 
   renderNav();
   renderTeam();
   setLoadNote(null);
+  } finally {
+    signalIntelReady();
+  }
 })();
+}); // pb-deps-ready
 </script>
 </body>
 </html>

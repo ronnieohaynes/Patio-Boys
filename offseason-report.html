@@ -121,6 +121,14 @@
 </style>
 </head>
 <body>
+<link rel="stylesheet" href="hq-loader.css">
+<div class="pb-boot-loader" id="pbBootLoader" role="progressbar" aria-live="polite" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+  <div class="pb-boot-mark" aria-hidden="true">PB</div>
+  <p class="pb-boot-label">Loading report card…</p>
+  <div class="pb-boot-bar" aria-hidden="true"><div class="pb-boot-bar-fill"></div></div>
+  <p class="pb-boot-pct">0%</p>
+</div>
+<script src="hq-loader.js"></script>
 <script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
 
 <div class="wrap">
@@ -134,8 +142,9 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260807-prime-10';
-  ['2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','nba-gamelogs-snapshot.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
+  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
+  /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
+  ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
 })();
@@ -395,7 +404,9 @@ async function load(){
     const leagueRes = await fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID);
     if (!leagueRes.ok) throw new Error('League fetch failed');
     const league = await leagueRes.json();
-    const playerDb = await fetch('https://api.sleeper.app/v1/players/nba').then(r => r.json());
+    const playerDb = (window.PatioBoysShare && typeof PatioBoysShare.fetchPlayersNba === 'function')
+      ? await PatioBoysShare.fetchPlayersNba()
+      : await fetch('https://api.sleeper.app/v1/players/nba').then(r => r.json());
 
     const draftPack = await gradeDraft(league, playerDb, msg => { status.textContent = msg; });
 
@@ -619,10 +630,12 @@ async function load(){
           + '</article>';
       }).join('')
       + '</div>';
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'offseason-report'});
   } catch (e){
     status.classList.add('error');
     status.textContent = 'Could not build off-season report: ' + (e.message || e);
     tag.textContent = 'Error';
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'offseason-report', error: true});
   }
 }
 
