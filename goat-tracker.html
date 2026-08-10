@@ -153,7 +153,7 @@
           <th>GM</th>
           <th>MIP</th>
           <th>Wins</th>
-          <th title="Career lineup efficiency (starter FP / optimal legal lineup). Display only — no GOAT points.">Eff</th>
+          <th title="Career lineup efficiency (starter FP / optimal starters+bench lineup; taxi/IR excluded). Display only — no GOAT points.">Eff</th>
           <th>GS</th>
           <th>WS</th>
           <th>Hardware</th>
@@ -174,7 +174,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260810-coach-taxi';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','team-needs.js','league-awards.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });

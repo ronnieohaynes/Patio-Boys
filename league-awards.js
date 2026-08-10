@@ -111,7 +111,9 @@
       const u = userById[r.owner_id] || {};
       const raw = (u.metadata && u.metadata.team_name) || u.display_name || ('Roster ' + r.roster_id);
       const key = franchiseKey(raw, u.display_name);
-      const players = [].concat(r.players || [], r.reserve || [], r.taxi || []).map(String);
+      const taxi = (r.taxi || []).map(String);
+      const reserve = (r.reserve || []).map(String);
+      const players = [].concat(r.players || [], reserve, taxi).map(String);
       return {
         key,
         displayName: TEAM_COLORS[key] ? key : raw,
@@ -119,6 +121,11 @@
         rosterId: r.roster_id,
         ownerId: r.owner_id,
         players: Array.from(new Set(players)),
+        /* Sleeper basketball Max PF / Pick Performance does not treat taxi +
+           IR like NFL full-roster Max PF. Keep them for dynasty totals, but
+           Coach efficiency excludes them from the optimal-lineup pool. */
+        taxi: Array.from(new Set(taxi)),
+        reserve: Array.from(new Set(reserve)),
         pf: rawPf(r.settings),
         wins: (r.settings && r.settings.wins) || 0,
         losses: (r.settings && r.settings.losses) || 0,
@@ -243,7 +250,7 @@
     return [
       { id: 'mvp', name: 'MVP', metric: 'Regular-season Points For', candidates: mvp, ready: mvp.length > 0 },
       { id: 'mip', name: 'Most Improved', metric: 'YoY Points For / game', candidates: mip, ready: mip.length > 0 },
-      { id: 'coach', name: 'Coach of the Year', metric: 'Lineup efficiency', candidates: coach, ready: coach.length > 0 },
+      { id: 'coach', name: 'Coach of the Year', metric: 'Lineup efficiency (excl. taxi/IR)', candidates: coach, ready: coach.length > 0 },
       { id: 'gm', name: 'GM of the Year', metric: 'YoY dynasty value', candidates: gm, ready: gm.length > 0 }
     ];
   }
@@ -416,7 +423,11 @@
         const t = byRoster[String(m.roster_id)];
         if (!t) return;
         const ptsMap = m.players_points || {};
-        const rosterPlayers = (m.players || t.players || []).map(String);
+        /* Match Sleeper basketball Max PF / Pick Performance: optimal pool is
+           starters + bench only — not taxi or IR/reserve. */
+        const excluded = new Set([].concat(t.taxi || [], t.reserve || []).map(String));
+        const rosterPlayers = (m.players || t.players || []).map(String)
+          .filter(pid => !excluded.has(pid));
         const recs = rosterPlayers.map(pid => {
           const pl = (playerDb && playerDb[pid]) || {};
           const metric = Number(ptsMap[pid]);
