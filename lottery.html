@@ -319,7 +319,11 @@
   }
   .nav-sub-team{
     display:inline-flex;align-items:center;gap:6px;
-    text-transform:none;letter-spacing:.03em;font-weight:500;
+    text-transform:none;letter-spacing:.02em;font-weight:500;
+    max-width:100%;
+  }
+  .nav-sub-team{
+    white-space:nowrap;
   }
   .nav-team-dot{
     width:8px;height:8px;border-radius:2px;flex-shrink:0;
@@ -2354,7 +2358,7 @@ document.getElementById('runBtn').addEventListener('click', () => {
 /* HQ nav: primary groups + secondary tabs. Draft/Rules stay in the map for
    easy re-enable, but are hidden from the menu so they never lazy-load.
    League secondary tabs are team names (built by buildLeagueTeamTabs). */
-const INTEL_FRAME_SRC = 'team-intel.html?embed=1&v=20260810-team-tabs';
+const INTEL_FRAME_SRC = 'team-intel.html?embed=1&v=20260810-team-tabs2';
 const HQ_NAV = {
   league: {
     label: 'League',
@@ -2430,10 +2434,15 @@ function buildLeagueTeamTabs(){
     btn.setAttribute('aria-controls', 'tabIntel');
     btn.dataset.group = 'league';
     btn.dataset.tab = t.tabId;
-    btn.hidden = true;
+    btn.hidden = hqActiveGroup !== 'league';
+    btn.title = t.displayName;
     btn.style.setProperty('--team-color', t.color);
-    btn.innerHTML = '<span class="nav-team-dot" aria-hidden="true"></span>'
-      + escapeHtml(t.displayName);
+    btn.textContent = '';
+    const dot = document.createElement('span');
+    dot.className = 'nav-team-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    btn.appendChild(dot);
+    btn.appendChild(document.createTextNode(t.displayName));
     btn.addEventListener('pointerdown', () => flashNavButton(btn));
     btn.addEventListener('click', () => setMainTab(t.tabId));
     if (firstOther) secondary.insertBefore(btn, firstOther);
@@ -2582,12 +2591,22 @@ function setMainTab(tab){
   flashNavButton(activeGroupBtn);
   flashNavButton(activeTabBtn);
 
+  /* Multiple League team tabs share tabIntel — show a panel if ANY active
+     mapping points at it (don't let sibling tabs flip it back to hidden). */
+  const panelVisible = {};
   Object.keys(HQ_NAV).forEach(g => {
     Object.keys(HQ_NAV[g].tabs).forEach(t => {
       const conf = HQ_NAV[g].tabs[t];
-      const panel = document.getElementById(conf.panel);
-      if (panel) panel.hidden = !(g === group && t === tab);
+      if (!conf.panel) return;
+      if (!Object.prototype.hasOwnProperty.call(panelVisible, conf.panel)){
+        panelVisible[conf.panel] = false;
+      }
+      if (g === group && t === tab) panelVisible[conf.panel] = true;
     });
+  });
+  Object.keys(panelVisible).forEach(panelId => {
+    const panel = document.getElementById(panelId);
+    if (panel) panel.hidden = !panelVisible[panelId];
   });
 
   const conf = HQ_NAV[group].tabs[tab];
