@@ -543,18 +543,18 @@
   <section class="stream-main">
     <nav class="hq-nav" aria-label="Patio Boys HQ">
       <div class="nav-primary" role="tablist" aria-label="HQ sections">
-        <button class="nav-group active" id="navGroupLeague" type="button" role="tab" aria-selected="true" data-group="league">League</button>
+        <button class="nav-group" id="navGroupLeague" type="button" role="tab" aria-selected="false" data-group="league">League</button>
         <button class="nav-group" id="navGroupMoves" type="button" role="tab" aria-selected="false" data-group="moves">Moves</button>
-        <button class="nav-group" id="navGroupHistory" type="button" role="tab" aria-selected="false" data-group="history">History</button>
+        <button class="nav-group active" id="navGroupHistory" type="button" role="tab" aria-selected="true" data-group="history">History</button>
         <button class="nav-group" id="navGroupDraft" type="button" role="tab" aria-selected="false" data-group="draft" hidden>Draft</button>
         <button class="nav-group" id="navGroupRules" type="button" role="tab" aria-selected="false" data-group="rules" hidden>Rules</button>
       </div>
-      <div class="nav-secondary" id="navSecondary" role="tablist" aria-label="League panels">
-        <!-- League team tabs are injected by buildLeagueTeamTabs() -->
+      <div class="nav-secondary" id="navSecondary" role="tablist" aria-label="History panels">
+        <!-- League team tabs are injected by buildLeagueTeamTabs(); hidden until League is selected. -->
         <button class="nav-sub" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa" data-group="moves" data-tab="fa" hidden>FA</button>
         <button class="nav-sub" id="tabBtnTx" type="button" role="tab" aria-selected="false" aria-controls="tabTx" data-group="moves" data-tab="tx" hidden>Trades</button>
         <button class="nav-sub" id="tabBtnTrade" type="button" role="tab" aria-selected="false" aria-controls="tabTrade" data-group="moves" data-tab="trade" hidden>Analyzer</button>
-        <button class="nav-sub" id="tabBtnStatus" type="button" role="tab" aria-selected="false" aria-controls="tabStatus" data-group="history" data-tab="status" hidden>Status</button>
+        <button class="nav-sub active" id="tabBtnStatus" type="button" role="tab" aria-selected="true" aria-controls="tabStatus" data-group="history" data-tab="status">Status</button>
         <button class="nav-sub" id="tabBtnOffseason" type="button" role="tab" aria-selected="false" aria-controls="tabOffseason" data-group="history" data-tab="offseason" hidden>Report</button>
         <button class="nav-sub" id="tabBtnGoat" type="button" role="tab" aria-selected="false" aria-controls="tabGoat" data-group="history" data-tab="goat" hidden>GOAT</button>
         <button class="nav-sub" id="tabBtnPast" type="button" role="tab" aria-selected="false" aria-controls="tabPast" data-group="history" data-tab="past" hidden>Past</button>
@@ -620,13 +620,13 @@
     <div class="boardsection status-panel" id="tabCharter" role="tabpanel" aria-labelledby="tabBtnCharter" hidden>
       <iframe class="status-frame" id="charterFrame" title="Charter" src="about:blank"></iframe>
     </div>
-    <div class="boardsection status-panel" id="tabStatus" role="tabpanel" aria-labelledby="tabBtnStatus" hidden>
+    <div class="boardsection status-panel" id="tabStatus" role="tabpanel" aria-labelledby="tabBtnStatus">
       <iframe class="status-frame" id="leagueStatusFrame" title="League Status" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabPast" role="tabpanel" aria-labelledby="tabBtnPast" hidden>
       <iframe class="status-frame" id="leagueHistoryFrame" title="Past Seasons" src="about:blank"></iframe>
     </div>
-    <div class="boardsection status-panel" id="tabIntel" role="tabpanel" aria-label="Team intel">
+    <div class="boardsection status-panel" id="tabIntel" role="tabpanel" aria-label="Team intel" hidden>
       <iframe class="status-frame" id="teamIntelFrame" title="Team Intel" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabGoat" role="tabpanel" aria-labelledby="tabBtnGoat" hidden>
@@ -2358,7 +2358,7 @@ document.getElementById('runBtn').addEventListener('click', () => {
 /* HQ nav: primary groups + secondary tabs. Draft/Rules stay in the map for
    easy re-enable, but are hidden from the menu so they never lazy-load.
    League secondary tabs are team names (built by buildLeagueTeamTabs). */
-const INTEL_FRAME_SRC = 'team-intel.html?embed=1&v=20260810-team-tabs2';
+const INTEL_FRAME_SRC = 'team-intel.html?embed=1&v=20260810-league-click';
 const HQ_NAV = {
   league: {
     label: 'League',
@@ -2434,7 +2434,8 @@ function buildLeagueTeamTabs(){
     btn.setAttribute('aria-controls', 'tabIntel');
     btn.dataset.group = 'league';
     btn.dataset.tab = t.tabId;
-    btn.hidden = hqActiveGroup !== 'league';
+    /* Team links stay hidden until the League menu is selected. */
+    btn.hidden = true;
     btn.title = t.displayName;
     btn.style.setProperty('--team-color', t.color);
     btn.textContent = '';
@@ -2525,7 +2526,7 @@ const hqLastTab = {
   draft: 'board',
   rules: 'charter'
 };
-let hqActiveGroup = 'league';
+let hqActiveGroup = 'history';
 let hqActiveTab = null;
 
 function confFrameSrc(conf){
@@ -2919,12 +2920,13 @@ if (refreshBtn){
 let bootTab = new URLSearchParams(location.search).get('tab');
 /* Old ?tab=history pointed at prior seasons; that panel is now Past under History. */
 if (bootTab === 'history') bootTab = 'past';
-/* Old League → Intel tab is now the first franchise tab. */
-if (bootTab === 'intel') bootTab = null;
+/* Old League → Intel tab is now a franchise tab under League. */
+if (bootTab === 'intel') bootTab = HQ_NAV.league.defaultTab || null;
 const bootGroup = bootTab ? HQ_TAB_TO_GROUP[bootTab] : null;
+/* Default landing is History → Status. Team links only appear after League is clicked. */
 setMainTab(bootGroup && HQ_NAV[bootGroup] && !HQ_NAV[bootGroup].hidden
   ? bootTab
-  : (HQ_NAV.league.defaultTab || 'status'));
+  : 'status');
 const leagueDataPromise = loadLeagueData().then(() => {
   buildLeagueTeamTabs();
 });
