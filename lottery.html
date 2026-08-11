@@ -321,9 +321,13 @@
     display:inline-flex;align-items:center;gap:6px;
     text-transform:none;letter-spacing:.02em;font-weight:500;
     max-width:100%;
-  }
-  .nav-sub-team{
     white-space:nowrap;
+  }
+  /* Author display:inline-flex would otherwise override the HTML hidden
+     attribute and keep League team tabs visible on Moves/History. */
+  .nav-sub[hidden],
+  .nav-sub-team[hidden]{
+    display:none !important;
   }
   .nav-team-dot{
     width:8px;height:8px;border-radius:2px;flex-shrink:0;
@@ -2358,7 +2362,7 @@ document.getElementById('runBtn').addEventListener('click', () => {
 /* HQ nav: primary groups + secondary tabs. Draft/Rules stay in the map for
    easy re-enable, but are hidden from the menu so they never lazy-load.
    League secondary tabs are team names (built by buildLeagueTeamTabs). */
-const INTEL_FRAME_SRC = 'team-intel.html?embed=1&v=20260810-lineup-edit';
+const INTEL_FRAME_SRC = 'team-intel.html?embed=1&v=20260811-hide-teams';
 const HQ_NAV = {
   league: {
     label: 'League',
