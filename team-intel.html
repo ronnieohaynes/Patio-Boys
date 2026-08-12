@@ -584,7 +584,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260810-lineup-edit';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260812-retired0';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -1536,6 +1536,15 @@ function nbaRoleSentence(pid, dist, effectiveOrder){
     return team
       ? ('On IR/suspension for ' + team + ' — not in the active mix.')
       : 'On IR/suspension — not in the active mix.';
+  }
+
+  if (window.LockInDist && typeof LockInDist.isRetiredPlayer === 'function'
+    && LockInDist.isRetiredPlayer(p)){
+    return 'Retired — dynasty value is 0.';
+  }
+  if (String(p.status || '').toUpperCase() === 'RET'
+    || String(p.status || '').toUpperCase() === 'RETIRED'){
+    return 'Retired — dynasty value is 0.';
   }
 
   if (!team || p.status === 'FA' || p.status === 'Inactive'){

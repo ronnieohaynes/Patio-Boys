@@ -1133,8 +1133,46 @@
     return t.length === 3;
   }
 
+  /* Sleeper uses status "RET" for retired players. */
+  function isRetiredPlayer(p){
+    if (!p || typeof p !== 'object') return false;
+    const s = String(p.status || '').trim().toUpperCase();
+    return s === 'RET' || s === 'RETIRED';
+  }
+
+  function zeroRetiredLockValues(d){
+    if (!d) return;
+    const tier = lockOvrTier(0);
+    d.lockBase = 0;
+    d.lockBaseSource = 'retired';
+    d.lockBlend = null;
+    d.lockOvrProd = 0;
+    d.lockOvr = 0;
+    d.lockOvrUnsignedFloor = false;
+    d.lockOvrRetired = true;
+    d.lockTier = tier.key;
+    d.lockTierLabel = tier.label;
+    d.lockScore = 0;
+    d.lockStars = null;
+    d.lockPct = null;
+    d.tradeScore = 0;
+    d.tradeStars = 0;
+    d.tradeAgeMult = 1;
+    d.tradeInjuryMult = 1;
+    d.tradeInjuryProneMult = 1;
+    d.tradeInjuryStatusMult = 1;
+    d.tradeContractMult = 1;
+    d.tradeContractNote = null;
+    d.tradeSituationMult = 1;
+    d.tradeSituationNote = 'Retired — dynasty value zeroed';
+    d.tradeSituationKind = 'retired';
+    d.tradeSituationPressure = null;
+    d._lockMeta = null;
+  }
+
   /* Fantasy FP/G projection. No NBA roster → 0 until signed. */
   function projectionForPlayer(raw, player){
+    if (isRetiredPlayer(player)) return 0;
     if (!playerHasNbaTeam(player)) return 0;
     if (raw == null || raw === '') return null;
     const v = Number(raw);
@@ -1454,6 +1492,10 @@
         : 'On IR/suspension — not in the active mix.';
     }
 
+    if (isRetiredPlayer(p) || String(p.status || '').toUpperCase() === 'RET'){
+      return 'Retired — dynasty value is 0.';
+    }
+
     if (!playerHasNbaTeam(p) || p.status === 'FA' || p.status === 'Inactive'){
       if (years === 0) return 'Rookie still waiting on a settled NBA roster role.';
       return 'Free agent — no current NBA team role.';
@@ -1512,6 +1554,7 @@
   /* Lock blend input: unsigned players contribute no upcoming proj (null),
      while UI/optimizer still show projectionForPlayer → 0. */
   function lockProjFromMap(projById, pid, player){
+    if (isRetiredPlayer(player)) return null;
     if (!playerHasNbaTeam(player)) return null;
     return projFromMap(projById, pid);
   }
@@ -1533,6 +1576,10 @@
       const d = distMap[pid];
       if (!d) return;
       const p = playerDb[pid] || playerDb[String(pid)] || {};
+      if (isRetiredPlayer(p)){
+        zeroRetiredLockValues(d);
+        return;
+      }
       const isRookie = isRookiePlayer(p, pid, {
         rookieIds: options.rookieIds,
         rookieNames
@@ -1659,8 +1706,13 @@
     Object.keys(distMap || {}).forEach(pid => {
       const d = distMap[pid];
       if (!d || d.lockOvrProd == null) return;
+      if (d.lockOvrRetired) return;
       const meta = d._lockMeta || {};
       const p = meta.p || playerDb[pid] || playerDb[String(pid)] || {};
+      if (isRetiredPlayer(p)){
+        zeroRetiredLockValues(d);
+        return;
+      }
       const isRookie = !!meta.isRookie;
       const band = meta.band || lockAgeBand(p.age, isRookie);
       const prodOvr = Number(d.lockOvrProd);
@@ -2121,6 +2173,7 @@
     fantasyPosSet,
     isNbaSkater,
     playerHasNbaTeam,
+    isRetiredPlayer,
     projectionForPlayer,
     zeroUnsignedProjections,
     readProjection,
