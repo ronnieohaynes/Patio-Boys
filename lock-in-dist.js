@@ -719,6 +719,83 @@
       + SMASH_WEIGHTS.hit * smashHitScore(dist);
   }
 
+  /* Letter grade on raw smash base (same anchors as Lock OVR curve).
+     Visible “how smashy” read — Avg alone can look even while grade differs. */
+  const SMASH_GRADE_BANDS = [
+    {min: 40, grade: 'A+'},
+    {min: 37, grade: 'A'},
+    {min: 34, grade: 'A-'},
+    {min: 30, grade: 'B+'},
+    {min: 27, grade: 'B'},
+    {min: 24, grade: 'B-'},
+    {min: 20, grade: 'C+'},
+    {min: 16, grade: 'C'},
+    {min: 13, grade: 'C-'},
+    {min: 10, grade: 'D'},
+    {min: 0, grade: 'F'}
+  ];
+
+  function smashGradeFromBase(base){
+    if (base == null || base === '') return null;
+    const x = Number(base);
+    if (!Number.isFinite(x)) return null;
+    for (let i = 0; i < SMASH_GRADE_BANDS.length; i++){
+      if (x >= SMASH_GRADE_BANDS[i].min) return SMASH_GRADE_BANDS[i].grade;
+    }
+    return 'F';
+  }
+
+  function smashParts(dist){
+    if (!dist || !Number.isFinite(Number(dist.mean))) return null;
+    const mean = Number(dist.mean);
+    const ceiling = Number.isFinite(Number(dist.ceiling)) ? Number(dist.ceiling) : mean;
+    const hit = smashHitScore(dist);
+    const base = smashLockBase({
+      mean: mean,
+      ceiling: ceiling,
+      hits: dist.hits || {}
+    });
+    if (base == null || !Number.isFinite(base)) return null;
+    return {
+      mean: mean,
+      ceiling: ceiling,
+      hitScore: Math.round(hit * 1000) / 1000,
+      base: Math.round(base * 100) / 100,
+      avgPart: Math.round(SMASH_WEIGHTS.avg * mean * 100) / 100,
+      ceilPart: Math.round(SMASH_WEIGHTS.ceil * ceiling * 100) / 100,
+      hitPart: Math.round(SMASH_WEIGHTS.hit * hit * 100) / 100,
+      n: Number(dist.n) || 0,
+      projOnly: !!dist.projOnly
+    };
+  }
+
+  function attachSmashGrade(d){
+    if (!d) return;
+    const parts = smashParts(d);
+    if (parts && parts.n >= MIN_SAMPLES_FOR_SMASH && !parts.projOnly){
+      d.smashBase = parts.base;
+      d.smashMean = parts.mean;
+      d.smashCeiling = parts.ceiling;
+      d.smashHitScore = parts.hitScore;
+      d.smashAvgPart = parts.avgPart;
+      d.smashCeilPart = parts.ceilPart;
+      d.smashHitPart = parts.hitPart;
+      d.smashGrade = smashGradeFromBase(parts.base);
+      d.smashGradeSource = 'season';
+      return;
+    }
+    /* Thin / proj stub: grade the blended lockBase so rookies still show something. */
+    if (d.lockBase != null && Number.isFinite(Number(d.lockBase))){
+      d.smashBase = Math.round(Number(d.lockBase) * 100) / 100;
+      d.smashGrade = smashGradeFromBase(d.lockBase);
+      d.smashGradeSource = d.lockBaseSource || 'blend';
+      return;
+    }
+    d.smashBase = null;
+    d.smashGrade = null;
+    d.smashGradeSource = null;
+  }
+
   /* Smash input for one season — prefer full smash; fall back to season mean. */
   function seasonLockInput(dist){
     if (!dist || dist.projOnly) return null;
@@ -1265,6 +1342,9 @@
     d.lockPct = null;
     d.tradeScore = 0;
     d.tradeStars = 0;
+    d.smashBase = 0;
+    d.smashGrade = 'F';
+    d.smashGradeSource = 'retired';
     d.tradeAgeMult = 1;
     d.tradeInjuryMult = 1;
     d.tradeInjuryProneMult = 1;
@@ -1776,6 +1856,7 @@
         d.rookieCompPeak = peakComp;
         d.rookieEarlyMult = earlyMult;
         d.rookieRankFloor = rankFloor;
+        attachSmashGrade(d);
         return;
       }
 
@@ -1804,6 +1885,7 @@
       d.rookieProj = proj;
       d.rookieOvrCapped = isRookie && thin && rawOvr > ROOKIE_LOCK_OVR_CAP;
       d._lockMeta = {isRookie, band, p, thin, rawOvr};
+      attachSmashGrade(d);
       count++;
     });
 
@@ -2170,6 +2252,10 @@
     return map[grade] || 'grade-pending';
   }
 
+  function smashGradeClass(grade){
+    return fpPerMinGradeClass(grade);
+  }
+
   function readFpPerMin(dist){
     if (!dist) return null;
     const rate = Number(dist.avgFpPerMin);
@@ -2278,6 +2364,11 @@
     teamLockInSummary,
     smashHitScore,
     smashLockBase,
+    smashParts,
+    smashGradeFromBase,
+    smashGradeClass,
+    attachSmashGrade,
+    SMASH_GRADE_BANDS,
     seasonLockInput,
     blendWeightedBase,
     blendSourceLabel,
