@@ -584,7 +584,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260813-smashgrade';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-smash5025';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -1790,7 +1790,7 @@ function renderLockIn(t){
       : d.projOnly
         ? 'Projection stub (no game samples yet)'
         : ('Mean of ' + d.n + ' game samples (season totals unavailable)');
-    const w = (window.LockInDist && LockInDist.SMASH_WEIGHTS) || {avg:0.4, ceil:0.3, hit:0.3};
+    const w = (window.LockInDist && LockInDist.SMASH_WEIGHTS) || {avg:0.5, ceil:0.25, hit:0.25};
     const floor = (window.LockInDist && LockInDist.LOCK_OVR_FLOOR) || 50;
     const ceilO = (window.LockInDist && LockInDist.LOCK_OVR_CEIL) || 99;
     const lockTitle = d.lockOvr != null
@@ -1877,7 +1877,7 @@ function renderLockIn(t){
     if (d.smashBase != null && Number.isFinite(Number(d.smashBase))){
       smashTitle = 'Smash ' + Number(d.smashBase).toFixed(1)
         + (smashGrade ? (' · grade ' + smashGrade) : '')
-        + ' = 40% Avg + 30% Ceil + 30% boom hits';
+        + ' = 50% Avg + 25% Ceil + 25% boom hits';
       if (d.smashAvgPart != null){
         smashTitle += ' ('
           + Number(d.smashAvgPart).toFixed(1) + ' avg + '
@@ -1956,7 +1956,7 @@ function renderLockIn(t){
 
   const note = basic
     ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Age, Trade ★, season Avg, '
-      + '<strong>Smash</strong> grade (40% Avg + 30% Ceil + 30% boom hits — why similar Avg can still split Lock), NBA '
+      + '<strong>Smash</strong> grade (50% Avg + 25% Ceil + 25% boom hits — why similar Avg can still split Lock), NBA '
       + '<strong>Contract</strong> (years left / remaining total, nearest $0.1M), and an NBA '
       + '<strong>Role</strong> line from Sleeper depth chart + production tier. '
       + 'Lock blends smash bases — vets <strong>60% '

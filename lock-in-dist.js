@@ -452,14 +452,14 @@
   }
 
   /* ---- Smash-hunting Lock OVR (Intel) ----
-     Raw smash base = 0.40·Avg + 0.30·Ceil + 0.30·(40·P≥40 + 50·P≥50)
+     Raw smash base = 0.50·Avg + 0.25·Ceil + 0.25·(40·P≥40 + 50·P≥50)
      Rookies: Y1 proj + early-career comps (peak floors haircut) or draft-rank
      bands (50/50), soft-capped until smash samples exist.
      Thin vet samples (N < 5 game lines) fall back to projected FP/G.
      Lock OVR maps smash base → 50–99 on an ABSOLUTE curve (not pool
      percentile — percentile vs all NBA stuffed every roster guy into the 90s).
      Age / injury stay off OVR — those belong on Trade stars later. */
-  const SMASH_WEIGHTS = { avg: 0.40, ceil: 0.30, hit: 0.30 };
+  const SMASH_WEIGHTS = { avg: 0.50, ceil: 0.25, hit: 0.25 };
   const MIN_SAMPLES_FOR_SMASH = 5;
   /* Multi-season Lock blend (smash bases, then OVR curve).
      Vet: 60% last · 20% prior · 20% next-year proj.
