@@ -2,8 +2,8 @@
    Fetches completed trades (+ optional waivers/FA) across the league chain,
    resolves drafted picks to players, and grades with Lock OVR / Trade ★
    as of that season (tradeScore-at-time). Fairness uses quality-weighted
-   package value (primary full; extras capped sweetener) — same model as
-   Trade Analyzer. Future unresolved picks use DraftPickValue (16-keeper
+   package value (co-cores near full; step-down chips capped) — same model
+   as Trade Analyzer. Future unresolved picks use DraftPickValue (16-keeper
    fringe). Roster-fit uses lockBase (smash FP).
    Pass { tradesOnly: true } to skip adds/drops / waiver grading. */
 (function(global){
@@ -83,11 +83,16 @@
     return 'F';
   }
 
-  /* Package grading (same model as Trade Analyzer): best asset at full
-     Trade ★; extras are diminishing sweetener capped vs the primary so
-     piles cannot manufacture a star. */
-  const PKG_EXTRA_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* 2nd … 5th+ */
-  const PKG_EXTRAS_CAP = 0.25; /* extras ≤ 25% of primary */
+  /* Package grading (same model as Trade Analyzer): assets within
+     PKG_CORE_RATIO of the primary and ≥ PKG_CORE_FLOOR are co-cores
+     (near-full value). Clear step-downs are chips — diminishing weights
+     + hard cap so fringe piles cannot manufacture a star. */
+  const PKG_CORE_RATIO = 0.82; /* ≥82% of primary → co-core candidate */
+  const PKG_CORE_FLOOR = 70; /* co-cores must also clear this Trade ★ */
+  const PKG_CORE_WEIGHTS = [1.00, 0.85, 0.70]; /* 1st / 2nd / 3rd+ core */
+  const PKG_CHIP_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* chips only */
+  const PKG_CHIPS_CAP = 0.25; /* chips ≤ 25% of primary */
+  const PKG_EXTRAS_CAP = PKG_CHIPS_CAP; /* alias */
   const PKG_PRIMARY_SOFT = 0.78; /* best-vs-best below this → caution */
 
   function assetPackageScore(a){
@@ -104,26 +109,45 @@
     const raw = scored.reduce((s, x) => s + x.value, 0);
     if (!scored.length){
       return {
-        raw: 0, effective: 0, primary: 0, extrasRaw: 0, extrasEff: 0,
-        extrasCapped: false, n: 0
+        raw: 0, effective: 0, primary: 0, coresEff: 0, chipsEff: 0,
+        extrasRaw: 0, extrasEff: 0, extrasCapped: false,
+        coreCount: 0, chipCount: 0, n: 0
       };
     }
     const primary = scored[0].value;
-    let extrasWeighted = 0;
-    for (let i = 1; i < scored.length; i++){
-      const w = PKG_EXTRA_WEIGHTS[i - 1] != null ? PKG_EXTRA_WEIGHTS[i - 1] : 0.08;
-      extrasWeighted += scored[i].value * w;
-    }
-    const cap = primary * PKG_EXTRAS_CAP;
-    const extrasCapped = extrasWeighted > cap + 1e-9;
-    const extrasEff = Math.min(extrasWeighted, cap);
+    const cores = [];
+    const chips = [];
+    scored.forEach((x, i) => {
+      const isCore = i === 0
+        || (x.value + 1e-9 >= primary * PKG_CORE_RATIO && x.value + 1e-9 >= PKG_CORE_FLOOR);
+      if (isCore) cores.push(x);
+      else chips.push(x);
+    });
+    let coresEff = 0;
+    cores.forEach((x, i) => {
+      const w = PKG_CORE_WEIGHTS[i] != null ? PKG_CORE_WEIGHTS[i] : 0.70;
+      coresEff += x.value * w;
+    });
+    let chipsWeighted = 0;
+    chips.forEach((x, i) => {
+      const w = PKG_CHIP_WEIGHTS[i] != null ? PKG_CHIP_WEIGHTS[i] : 0.08;
+      chipsWeighted += x.value * w;
+    });
+    const cap = primary * PKG_CHIPS_CAP;
+    const chipsCapped = chipsWeighted > cap + 1e-9;
+    const chipsEff = Math.min(chipsWeighted, cap);
+    const extrasEff = (coresEff - primary) + chipsEff;
     return {
       raw: Math.round(raw * 100) / 100,
-      effective: Math.round((primary + extrasEff) * 100) / 100,
+      effective: Math.round((coresEff + chipsEff) * 100) / 100,
       primary: Math.round(primary * 100) / 100,
+      coresEff: Math.round(coresEff * 100) / 100,
+      chipsEff: Math.round(chipsEff * 100) / 100,
       extrasRaw: Math.round((raw - primary) * 100) / 100,
       extrasEff: Math.round(extrasEff * 100) / 100,
-      extrasCapped: extrasCapped,
+      extrasCapped: chipsCapped,
+      coreCount: cores.length,
+      chipCount: chips.length,
       n: scored.length
     };
   }
@@ -585,8 +609,7 @@
   /* Trades: quality-weighted package fairness at Trade ★-at-time
      (no roster-fit). Unresolved future picks use DraftPickValue
      (fringe medians × slot/quality). Fairness uses package grade —
-     primary at full value, extras as capped sweetener — matching
-     Trade Analyzer so piles cannot manufacture a star. */
+     co-cores near full; step-down chips capped — matching Trade Analyzer. */
   function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason, pickValueCtx){
     const sideVals = sides.map(side => {
       let graded = 0;
@@ -637,6 +660,8 @@
         packageRaw: pack.raw,
         packagePrimary: pack.primary,
         packageExtrasEff: pack.extrasEff,
+        coreCount: pack.coreCount,
+        chipCount: pack.chipCount,
         extrasCapped: pack.extrasCapped,
         assetCount: gradedCount,
         avgDynasty: gradedCount > 0 ? graded / gradedCount : 0,
@@ -650,7 +675,8 @@
     const valuedPicks = sideVals.reduce((n, s) => n + (s.valuedPicks || 0), 0);
     const emptySide = {
       dynastyIn: 0, packageEffective: 0, packageRaw: 0, packagePrimary: 0,
-      assetCount: 0, avgDynasty: 0, team: null, extrasCapped: false
+      assetCount: 0, avgDynasty: 0, team: null, extrasCapped: false,
+      coreCount: 0, chipCount: 0
     };
     const a = sideVals[0] || emptySide;
     const b = sideVals[1] || emptySide;
@@ -701,14 +727,19 @@
       reasonBits.push(pendingPicks + ' pick' + (pendingPicks === 1 ? '' : 's')
         + ' still unvalued');
     }
+    if ((a.coreCount || 0) >= 2 || (b.coreCount || 0) >= 2){
+      reasonBits.push('Co-cores (≥'
+        + Math.round(PKG_CORE_RATIO * 100)
+        + '% of primary and ≥' + PKG_CORE_FLOOR + ' Trade ★)');
+    }
     if (a.extrasCapped || b.extrasCapped){
-      reasonBits.push('Extras capped at ' + Math.round(PKG_EXTRAS_CAP * 100)
+      reasonBits.push('Step-down chips capped at ' + Math.round(PKG_CHIPS_CAP * 100)
         + '% of primary');
     }
     if (softPrimary){
       reasonBits.push('Primary assets far apart ('
         + Math.round(primaryHigh) + ' vs ' + Math.round(primaryLow)
-        + ') — pile sweetener cannot fully close');
+        + ') — chips cannot fully close');
     }
     if (rawClosePkgFar){
       reasonBits.push('Raw sums look close but package quality diverges');
@@ -1183,6 +1214,10 @@
     packageValueParts,
     effectivePackageValue,
     PKG_EXTRAS_CAP,
-    PKG_EXTRA_WEIGHTS
+    PKG_CHIPS_CAP,
+    PKG_CORE_RATIO,
+    PKG_CORE_FLOOR,
+    PKG_CORE_WEIGHTS,
+    PKG_CHIP_WEIGHTS
   };
 })(typeof window !== 'undefined' ? window : globalThis);

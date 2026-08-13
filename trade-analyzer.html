@@ -338,7 +338,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Fairness uses <strong>quality-weighted package value</strong> (best asset full; extras as capped sweetener). Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; clear step-downs as capped chips). Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -416,7 +416,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260813-pkggrade';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-dualcore';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -876,10 +876,16 @@ function assetTradeValue(p){
   return Number.isFinite(v) ? v : 0;
 }
 
-/* Package grading: best asset at full value; extras are sweetener with
-   diminishing weights and a hard cap so piles can't manufacture a star. */
-const PKG_EXTRA_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* 2nd … 5th+ */
-const PKG_EXTRAS_CAP = 0.25; /* extras ≤ 25% of primary */
+/* Package grading: co-cores vs chips.
+   Assets within PKG_CORE_RATIO of the primary AND at/above PKG_CORE_FLOOR
+   count as cores (near-full value). Clear step-downs / fringe are chips —
+   diminishing weights + hard cap so piles cannot manufacture a star. */
+const PKG_CORE_RATIO = 0.82; /* ≥82% of primary → co-core candidate */
+const PKG_CORE_FLOOR = 70; /* co-cores must also clear this Trade ★ */
+const PKG_CORE_WEIGHTS = [1.00, 0.85, 0.70]; /* 1st / 2nd / 3rd+ core */
+const PKG_CHIP_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* chips only */
+const PKG_CHIPS_CAP = 0.25; /* chips ≤ 25% of primary */
+const PKG_EXTRAS_CAP = PKG_CHIPS_CAP; /* alias for older call sites */
 const PKG_PRIMARY_SOFT = 0.78; /* best-vs-best below this → caution when piles differ */
 
 function packageValueParts(assets){
@@ -890,26 +896,45 @@ function packageValueParts(assets){
   const raw = scored.reduce((s, x) => s + x.value, 0);
   if (!scored.length){
     return {
-      raw: 0, effective: 0, primary: 0, extrasRaw: 0, extrasEff: 0,
-      extrasCapped: false, n: 0
+      raw: 0, effective: 0, primary: 0, coresEff: 0, chipsEff: 0,
+      extrasRaw: 0, extrasEff: 0, extrasCapped: false,
+      coreCount: 0, chipCount: 0, n: 0
     };
   }
   const primary = scored[0].value;
-  let extrasWeighted = 0;
-  for (let i = 1; i < scored.length; i++){
-    const w = PKG_EXTRA_WEIGHTS[i - 1] != null ? PKG_EXTRA_WEIGHTS[i - 1] : 0.08;
-    extrasWeighted += scored[i].value * w;
-  }
-  const cap = primary * PKG_EXTRAS_CAP;
-  const extrasCapped = extrasWeighted > cap + 1e-9;
-  const extrasEff = Math.min(extrasWeighted, cap);
+  const cores = [];
+  const chips = [];
+  scored.forEach((x, i) => {
+    const isCore = i === 0
+      || (x.value + 1e-9 >= primary * PKG_CORE_RATIO && x.value + 1e-9 >= PKG_CORE_FLOOR);
+    if (isCore) cores.push(x);
+    else chips.push(x);
+  });
+  let coresEff = 0;
+  cores.forEach((x, i) => {
+    const w = PKG_CORE_WEIGHTS[i] != null ? PKG_CORE_WEIGHTS[i] : 0.70;
+    coresEff += x.value * w;
+  });
+  let chipsWeighted = 0;
+  chips.forEach((x, i) => {
+    const w = PKG_CHIP_WEIGHTS[i] != null ? PKG_CHIP_WEIGHTS[i] : 0.08;
+    chipsWeighted += x.value * w;
+  });
+  const cap = primary * PKG_CHIPS_CAP;
+  const chipsCapped = chipsWeighted > cap + 1e-9;
+  const chipsEff = Math.min(chipsWeighted, cap);
+  const extrasEff = (coresEff - primary) + chipsEff;
   return {
     raw: Math.round(raw * 100) / 100,
-    effective: Math.round((primary + extrasEff) * 100) / 100,
+    effective: Math.round((coresEff + chipsEff) * 100) / 100,
     primary: Math.round(primary * 100) / 100,
+    coresEff: Math.round(coresEff * 100) / 100,
+    chipsEff: Math.round(chipsEff * 100) / 100,
     extrasRaw: Math.round((raw - primary) * 100) / 100,
     extrasEff: Math.round(extrasEff * 100) / 100,
-    extrasCapped: extrasCapped,
+    extrasCapped: chipsCapped,
+    coreCount: cores.length,
+    chipCount: chips.length,
     n: scored.length
   };
 }
@@ -1474,13 +1499,34 @@ function analyze(){
         + bigSide + ' still holds the star-quality edge.'
     });
   }
+  if (packToA.coreCount >= 2 || packToB.coreCount >= 2){
+    const bits = [];
+    if (packToA.coreCount >= 2){
+      bits.push(aName + ' receives ' + packToA.coreCount + ' cores');
+    }
+    if (packToB.coreCount >= 2){
+      bits.push(bName + ' receives ' + packToB.coreCount + ' cores');
+    }
+    flags.push({
+      cls: 'ok',
+      title: 'Co-cores',
+      text: bits.join('; ')
+        + '. Assets within '
+        + Math.round(PKG_CORE_RATIO * 100)
+        + '% of the top piece and ≥ Trade ★ '
+        + PKG_CORE_FLOOR
+        + ' count near full value — not as chips.'
+    });
+  }
   if (packToA.extrasCapped || packToB.extrasCapped){
     flags.push({
       cls: 'ok',
-      title: 'Extras capped',
-      text: 'Sweetener chips are capped at '
-        + Math.round(PKG_EXTRAS_CAP * 100)
-        + '% of each side’s top asset so fringe piles cannot manufacture star value.'
+      title: 'Chips capped',
+      text: 'True step-down chips (below '
+        + Math.round(PKG_CORE_RATIO * 100)
+        + '% of the top asset) are capped at '
+        + Math.round(PKG_CHIPS_CAP * 100)
+        + '% of that primary so fringe piles cannot manufacture star value.'
     });
   }
   if (!unfair){
@@ -1595,7 +1641,7 @@ function analyze(){
     if (softNeed) softBits.push('starter-lineup need mismatch');
     if (softContract) softBits.push('max-for-min contract mismatch');
     if (softPackage && softBits.length === 1){
-      rulingWhy = 'Raw chips may add up, but quality-weighted package value (best asset full; extras capped as sweetener) still favors one side. Allow with caution.';
+      rulingWhy = 'Raw chips may add up, but quality-weighted package value (co-cores near full; step-downs capped as chips) still favors one side. Allow with caution.';
     } else if (softContract && softBits.length === 1){
       rulingWhy = 'Trade ★ is close enough, but one side takes on max/near-max money while the other gets min/cheap deals. Allow with caution.';
     } else if (softNeed && softBits.length === 1){
@@ -1748,13 +1794,16 @@ function setMode(mode){
   const lede = document.getElementById('ledeText');
   if (state.mode === 'finder'){
     lede.innerHTML = 'Trade Finder scans for <strong>1–3 asset</strong> packages (players + picks), including mismatched counts. '
-      + 'Fairness uses <strong>quality-weighted</strong> package value (best asset full; extras capped as sweetener). '
+      + 'Fairness uses <strong>quality-weighted</strong> package value (co-cores near full; clear step-downs as capped chips). '
       + 'It also grades fringe seats, starter-lineup <strong>need</strong>, and <strong>max-for-min</strong> contracts. '
       + '<strong>Shop</strong> = offers for one or more of your players; <strong>Find</strong> = what you can send for players on one other team (up to 4). Click to open in Analyze.';
     renderFinder();
   } else {
     lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending. '
-      + 'Fairness is <strong>quality-weighted package value</strong>: top asset at full Trade ★, extras as sweetener (diminishing + capped) so piles cannot manufacture a star. '
+      + 'Fairness is <strong>quality-weighted package value</strong>: assets within '
+      + Math.round(PKG_CORE_RATIO * 100)
+      + '% of the top piece and ≥ Trade ★ ' + PKG_CORE_FLOOR
+      + ' are <strong>co-cores</strong> (near-full Trade ★); clear step-downs are chips (diminishing + capped) so fringe piles cannot manufacture a star. '
       + 'Player Trade ★ = Lock OVR × age × injury × contract × situation × <strong>potential</strong>; picks use fringe bases × slot/quality. '
       + 'Keeper-seat, starter-lineup need, and max-for-min contracts can nudge Allow → Caution. '
       + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
