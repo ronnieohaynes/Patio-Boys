@@ -584,7 +584,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260813-smash05s';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-smashgg';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -1689,6 +1689,17 @@ function renderLockIn(t){
         return d.smashBoomRate != null ? d.smashBoomRate
           : (d.smashBase != null ? d.smashBase : null);
       }
+      if (key === 'smashGg' || key === 'smashCeilingMark'){
+        if (d.smashCeilingMark != null && Number.isFinite(Number(d.smashCeilingMark))){
+          return Number(d.smashCeilingMark);
+        }
+        const mean = Number(d.mean);
+        const stdev = Number(d.stdev);
+        const sig = (window.LockInDist && LockInDist.SMASH_BOOM_SIGMA != null)
+          ? Number(LockInDist.SMASH_BOOM_SIGMA) : 0.5;
+        if (Number.isFinite(mean) && Number.isFinite(stdev) && stdev > 0) return mean + sig * stdev;
+        return null;
+      }
       if (key === 'avgPer30') return d.avgPer30;
       if (key === 'avgPer36') return d.avgPer36;
       if (key === 'avgMpg') return d.avgMpg;
@@ -1735,6 +1746,7 @@ function renderLockIn(t){
       + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
       + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
       + (TS ? TS.thHtml('Smash', 'smashBoomRate', sortState, 'num') : '<th class="num">Smash</th>')
+      + (TS ? TS.thHtml('GG', 'smashGg', sortState, 'num') : '<th class="num">GG</th>')
       + (TS ? TS.thHtml('Contract', 'contract', sortState, 'num') : '<th class="num">Contract</th>')
       + (TS ? TS.thHtml('Role', 'role', sortState, 'role') : '<th class="role">Role</th>')
       + '</tr>')
@@ -1746,6 +1758,7 @@ function renderLockIn(t){
       + (TS ? TS.thHtml('Trade', 'tradeScore', sortState) : '<th>Trade</th>')
       + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
       + (TS ? TS.thHtml('Smash', 'smashBoomRate', sortState, 'num') : '<th class="num">Smash</th>')
+      + (TS ? TS.thHtml('GG', 'smashGg', sortState, 'num') : '<th class="num">GG</th>')
       + (TS ? TS.thHtml('Min', 'avgMpg', sortState, 'num') : '<th class="num">Min</th>')
       + (TS ? TS.thHtml('FP/m', 'avgFpPerMin', sortState, 'num') : '<th class="num">FP/m</th>')
       + (TS ? TS.thHtml('/30', 'avgPer30', sortState, 'num') : '<th class="num">/30</th>')
@@ -1767,14 +1780,14 @@ function renderLockIn(t){
       if (basic){
         return '<tr>' + posCell + nameCell
           + '<td class="num">—</td>' + ageCell
-          + '<td class="num">—</td><td class="num">—</td><td class="num">—</td>'
+          + '<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>'
           + contractCellHtml(d.pid)
           + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d, effOrder)) + '</td></tr>';
       }
       return '<tr>' + posCell + nameCell
         + '<td class="num">—</td>' + ageCell
         + '<td class="num">—</td>'
-        + '<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>'
+        + '<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>'
         + marks.map(() => '<td class="num">—</td>').join('')
         + '<td class="num">0</td></tr>';
     }
@@ -1896,6 +1909,18 @@ function renderLockIn(t){
           : '')
         + '</td>')
       : '<td class="num">—</td>';
+    let ggVal = ceilMark;
+    if (ggVal == null || !Number.isFinite(ggVal)){
+      const mean = Number(d.mean);
+      const stdev = Number(d.stdev);
+      const sig = (window.LockInDist && LockInDist.SMASH_BOOM_SIGMA != null)
+        ? Number(LockInDist.SMASH_BOOM_SIGMA) : 0.5;
+      if (Number.isFinite(mean) && Number.isFinite(stdev) && stdev > 0) ggVal = mean + sig * stdev;
+    }
+    const ggCell = ggVal != null && Number.isFinite(ggVal)
+      ? ('<td class="num" title="GG (good game) = Avg+0.5σ · personal quality lock line">'
+        + ggVal.toFixed(1) + '</td>')
+      : '<td class="num">—</td>';
     const per30Txt = d.avgPer30 != null && Number.isFinite(d.avgPer30) ? d.avgPer30.toFixed(1) : '—';
     const per30Cell = '<td class="num" title="Fantasy points per 30 minutes (box-score FP ÷ minutes × 30)">'
       + per30Txt + '</td>';
@@ -1929,7 +1954,7 @@ function renderLockIn(t){
       : '<td class="num">—</td>';
 
     if (basic){
-      return '<tr>' + posCell + nameCell + lockCell + ageCell + tradeCell + avgCell + smashCell
+      return '<tr>' + posCell + nameCell + lockCell + ageCell + tradeCell + avgCell + smashCell + ggCell
         + contractCellHtml(d.pid)
         + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d, effOrder)) + '</td></tr>';
     }
@@ -1942,6 +1967,7 @@ function renderLockIn(t){
       + tradeCell
       + avgCell
       + smashCell
+      + ggCell
       + mpgCell
       + fpmCell
       + per30Cell
@@ -1954,7 +1980,8 @@ function renderLockIn(t){
 
   const note = basic
     ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Age, Trade ★, season Avg, '
-      + '<strong>Smash</strong> = % of games at/above that player’s own Avg+0.5σ (quality lock night; ~31% ≈ normal), NBA '
+      + '<strong>Smash</strong> = % of games at/above <strong>GG</strong>, '
+      + '<strong>GG</strong> = good game line (Avg+0.5σ), NBA '
       + '<strong>Contract</strong> (years left / remaining total, nearest $0.1M), and an NBA '
       + '<strong>Role</strong> line from Sleeper depth chart + production tier. '
       + 'Lock blends smash bases — vets <strong>60% '
@@ -1978,12 +2005,13 @@ function renderLockIn(t){
       + 'Sophomores (1 year exp): 75% last · 25% proj. Rookies stay on Y1 proj + early-career comps, '
       + 'capped at Lock ' + ((window.LockInDist && LockInDist.ROOKIE_LOCK_OVR_CAP) || 82)
       + ' until they have smash samples. '
-      + '<strong>Smash</strong> = how often game FP hits that player’s Avg+0.5σ (lockable quality; full Ceil stays Avg+1σ); ~31% is normal. '
+      + '<strong>Smash</strong> = how often game FP hits <strong>GG</strong> (Avg+0.5σ quality lock line; ~31% normal). '
+      + '<strong>GG</strong> is that FP threshold; full Ceil stays Avg+1σ. '
       + '<strong>Trade ★</strong> = prod OVR × age × injury × contract × situation × potential'
       + ' (young 1.10 +1 · prime 1.00 · decline 0.90 · unknown 1.00; chronic injury-prone list ×0.82–0.95; live tags ignored in offseason; FA ~0.80; same-slot crowding can fall to ~0.70), then '
       + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
       + 'Lock OVR applies ~45% of the same situation gap so offseason adds move dynasty value, not only Trade. '
-      + '<strong>Avg · Smash · Min · FP/m · /30 · /36 · σ · Ceil · hits</strong> still describe '
+      + '<strong>Avg · Smash · GG · Min · FP/m · /30 · /36 · σ · Ceil · hits</strong> still describe '
       + escapeHtml(String(state.statsSeason))
       + ' box scores only (Min = minutes/game; FP/m = FP ÷ minutes with letter grade; /30 = realistic starter rate; /36 = star-minute upside) — hover OVR / Smash for the math. '
       + 'Showing all ' + show.length + ' rostered players'
