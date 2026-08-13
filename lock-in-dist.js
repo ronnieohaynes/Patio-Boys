@@ -719,25 +719,53 @@
       + SMASH_WEIGHTS.hit * smashHitScore(dist);
   }
 
-  /* Letter grade on raw smash base (same anchors as Lock OVR curve).
-     Visible “how smashy” read — Avg alone can look even while grade differs. */
+  /* Smash grade = how often game FP ≥ that player's own Avg+1σ (ceiling).
+     ~16% is a normal 1σ hit rate; higher = boom-skewed. Lock OVR still uses
+     SMASH_WEIGHTS separately. */
   const SMASH_GRADE_BANDS = [
-    {min: 40, grade: 'A+'},
-    {min: 37, grade: 'A'},
-    {min: 34, grade: 'A-'},
-    {min: 30, grade: 'B+'},
-    {min: 27, grade: 'B'},
-    {min: 24, grade: 'B-'},
-    {min: 20, grade: 'C+'},
-    {min: 16, grade: 'C'},
-    {min: 13, grade: 'C-'},
-    {min: 10, grade: 'D'},
+    {min: 0.28, grade: 'A+'},
+    {min: 0.24, grade: 'A'},
+    {min: 0.22, grade: 'A-'},
+    {min: 0.20, grade: 'B+'},
+    {min: 0.18, grade: 'B'},
+    {min: 0.16, grade: 'B-'},
+    {min: 0.14, grade: 'C+'},
+    {min: 0.12, grade: 'C'},
+    {min: 0.10, grade: 'C-'},
+    {min: 0.07, grade: 'D'},
     {min: 0, grade: 'F'}
   ];
 
-  function smashGradeFromBase(base){
-    if (base == null || base === '') return null;
-    const x = Number(base);
+  function smashBoomMark(dist){
+    if (!dist) return null;
+    const mean = Number(dist.mean);
+    const stdev = Number(dist.stdev);
+    if (!Number.isFinite(mean)) return null;
+    if (Number.isFinite(Number(dist.ceiling))) return Number(dist.ceiling);
+    if (Number.isFinite(stdev) && stdev > 0) return mean + stdev;
+    return null;
+  }
+
+  function smashBoomRate(dist){
+    if (!dist || dist.projOnly) return null;
+    const n = Number(dist.n) || 0;
+    if (n < MIN_SAMPLES_FOR_SMASH) return null;
+    const mark = smashBoomMark(dist);
+    if (mark == null || !Number.isFinite(mark)) return null;
+    const samples = dist.samples;
+    if (samples && samples.length){
+      const rate = empiricalHitRate(samples, mark);
+      return Number.isFinite(rate) ? rate : null;
+    }
+    const mean = Number(dist.mean);
+    const stdev = Number(dist.stdev);
+    if (!(Number.isFinite(mean) && Number.isFinite(stdev) && stdev > 0)) return null;
+    return normalHitRate(mean, stdev, mark);
+  }
+
+  function smashGradeFromBoomRate(rate){
+    if (rate == null || rate === '') return null;
+    const x = Number(rate);
     if (!Number.isFinite(x)) return null;
     for (let i = 0; i < SMASH_GRADE_BANDS.length; i++){
       if (x >= SMASH_GRADE_BANDS[i].min) return SMASH_GRADE_BANDS[i].grade;
@@ -745,55 +773,40 @@
     return 'F';
   }
 
-  function smashParts(dist){
-    if (!dist || !Number.isFinite(Number(dist.mean))) return null;
-    const mean = Number(dist.mean);
-    const ceiling = Number.isFinite(Number(dist.ceiling)) ? Number(dist.ceiling) : mean;
-    const hit = smashHitScore(dist);
-    const base = smashLockBase({
-      mean: mean,
-      ceiling: ceiling,
-      hits: dist.hits || {}
-    });
-    if (base == null || !Number.isFinite(base)) return null;
-    return {
-      mean: mean,
-      ceiling: ceiling,
-      hitScore: Math.round(hit * 1000) / 1000,
-      base: Math.round(base * 100) / 100,
-      avgPart: Math.round(SMASH_WEIGHTS.avg * mean * 100) / 100,
-      ceilPart: Math.round(SMASH_WEIGHTS.ceil * ceiling * 100) / 100,
-      hitPart: Math.round(SMASH_WEIGHTS.hit * hit * 100) / 100,
-      n: Number(dist.n) || 0,
-      projOnly: !!dist.projOnly
-    };
+  /* Back-compat alias — grade is boom-rate based now, not smash-base. */
+  function smashGradeFromBase(rateOrBase){
+    return smashGradeFromBoomRate(rateOrBase);
   }
 
   function attachSmashGrade(d){
     if (!d) return;
-    const parts = smashParts(d);
-    if (parts && parts.n >= MIN_SAMPLES_FOR_SMASH && !parts.projOnly){
-      d.smashBase = parts.base;
-      d.smashMean = parts.mean;
-      d.smashCeiling = parts.ceiling;
-      d.smashHitScore = parts.hitScore;
-      d.smashAvgPart = parts.avgPart;
-      d.smashCeilPart = parts.ceilPart;
-      d.smashHitPart = parts.hitPart;
-      d.smashGrade = smashGradeFromBase(parts.base);
+    const rate = smashBoomRate(d);
+    if (rate != null){
+      const mark = smashBoomMark(d);
+      d.smashBoomRate = Math.round(rate * 1000) / 1000;
+      d.smashCeilingMark = mark != null ? Math.round(mark * 100) / 100 : null;
+      d.smashGrade = smashGradeFromBoomRate(rate);
       d.smashGradeSource = 'season';
+      d.smashBase = d.smashBoomRate; /* sort/display key for older callers */
+      d.smashMean = Number.isFinite(Number(d.mean)) ? Number(d.mean) : null;
+      d.smashCeiling = d.smashCeilingMark;
+      d.smashHitScore = null;
+      d.smashAvgPart = null;
+      d.smashCeilPart = null;
+      d.smashHitPart = null;
       return;
     }
-    /* Thin / proj stub: grade the blended lockBase so rookies still show something. */
-    if (d.lockBase != null && Number.isFinite(Number(d.lockBase))){
-      d.smashBase = Math.round(Number(d.lockBase) * 100) / 100;
-      d.smashGrade = smashGradeFromBase(d.lockBase);
-      d.smashGradeSource = d.lockBaseSource || 'blend';
-      return;
-    }
+    d.smashBoomRate = null;
+    d.smashCeilingMark = null;
     d.smashBase = null;
     d.smashGrade = null;
     d.smashGradeSource = null;
+    d.smashMean = null;
+    d.smashCeiling = null;
+    d.smashHitScore = null;
+    d.smashAvgPart = null;
+    d.smashCeilPart = null;
+    d.smashHitPart = null;
   }
 
   /* Smash input for one season — prefer full smash; fall back to season mean. */
@@ -1343,6 +1356,7 @@
     d.tradeScore = 0;
     d.tradeStars = 0;
     d.smashBase = 0;
+    d.smashBoomRate = 0;
     d.smashGrade = 'F';
     d.smashGradeSource = 'retired';
     d.tradeAgeMult = 1;
@@ -2364,7 +2378,9 @@
     teamLockInSummary,
     smashHitScore,
     smashLockBase,
-    smashParts,
+    smashBoomMark,
+    smashBoomRate,
+    smashGradeFromBoomRate,
     smashGradeFromBase,
     smashGradeClass,
     attachSmashGrade,
