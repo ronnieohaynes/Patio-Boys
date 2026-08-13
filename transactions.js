@@ -1,8 +1,10 @@
 /* Patio Boys transaction ledger.
    Fetches completed trades (+ optional waivers/FA) across the league chain,
    resolves drafted picks to players, and grades with Lock OVR / Trade ★
-   as of that season (tradeScore-at-time). Future unresolved picks use
-   DraftPickValue (16-keeper fringe). Roster-fit uses lockBase (smash FP).
+   as of that season (tradeScore-at-time). Fairness uses quality-weighted
+   package value (primary full; extras capped sweetener) — same model as
+   Trade Analyzer. Future unresolved picks use DraftPickValue (16-keeper
+   fringe). Roster-fit uses lockBase (smash FP).
    Pass { tradesOnly: true } to skip adds/drops / waiver grading. */
 (function(global){
   'use strict';
@@ -79,6 +81,55 @@
     if (ratio >= 0.64) return 'D';
     if (ratio >= 0.60) return 'D-';
     return 'F';
+  }
+
+  /* Package grading (same model as Trade Analyzer): best asset at full
+     Trade ★; extras are diminishing sweetener capped vs the primary so
+     piles cannot manufacture a star. */
+  const PKG_EXTRA_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* 2nd … 5th+ */
+  const PKG_EXTRAS_CAP = 0.25; /* extras ≤ 25% of primary */
+  const PKG_PRIMARY_SOFT = 0.78; /* best-vs-best below this → caution */
+
+  function assetPackageScore(a){
+    if (!a || a.graded === false) return 0;
+    const v = Number(a.dynasty != null ? a.dynasty : a.tradeScore);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  }
+
+  function packageValueParts(assets){
+    const scored = (assets || []).map(p => ({
+      asset: p,
+      value: assetPackageScore(p)
+    })).filter(x => x.value > 0).sort((a, b) => b.value - a.value);
+    const raw = scored.reduce((s, x) => s + x.value, 0);
+    if (!scored.length){
+      return {
+        raw: 0, effective: 0, primary: 0, extrasRaw: 0, extrasEff: 0,
+        extrasCapped: false, n: 0
+      };
+    }
+    const primary = scored[0].value;
+    let extrasWeighted = 0;
+    for (let i = 1; i < scored.length; i++){
+      const w = PKG_EXTRA_WEIGHTS[i - 1] != null ? PKG_EXTRA_WEIGHTS[i - 1] : 0.08;
+      extrasWeighted += scored[i].value * w;
+    }
+    const cap = primary * PKG_EXTRAS_CAP;
+    const extrasCapped = extrasWeighted > cap + 1e-9;
+    const extrasEff = Math.min(extrasWeighted, cap);
+    return {
+      raw: Math.round(raw * 100) / 100,
+      effective: Math.round((primary + extrasEff) * 100) / 100,
+      primary: Math.round(primary * 100) / 100,
+      extrasRaw: Math.round((raw - primary) * 100) / 100,
+      extrasEff: Math.round(extrasEff * 100) / 100,
+      extrasCapped: extrasCapped,
+      n: scored.length
+    };
+  }
+
+  function effectivePackageValue(assets){
+    return packageValueParts(assets).effective;
   }
 
   /* Roster-fit quality delta → letter (lineup lift + cut/clog adjustments). */
@@ -531,10 +582,11 @@
     return valued;
   }
 
-  /* Trades: tradeScore-at-time fairness (no roster-fit).
-     Unresolved future picks use DraftPickValue (fringe medians × slot/quality).
-     When asset counts differ, blend total haul with per-asset average so
-     2-for-1 / 3-for-1 deals aren't graded on volume alone. */
+  /* Trades: quality-weighted package fairness at Trade ★-at-time
+     (no roster-fit). Unresolved future picks use DraftPickValue
+     (fringe medians × slot/quality). Fairness uses package grade —
+     primary at full value, extras as capped sweetener — matching
+     Trade Analyzer so piles cannot manufacture a star. */
   function gradeTrade(sides, maps, playerDb, asOfSeason, currentSeason, pickValueCtx){
     const sideVals = sides.map(side => {
       let graded = 0;
@@ -573,6 +625,7 @@
         graded += a.dynasty || 0;
         gradedCount += 1;
       });
+      const pack = packageValueParts(assets);
       return {
         rosterId: side.rosterId,
         team: side.team,
@@ -580,6 +633,11 @@
         manager: side.manager,
         assets,
         dynastyIn: graded,
+        packageEffective: pack.effective,
+        packageRaw: pack.raw,
+        packagePrimary: pack.primary,
+        packageExtrasEff: pack.extrasEff,
+        extrasCapped: pack.extrasCapped,
         assetCount: gradedCount,
         avgDynasty: gradedCount > 0 ? graded / gradedCount : 0,
         pendingPicks,
@@ -590,8 +648,12 @@
     const gradedSides = sideVals.filter(s => s.assets.some(a => a.graded));
     const pendingPicks = sideVals.reduce((n, s) => n + s.pendingPicks, 0);
     const valuedPicks = sideVals.reduce((n, s) => n + (s.valuedPicks || 0), 0);
-    const a = sideVals[0] || { dynastyIn: 0, assetCount: 0, avgDynasty: 0, team: null };
-    const b = sideVals[1] || { dynastyIn: 0, assetCount: 0, avgDynasty: 0, team: null };
+    const emptySide = {
+      dynastyIn: 0, packageEffective: 0, packageRaw: 0, packagePrimary: 0,
+      assetCount: 0, avgDynasty: 0, team: null, extrasCapped: false
+    };
+    const a = sideVals[0] || emptySide;
+    const b = sideVals[1] || emptySide;
     if (gradedSides.length < 2){
       return {
         sides: sideVals,
@@ -600,35 +662,36 @@
         pendingPicks,
         valuedPicks,
         reason: pendingPicks ? 'Waiting on undrafted picks' : 'Not enough graded assets',
-        valueA: a.dynastyIn || 0,
-        valueB: b.dynastyIn || 0,
+        valueA: a.packageEffective || 0,
+        valueB: b.packageEffective || 0,
+        rawA: a.packageRaw || 0,
+        rawB: b.packageRaw || 0,
         avgA: a.avgDynasty || 0,
         avgB: b.avgDynasty || 0,
         uneven: false,
+        extrasCapped: !!(a.extrasCapped || b.extrasCapped),
         winner: null,
         ratio: null
       };
     }
 
-    const uneven = a.assetCount !== b.assetCount;
-    const maxN = Math.max(a.assetCount, b.assetCount, 1);
-    function sideScore(side){
-      if (!uneven) return side.dynastyIn;
-      /* 55% total haul + 45% average scaled to the larger side's count. */
-      return 0.55 * side.dynastyIn + 0.45 * side.avgDynasty * maxN;
-    }
-    const scoreA = sideScore(a);
-    const scoreB = sideScore(b);
-
-    const totalHigh = Math.max(a.dynastyIn, b.dynastyIn, 0.01);
-    const totalLow = Math.min(a.dynastyIn, b.dynastyIn);
-    const ratioTotal = totalLow / totalHigh;
-    const avgHigh = Math.max(a.avgDynasty, b.avgDynasty, 0.01);
-    const avgLow = Math.min(a.avgDynasty, b.avgDynasty);
-    const ratioAvg = avgLow / avgHigh;
-    const ratio = uneven ? (0.5 * ratioTotal + 0.5 * ratioAvg) : ratioTotal;
+    const scoreA = a.packageEffective;
+    const scoreB = b.packageEffective;
+    const high = Math.max(scoreA, scoreB, 0.01);
+    const low = Math.min(scoreA, scoreB);
+    const ratio = low / high;
     const grade = fairnessGrade(ratio);
     const winner = scoreA === scoreB ? null : (scoreA > scoreB ? a.team : b.team);
+    const uneven = a.assetCount !== b.assetCount;
+    const primaryHigh = Math.max(a.packagePrimary || 0, b.packagePrimary || 0, 0.01);
+    const primaryLow = Math.min(a.packagePrimary || 0, b.packagePrimary || 0);
+    const primaryRatio = primaryLow / primaryHigh;
+    const softPrimary = Math.max(a.assetCount, b.assetCount) >= 2
+      && primaryRatio < PKG_PRIMARY_SOFT
+      && Math.abs((a.packagePrimary || 0) - (b.packagePrimary || 0)) >= 8;
+    const rawClosePkgFar = Math.abs((a.packageRaw || 0) - (b.packageRaw || 0)) <= 6
+      && Math.abs(scoreA - scoreB) >= 8;
+
     const reasonBits = [];
     if (valuedPicks){
       reasonBits.push(valuedPicks + ' future pick' + (valuedPicks === 1 ? '' : 's')
@@ -638,9 +701,21 @@
       reasonBits.push(pendingPicks + ' pick' + (pendingPicks === 1 ? '' : 's')
         + ' still unvalued');
     }
-    if (uneven){
+    if (a.extrasCapped || b.extrasCapped){
+      reasonBits.push('Extras capped at ' + Math.round(PKG_EXTRAS_CAP * 100)
+        + '% of primary');
+    }
+    if (softPrimary){
+      reasonBits.push('Primary assets far apart ('
+        + Math.round(primaryHigh) + ' vs ' + Math.round(primaryLow)
+        + ') — pile sweetener cannot fully close');
+    }
+    if (rawClosePkgFar){
+      reasonBits.push('Raw sums look close but package quality diverges');
+    }
+    if (uneven && !softPrimary){
       reasonBits.push('Uneven haul (' + a.assetCount + ' vs ' + b.assetCount
-        + ') — fairness blends total + avg trade score');
+        + ') — graded on package value, not raw volume');
     }
     return {
       sides: sideVals,
@@ -650,9 +725,13 @@
       pendingPicks,
       valuedPicks,
       uneven,
+      extrasCapped: !!(a.extrasCapped || b.extrasCapped),
+      softPrimary: !!softPrimary,
       reason: reasonBits.length ? reasonBits.join(' · ') : null,
-      valueA: a.dynastyIn,
-      valueB: b.dynastyIn,
+      valueA: scoreA,
+      valueB: scoreB,
+      rawA: a.packageRaw,
+      rawB: b.packageRaw,
       avgA: a.avgDynasty,
       avgB: b.avgDynasty,
       winner
@@ -1003,9 +1082,13 @@
           winner: graded.winner,
           valueA: graded.valueA,
           valueB: graded.valueB,
+          rawA: graded.rawA,
+          rawB: graded.rawB,
           avgA: graded.avgA,
           avgB: graded.avgB,
           uneven: !!graded.uneven,
+          extrasCapped: !!graded.extrasCapped,
+          softPrimary: !!graded.softPrimary,
           ratio: graded.ratio,
           sides: graded.sides,
           waiverBid: null
@@ -1096,6 +1179,10 @@
     netToGrade,
     franchiseKey,
     buildPickValueContext,
-    gradeTrade
+    gradeTrade,
+    packageValueParts,
+    effectivePackageValue,
+    PKG_EXTRAS_CAP,
+    PKG_EXTRA_WEIGHTS
   };
 })(typeof window !== 'undefined' ? window : globalThis);

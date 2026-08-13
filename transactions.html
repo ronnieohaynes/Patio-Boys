@@ -126,7 +126,7 @@
 <div class="wrap hero">
   <p class="eyebrow">Ledger &middot; Trade ★ at the time</p>
   <h1 class="display">Trade<br>Ledger</h1>
-  <p>Completed player and pick trades across seasons, graded with Lock OVR / Trade ★ as of that season. Pure trade-score fairness — no waiver adds/drops. Future picks use the same 16-keeper fringe values as Trade Analyzer; drafted picks resolve to the player.</p>
+  <p>Completed player and pick trades across seasons, graded with Lock OVR / Trade ★ as of that season. Fairness uses <strong>quality-weighted package value</strong> (same model as Trade Analyzer) — no waiver adds/drops. Future picks use the same 16-keeper fringe values; drafted picks resolve to the player.</p>
 </div>
 
 <div class="wrap">
@@ -153,8 +153,8 @@
       </div>
     </div>
     <p class="caption" id="txCaption" hidden>
-      Grades use Trade ★ fairness on a normal letter scale (A+ ≥97%, A ≥94%, A- ≥90%, … F &lt;60%).
-      When one side gets more players/picks, the grade also blends in average trade score per asset.
+      Grades use quality-weighted package fairness on a normal letter scale (A+ ≥97%, A ≥94%, A- ≥90%, … F &lt;60%).
+      Top asset counts at full Trade ★; extras are diminishing sweetener capped at 25% of the primary so piles cannot manufacture a star.
       Rookies without NBA samples are reverse-engineered from next-year projections + comps.
       Future picks count via 16-keeper fringe medians × year/slot/quality; once drafted they grade as that player.
     </p>
@@ -165,7 +165,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260809-progress';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-pkgledger';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js','transactions.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -259,6 +259,13 @@ function renderAssets(assets, drops){
   return lines.join('') || '<p class="asset pending">—</p>';
 }
 
+function fmtPkg(effective, raw){
+  const eff = fmtDyn(effective);
+  if (raw == null || !Number.isFinite(Number(raw))) return eff;
+  if (Math.abs(Number(raw) - Number(effective || 0)) < 0.05) return eff;
+  return eff + ' <span class="ceil">(raw ' + fmtDyn(raw) + ')</span>';
+}
+
 function renderTradeCard(r){
   const a = (r.sides && r.sides[0]) || {};
   const b = (r.sides && r.sides[1]) || {};
@@ -267,13 +274,19 @@ function renderTradeCard(r){
     : '<p class="tx-grade dim">Pending</p>';
   const sub = [];
   if (r.winner) sub.push(escapeHtml(r.winner) + ' won the haul');
-  sub.push(fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB) + ' trade');
-  if (r.uneven){
-    sub.push('avg ' + fmtDyn(r.avgA) + ' / ' + fmtDyn(r.avgB));
+  sub.push(fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB) + ' package');
+  if (r.rawA != null && r.rawB != null
+    && (Math.abs(Number(r.rawA) - Number(r.valueA || 0)) >= 0.05
+      || Math.abs(Number(r.rawB) - Number(r.valueB || 0)) >= 0.05)){
+    sub.push('raw ' + fmtDyn(r.rawA) + ' / ' + fmtDyn(r.rawB));
   }
   if (r.reason) sub.push(escapeHtml(r.reason));
   const countA = Number(a.assetCount) || (a.assets || []).filter(x => x.graded).length;
   const countB = Number(b.assetCount) || (b.assets || []).filter(x => x.graded).length;
+  const pkgA = a.packageEffective != null ? a.packageEffective : r.valueA;
+  const pkgB = b.packageEffective != null ? b.packageEffective : r.valueB;
+  const rawSideA = a.packageRaw != null ? a.packageRaw : r.rawA;
+  const rawSideB = b.packageRaw != null ? b.packageRaw : r.rawB;
   return '<article class="tx-card' + (r.pending ? ' pending' : '') + '">'
     + '<div class="tx-head"><p class="tx-meta">' + escapeHtml(r.dateLabel)
     + ' · Season ' + escapeHtml(r.season) + ' · Trade</p>' + gradeHtml + '</div>'
@@ -281,11 +294,11 @@ function renderTradeCard(r){
     + '<p class="tx-sub">' + sub.join(' · ') + '</p>'
     + '<div class="sides">'
     + '<div class="side"><p class="lbl">Received · ' + countA + ' asset' + (countA === 1 ? '' : 's')
-    + (r.uneven ? ' · avg ' + fmtDyn(a.avgDynasty != null ? a.avgDynasty : r.avgA) : '')
+    + ' · pkg ' + fmtPkg(pkgA, rawSideA)
     + '</p><p class="team">' + escapeHtml(a.team || '—') + '</p>'
     + renderAssets(a.assets) + '</div>'
     + '<div class="side"><p class="lbl">Received · ' + countB + ' asset' + (countB === 1 ? '' : 's')
-    + (r.uneven ? ' · avg ' + fmtDyn(b.avgDynasty != null ? b.avgDynasty : r.avgB) : '')
+    + ' · pkg ' + fmtPkg(pkgB, rawSideB)
     + '</p><p class="team">' + escapeHtml(b.team || '—') + '</p>'
     + renderAssets(b.assets) + '</div>'
     + '</div></article>';

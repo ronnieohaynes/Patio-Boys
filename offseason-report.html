@@ -142,7 +142,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260808-fast';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-pkgledger';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','transactions.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -208,7 +208,18 @@ function pickLetterFromBoard(rank, efficiency){
   return 'F';
 }
 
-/* Team-centric trade grade: how their haul compared to what they gave up. */
+/* Team-centric trade grade: how their haul compared to what they gave up.
+   Uses quality-weighted package value when the ledger exposes it. */
+function sidePackageValue(assets){
+  if (window.PatioBoysTransactions && typeof PatioBoysTransactions.packageValueParts === 'function'){
+    return PatioBoysTransactions.packageValueParts(assets || []).effective;
+  }
+  return (assets || []).reduce((s, a) => {
+    if (a && a.graded && a.dynasty != null) return s + Number(a.dynasty);
+    return s;
+  }, 0);
+}
+
 function teamTradeGrade(received, given){
   const r = Number(received) || 0;
   const g = Number(given) || 0;
@@ -450,9 +461,7 @@ async function load(){
           const t = ensureTeam(side.franchise || side.team, side.manager);
           if (!t) return;
           t.tradeCount += 1;
-          let received = 0;
           (side.assets || []).forEach(a => {
-            if (a.graded && a.dynasty != null) received += a.dynasty;
             const pid = a.kind === 'player' ? a.pid : a.resolvedPid;
             if (!pid) return;
             upsertPlayer(t.added, pid, a.name || a.label, 'Trade',
@@ -460,16 +469,23 @@ async function load(){
           });
           /* Counterpart assets = what this side gave up. */
           const others = (row.sides || []).filter(s => s.rosterId !== side.rosterId);
-          let given = 0;
+          const givenAssets = [];
           others.forEach(opp => {
             (opp.assets || []).forEach(a => {
-              if (a.graded && a.dynasty != null) given += a.dynasty;
+              givenAssets.push(a);
               const pid = a.kind === 'player' ? a.pid : a.resolvedPid;
               if (!pid) return;
               upsertPlayer(t.lost, pid, a.name || a.label, 'Trade',
                 null, a.tradeStars, a.dynasty);
             });
           });
+          const received = side.packageEffective != null
+            ? side.packageEffective
+            : sidePackageValue(side.assets);
+          const given = others.reduce((s, opp) => {
+            if (opp.packageEffective != null) return s + opp.packageEffective;
+            return s + sidePackageValue(opp.assets);
+          }, 0);
           const g = teamTradeGrade(received, given);
           if (g) t.tradeGrades.push(g);
         });
@@ -598,7 +614,7 @@ async function load(){
       + ' · ' + offseasonRows.length + ' moves'
       + (draftPack.pickCount ? ' · ' + draftPack.pickCount + ' draft picks' : '');
     status.classList.remove('error');
-    status.textContent = 'Off-season grades blend Draft (Lock/Trade BPA), Trades (haul value), and Wire / FA (roster-fit)'
+    status.textContent = 'Off-season grades blend Draft (Lock/Trade BPA), Trades (package value), and Wire / FA (roster-fit)'
       + (mine && mine.grade !== '—' ? ' · ' + MY_TEAM + ' ' + mine.grade + ' (#' + mine.rank + ')' : '')
       + '.';
 
