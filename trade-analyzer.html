@@ -338,7 +338,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Fairness uses <strong>quality-weighted package value</strong> (best asset full; extras as capped sweetener). Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -416,7 +416,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260813-agerelief';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-pkggrade';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -876,6 +876,48 @@ function assetTradeValue(p){
   return Number.isFinite(v) ? v : 0;
 }
 
+/* Package grading: best asset at full value; extras are sweetener with
+   diminishing weights and a hard cap so piles can't manufacture a star. */
+const PKG_EXTRA_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* 2nd … 5th+ */
+const PKG_EXTRAS_CAP = 0.25; /* extras ≤ 25% of primary */
+const PKG_PRIMARY_SOFT = 0.78; /* best-vs-best below this → caution when piles differ */
+
+function packageValueParts(assets){
+  const scored = (assets || []).map(p => ({
+    asset: p,
+    value: assetTradeValue(p)
+  })).filter(x => x.value > 0).sort((a, b) => b.value - a.value);
+  const raw = scored.reduce((s, x) => s + x.value, 0);
+  if (!scored.length){
+    return {
+      raw: 0, effective: 0, primary: 0, extrasRaw: 0, extrasEff: 0,
+      extrasCapped: false, n: 0
+    };
+  }
+  const primary = scored[0].value;
+  let extrasWeighted = 0;
+  for (let i = 1; i < scored.length; i++){
+    const w = PKG_EXTRA_WEIGHTS[i - 1] != null ? PKG_EXTRA_WEIGHTS[i - 1] : 0.08;
+    extrasWeighted += scored[i].value * w;
+  }
+  const cap = primary * PKG_EXTRAS_CAP;
+  const extrasCapped = extrasWeighted > cap + 1e-9;
+  const extrasEff = Math.min(extrasWeighted, cap);
+  return {
+    raw: Math.round(raw * 100) / 100,
+    effective: Math.round((primary + extrasEff) * 100) / 100,
+    primary: Math.round(primary * 100) / 100,
+    extrasRaw: Math.round((raw - primary) * 100) / 100,
+    extrasEff: Math.round(extrasEff * 100) / 100,
+    extrasCapped: extrasCapped,
+    n: scored.length
+  };
+}
+
+function effectivePackageValue(assets){
+  return packageValueParts(assets).effective;
+}
+
 function assetDisplayName(p){
   if (!p) return '?';
   if (p.kind === 'pick'){
@@ -1319,8 +1361,12 @@ function analyze(){
     return;
   }
 
-  const valueToA = fromB.reduce((s, p) => s + (Number(p.dynasty) || 0), 0);
-  const valueToB = fromA.reduce((s, p) => s + (Number(p.dynasty) || 0), 0);
+  const packToA = packageValueParts(fromB); /* A receives fromB */
+  const packToB = packageValueParts(fromA);
+  const valueToA = packToA.effective;
+  const valueToB = packToB.effective;
+  const rawToA = packToA.raw;
+  const rawToB = packToB.raw;
   const high = Math.max(valueToA, valueToB, 0.01);
   const low = Math.min(valueToA, valueToB);
   const ratio = low / high;
@@ -1329,6 +1375,11 @@ function analyze(){
     : (valueToA > valueToB ? aName : bName);
   const loser = winner == null ? null : (winner === aName ? bName : aName);
   const unfair = ratio < FINDER_FAIR_HARD || (high - low) >= 12;
+  const primaryRatio = finderRatio(packToA.primary, packToB.primary);
+  const softPrimary = !unfair
+    && Math.max(fromA.length, fromB.length) >= 2
+    && primaryRatio < PKG_PRIMARY_SOFT
+    && Math.abs(packToA.primary - packToB.primary) >= 8;
 
   const afterA = new Set(teamA.playerIds);
   const afterB = new Set(teamB.playerIds);
@@ -1383,7 +1434,7 @@ function analyze(){
   const aColor = teamColor(teamA);
   const bColor = teamColor(teamB);
   const verdictCls = unfair ? 'unfair' : (runaway ? 'runaway' : '');
-  let headline = 'Balanced enough on trade value';
+  let headline = 'Balanced enough on package value';
   if (unfair && winner) headline = 'Lopsided — favors ' + winner;
   else if (winner && ratio < FINDER_FAIR_SOFT) headline = 'Edge to ' + winner;
   else if (winner) headline = 'Slight edge to ' + winner;
@@ -1393,17 +1444,52 @@ function analyze(){
     flags.push({
       cls: 'warn',
       title: 'Super unfair',
-      text: loser + ' is giving up far more trade value ('
+      text: loser + ' is giving up far more package value ('
         + (winner === aName ? valueToA : valueToB).toFixed(1) + ' received vs '
-        + (loser === aName ? valueToA : valueToB).toFixed(1) + '). Ratio '
-        + (ratio * 100).toFixed(0) + '%.'
+        + (loser === aName ? valueToA : valueToB).toFixed(1)
+        + ' quality-weighted). Ratio ' + (ratio * 100).toFixed(0) + '%.'
     });
-  } else {
+  }
+  if (Math.abs(rawToA - rawToB) <= 6 && Math.abs(valueToA - valueToB) >= 8){
+    flags.push({
+      cls: 'warn',
+      title: 'Package quality',
+      text: 'Raw Trade sums look close ('
+        + rawToA.toFixed(0) + ' vs ' + rawToB.toFixed(0)
+        + '), but quality-weighted value is '
+        + valueToA.toFixed(0) + ' vs ' + valueToB.toFixed(0)
+        + ' — extras do not rebuild a star 1:1.'
+    });
+  }
+  if (softPrimary){
+    const bigSide = packToA.primary >= packToB.primary ? aName : bName;
+    const smallSide = bigSide === aName ? bName : aName;
+    flags.push({
+      cls: 'warn',
+      title: 'Primary assets',
+      text: 'Best pieces are far apart ('
+        + Math.max(packToA.primary, packToB.primary).toFixed(0) + ' vs '
+        + Math.min(packToA.primary, packToB.primary).toFixed(0)
+        + '). ' + smallSide + ' is filling with a pile; '
+        + bigSide + ' still holds the star-quality edge.'
+    });
+  }
+  if (packToA.extrasCapped || packToB.extrasCapped){
+    flags.push({
+      cls: 'ok',
+      title: 'Extras capped',
+      text: 'Sweetener chips are capped at '
+        + Math.round(PKG_EXTRAS_CAP * 100)
+        + '% of each side’s top asset so fringe piles cannot manufacture star value.'
+    });
+  }
+  if (!unfair){
     flags.push({
       cls: 'ok',
       title: 'Value check',
-      text: 'Trade haul is within a reasonable band (ratio '
-        + (ratio * 100).toFixed(0) + '%). Grade ' + grade + '.'
+      text: 'Quality-weighted package value is within a reasonable band (ratio '
+        + (ratio * 100).toFixed(0) + '%). Grade ' + grade
+        + ' · raw sums ' + rawToA.toFixed(0) + ' vs ' + rawToB.toFixed(0) + '.'
     });
   }
   if (runaway){
@@ -1437,7 +1523,9 @@ function analyze(){
   const contractFit = evaluateContractFit(teamA, teamB, fromA, fromB);
   contractFit.flags.forEach(f => flags.push(f));
 
-  function sideHtml(title, color, receives, value, maxDelta){
+  function sideHtml(title, color, receives, pack, maxDelta){
+    const value = pack.effective;
+    const raw = pack.raw;
     const items = receives.length
       ? '<ul>' + receives.map(p => {
         const label = p.kind === 'pick'
@@ -1452,9 +1540,14 @@ function analyze(){
           + '</span><span class="dv">' + tradeValHtml(p) + '</span></li>';
       }).join('') + '</ul>'
       : '<p class="empty-note">Nothing incoming</p>';
+    const rawBit = Math.abs(raw - value) >= 0.5
+      ? (' <span style="color:var(--ink-dim);font-size:12px">(raw '
+        + raw.toFixed(1) + ')</span>')
+      : '';
     return '<div class="side-card" style="--team-color:' + color + '">'
       + '<h4>' + escapeHtml(title) + ' gets</h4>'
-      + '<p class="totals">Trade <span class="hi">' + value.toFixed(1) + '</span>'
+      + '<p class="totals">Package <span class="hi">' + value.toFixed(1) + '</span>'
+      + rawBit
       + ' &middot; Max Pts <span class="hi">' + (maxDelta >= 0 ? '+' : '') + maxDelta.toFixed(1) + '</span></p>'
       + items + '</div>';
   }
@@ -1472,17 +1565,19 @@ function analyze(){
   const softMismatch = !unfair && !runaway && mismatch.softCaution;
   const softNeed = !unfair && !runaway && needFit.softNeed;
   const softContract = !unfair && !runaway && contractFit.softContract;
-  const softAny = softEdge || softMismatch || softNeed || softContract;
+  const softPackage = !unfair && !runaway && (softPrimary
+    || (Math.abs(rawToA - rawToB) <= 6 && Math.abs(valueToA - valueToB) >= 8));
+  const softAny = softEdge || softMismatch || softNeed || softContract || softPackage;
   if (unfair && runaway){
     ruling = 'block';
     rulingTitle = 'Do not allow';
-    rulingWhy = 'Blocked on both counts: trade value is super unfair'
+    rulingWhy = 'Blocked on both counts: package value is super unfair'
       + (loser ? ' to ' + loser : '')
       + ', and the deal creates a Max Points runaway for ' + leader.team + '.';
   } else if (unfair){
     ruling = 'block';
     rulingTitle = 'Do not allow';
-    rulingWhy = 'Blocked — too one-sided on trade value'
+    rulingWhy = 'Blocked — too one-sided on quality-weighted package value'
       + (loser ? ' against ' + loser : '')
       + ' (fairness ' + grade + ', ratio ' + (ratio * 100).toFixed(0) + '%).';
   } else if (runaway){
@@ -1495,10 +1590,13 @@ function analyze(){
     rulingTitle = 'Allow with caution';
     const softBits = [];
     if (softEdge) softBits.push('Trade ★ edge (fairness ' + grade + ')');
+    if (softPackage) softBits.push('package quality (primary gap / extras vs raw sum)');
     if (softMismatch) softBits.push('soft package shape (fake depth / weak pick capital)');
     if (softNeed) softBits.push('starter-lineup need mismatch');
     if (softContract) softBits.push('max-for-min contract mismatch');
-    if (softContract && softBits.length === 1){
+    if (softPackage && softBits.length === 1){
+      rulingWhy = 'Raw chips may add up, but quality-weighted package value (best asset full; extras capped as sweetener) still favors one side. Allow with caution.';
+    } else if (softContract && softBits.length === 1){
       rulingWhy = 'Trade ★ is close enough, but one side takes on max/near-max money while the other gets min/cheap deals. Allow with caution.';
     } else if (softNeed && softBits.length === 1){
       rulingWhy = 'Trade ★ is close enough, but one side takes a clear starter-lineup hit while the other gains. Allow with caution.';
@@ -1509,7 +1607,7 @@ function analyze(){
       rulingWhy = 'Passable, but ' + (winner || 'one side') + ' gets a clear edge (fairness '
         + grade + '). Fine to allow unless the league wants a stricter bar.';
     } else {
-      rulingWhy = 'Passable on raw Trade ★, but review for: ' + softBits.join('; ') + '.';
+      rulingWhy = 'Passable on package grade, but review for: ' + softBits.join('; ') + '.';
     }
   }
 
@@ -1522,15 +1620,19 @@ function analyze(){
     + '<div class="letter">' + grade + '</div>'
     + '<div><h3>' + escapeHtml(headline) + '</h3>'
     + '<p>' + escapeHtml(aName) + ' receives <strong>' + valueToA.toFixed(1)
-    + '</strong> trade value &middot; ' + escapeHtml(bName) + ' receives <strong>'
-    + valueToB.toFixed(1) + '</strong></p></div></div>'
+    + '</strong> package value'
+    + (Math.abs(rawToA - valueToA) >= 0.5 ? (' <span style="color:var(--ink-dim)">(raw ' + rawToA.toFixed(1) + ')</span>') : '')
+    + ' &middot; ' + escapeHtml(bName) + ' receives <strong>'
+    + valueToB.toFixed(1) + '</strong>'
+    + (Math.abs(rawToB - valueToB) >= 0.5 ? (' <span style="color:var(--ink-dim)">(raw ' + rawToB.toFixed(1) + ')</span>') : '')
+    + '</p></div></div>'
     + '<div class="flags">' + flags.map(f =>
       '<div class="flag ' + f.cls + '"><strong>' + escapeHtml(f.title)
       + '</strong> — ' + escapeHtml(f.text) + '</div>'
     ).join('') + '</div>'
     + '<div class="sides">'
-    + sideHtml(aName, aColor, fromB, valueToA, aDelta)
-    + sideHtml(bName, bColor, fromA, valueToB, bDelta)
+    + sideHtml(aName, aColor, fromB, packToA, aDelta)
+    + sideHtml(bName, bColor, fromA, packToB, bDelta)
     + '</div>'
     + '<div class="max-block"><h3>Max Points after trade</h3>'
     + '<p class="cap">Top ' + MAX_TOP_N + ' by ' + escapeHtml(state.maxMetricLabel)
@@ -1646,13 +1748,14 @@ function setMode(mode){
   const lede = document.getElementById('ledeText');
   if (state.mode === 'finder'){
     lede.innerHTML = 'Trade Finder scans for <strong>1–3 asset</strong> packages (players + picks), including mismatched counts. '
-      + 'It grades Trade ★ fairness, fringe seats, starter-lineup <strong>need</strong>, and <strong>max-for-min</strong> contracts. '
+      + 'Fairness uses <strong>quality-weighted</strong> package value (best asset full; extras capped as sweetener). '
+      + 'It also grades fringe seats, starter-lineup <strong>need</strong>, and <strong>max-for-min</strong> contracts. '
       + '<strong>Shop</strong> = offers for one or more of your players; <strong>Find</strong> = what you can send for players on one other team (up to 4). Click to open in Analyze.';
     renderFinder();
   } else {
     lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending. '
-      + 'Player value is <strong>Trade ★</strong> (Lock OVR × age × injury × contract × situation × <strong>potential</strong>); picks use snapshot fringe bases × slot/quality. '
-      + 'Potential lifts young flashes and softens the age cut for vets who are still producing. '
+      + 'Fairness is <strong>quality-weighted package value</strong>: top asset at full Trade ★, extras as sweetener (diminishing + capped) so piles cannot manufacture a star. '
+      + 'Player Trade ★ = Lock OVR × age × injury × contract × situation × <strong>potential</strong>; picks use fringe bases × slot/quality. '
       + 'Keeper-seat, starter-lineup need, and max-for-min contracts can nudge Allow → Caution. '
       + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
   }
@@ -1731,7 +1834,8 @@ function packagesMatchingValue(giver, targetVal, opts){
   const out = [];
 
   function consider(assets){
-    const sendVal = assets.reduce((s, p) => s + finderValue(p), 0);
+    const sendPack = packageValueParts(assets);
+    const sendVal = sendPack.effective;
     const ratio = finderRatio(sendVal, targetVal);
     if (ratio < FINDER_FAIR_HARD) return;
     const delta = Math.abs(sendVal - targetVal);
@@ -1744,15 +1848,27 @@ function packagesMatchingValue(giver, targetVal, opts){
     const contractFit = (receiver && againstAssets.length)
       ? evaluateContractFit(giver, receiver, assets, againstAssets)
       : null;
+    const againstPack = againstAssets.length ? packageValueParts(againstAssets) : null;
+    const primaryGap = againstPack
+      ? finderRatio(sendPack.primary, againstPack.primary)
+      : 1;
+    const softPrimaryGap = againstPack
+      && assets.length >= 2
+      && primaryGap < PKG_PRIMARY_SOFT
+      && Math.abs(sendPack.primary - againstPack.primary) >= 8;
     const softCaution = fakeDepth
       || !!(needFit && needFit.softNeed)
-      || !!(contractFit && contractFit.softContract);
+      || !!(contractFit && contractFit.softContract)
+      || softPrimaryGap;
     let ruling = finderRuling(ratio, delta, softCaution);
     if (ruling === 'block' && !options.includeBlocked) return;
     let mismatchNote = '';
     if (fakeDepth && seat){
       mismatchNote = 'Fake depth risk: ' + seat.clearFringeN + '/' + assets.length
         + ' clear receiver fringe';
+    } else if (softPrimaryGap){
+      mismatchNote = 'Primary gap: pile vs '
+        + againstPack.primary.toFixed(0) + ' top chip';
     } else if (contractFit && contractFit.softContract){
       mismatchNote = 'Contract mismatch: max/near-max for min/cheap';
     } else if (needFit && needFit.softNeed){
@@ -1805,7 +1921,7 @@ function packagesMatchingValue(giver, targetVal, opts){
         const b = trimmed[j];
         const c = trimmed[k];
         /* Skip piles where the top chip already overshoots badly alone. */
-        if (finderValue(a) > targetVal * 1.05) continue;
+        if (effectivePackageValue([a]) > targetVal * 1.05) continue;
         consider([a, b, c]);
       }
     }
@@ -1868,7 +1984,7 @@ function buildFinderOffers(){
   const anchors = finderSelectedPlayers();
   if (!mine || !anchors.length) return [];
 
-  const targetVal = anchors.reduce((s, p) => s + finderValue(p), 0);
+  const targetVal = effectivePackageValue(anchors);
   if (!(targetVal > 0)) return [];
   const againstIds = anchors.map(p => p.id);
   const groups = [];
@@ -2394,7 +2510,7 @@ async function load(){
                 .map(r => r + '=' + Number(state.draftPickRoundBases[r]).toFixed(0)).join('/'))
             : '';
           status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
-            + 'Players = Lock OVR × age × injury × potential · picks = 16-keeper fringe medians × slot/quality'
+            + 'Package grade = top asset full + capped extras · players = Lock OVR × age × injury × potential · picks = fringe medians'
             + baseBits + ' · ' + (lockPack.scored || 0)
             + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
         }
