@@ -604,7 +604,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260813-tiertally';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-agerelief';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -2077,7 +2077,7 @@ function renderLockIn(t){
       + '<strong>Smash</strong> = how often game FP hits <strong>GG</strong> (Avg+0.5σ quality lock line; ~31% normal). '
       + '<strong>GG</strong> is that FP threshold; full Ceil stays Avg+1σ. '
       + '<strong>Trade ★</strong> = prod OVR × age × injury × contract × situation × potential'
-      + ' (young 1.10 +1 · prime 1.00 · decline 0.90 · unknown 1.00; chronic injury-prone list ×0.82–0.95; live tags ignored in offseason; FA ~0.80; same-slot crowding can fall to ~0.70), then '
+      + ' (young 1.10 +1 · prime 1.00 · decline 0.95 · unknown 1.00; still-producing Potential restores most of the age cut when Lock stays solid; chronic injury-prone list ×0.82–0.95; live tags ignored in offseason; FA ~0.80; same-slot crowding can fall to ~0.70), then '
       + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
       + 'Lock OVR applies ~45% of the same situation gap so offseason adds move dynasty value, not only Trade. '
       + '<strong>Avg · Smash · GG · Min · FP/m · /30 · /36 · σ · Ceil · hits</strong> still describe '

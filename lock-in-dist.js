@@ -469,13 +469,16 @@
   const BLEND_SOPH = {last: 0.75, proj: 0.25};
   const LOCK_OVR_FLOOR = 50;
   const LOCK_OVR_CEIL = 99;
-  const AGE_MULT = { young: 1.10, prime: 1.0, decline: 0.9, unknown: 1.0 };
-  /* Trade Potential: young flashes (up to ×1.08) and decline-age durability
-     (recover up to 70% of the ×0.9 age haircut toward 1.0). Does not move Lock OVR. */
+  const AGE_MULT = { young: 1.10, prime: 1.0, decline: 0.95, unknown: 1.0 };
+  /* Trade Potential: young flashes (up to ×1.08) and decline-age “still producing”
+     relief (recover most of the age haircut when Lock OVR is still solid).
+     Does not move Lock OVR. */
   const POTENTIAL_YOUNG_MAX = 0.08;
   const POTENTIAL_EARLY_PRIME_MAX = 0.05; /* age < 26 in prime band */
   const POTENTIAL_EARLY_PRIME_AGE = 26;
-  const POTENTIAL_DECLINE_RELIEF = 0.70;
+  const POTENTIAL_DECLINE_RELIEF = 0.90; /* share of age gap restored at full durability */
+  const POTENTIAL_DURABLE_OVR_LO = 65; /* durability 0 */
+  const POTENTIAL_DURABLE_OVR_HI = 80; /* durability 1 — strong-starter Lock */
   const ROOKIE_PROJ_W = 0.5;
   const ROOKIE_COMP_W = 0.5;
   /* Peak-comp floors describe prime comps (Brown/Booker/etc). Lock OVR for
@@ -903,7 +906,7 @@
     jonathanisaac: 0.84,
     lonzoball: 0.83,
     bensimmons: 0.82,
-    paulgeorge: 0.90,
+    paulgeorge: 0.95,
     jamalmurray: 0.93,
     tylerherro: 0.94,
     scoothenderson: 0.93,
@@ -1140,18 +1143,21 @@
     return clamp01(best);
   }
 
-  /* 0–1 “hasn’t fallen off”: high prod OVR and/or last smash ≈ prior. */
+  /* 0–1 “hasn’t fallen off”: Lock still solid and/or last smash ≈ prior. */
   function potentialDurabilitySignal(info){
     const row = info || {};
     const ovr = Number(row.ovr);
     let d = 0;
-    if (Number.isFinite(ovr)) d = Math.max(d, clamp01((ovr - 70) / 20));
+    const span = Math.max(1, POTENTIAL_DURABLE_OVR_HI - POTENTIAL_DURABLE_OVR_LO);
+    if (Number.isFinite(ovr)){
+      d = Math.max(d, clamp01((ovr - POTENTIAL_DURABLE_OVR_LO) / span));
+    }
     const last = Number(row.lastBase);
     const prior = Number(row.priorBase);
     if (Number.isFinite(last) && Number.isFinite(prior) && prior > 0){
       d = Math.max(d, clamp01((last / prior - 0.85) / 0.15));
-    } else if (Number.isFinite(last) && last > 0 && Number.isFinite(ovr) && ovr >= 78){
-      d = Math.max(d, 0.5);
+    } else if (Number.isFinite(last) && last > 0 && Number.isFinite(ovr) && ovr >= 75){
+      d = Math.max(d, 0.55);
     }
     return clamp01(d);
   }
@@ -1183,11 +1189,12 @@
     } else if (band === 'decline'){
       signal = potentialDurabilitySignal(info);
       if (signal > 0.05){
-        const declineMult = AGE_MULT.decline || 0.9;
+        const declineMult = AGE_MULT.decline || 0.95;
         const ageGap = (1 / declineMult) - 1;
         mult = 1 + ageGap * POTENTIAL_DECLINE_RELIEF * signal;
         mult = Math.round(mult * 1000) / 1000;
-        why = 'Still producing ×' + mult.toFixed(3);
+        const effectiveAge = Math.round(declineMult * mult * 1000) / 1000;
+        why = 'Still producing (age ×' + effectiveAge.toFixed(3) + ')';
         kind = 'durable';
       }
     }
@@ -2350,6 +2357,8 @@
     POTENTIAL_EARLY_PRIME_MAX,
     POTENTIAL_EARLY_PRIME_AGE,
     POTENTIAL_DECLINE_RELIEF,
+    POTENTIAL_DURABLE_OVR_LO,
+    POTENTIAL_DURABLE_OVR_HI,
     ROOKIE_PROJ_W,
     ROOKIE_COMP_W,
     ROOKIE_EARLY_CAREER_MULT,
