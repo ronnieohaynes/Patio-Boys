@@ -584,7 +584,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260813-smashboom';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-smash05s';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -1879,15 +1879,14 @@ function renderLockIn(t){
       : (smashGrade && window.LockInDist && LockInDist.fpPerMinGradeClass
         ? LockInDist.fpPerMinGradeClass(smashGrade)
         : 'grade-pending');
-    const ceilMark = d.smashCeilingMark != null ? Number(d.smashCeilingMark)
-      : (d.ceiling != null ? Number(d.ceiling) : null);
+    const ceilMark = d.smashCeilingMark != null ? Number(d.smashCeilingMark) : null;
     let smashTitle = 'Smash grade unavailable (need game samples)';
     if (smashRate != null){
-      smashTitle = 'Booms to Avg+1σ'
+      smashTitle = 'Quality lock night = Avg+0.5σ'
         + (ceilMark != null && Number.isFinite(ceilMark) ? (' (' + ceilMark.toFixed(1) + ' FP)') : '')
-        + ' in ' + Math.round(smashRate * 100) + '% of games'
+        + ' · hit in ' + Math.round(smashRate * 100) + '% of games'
         + (smashGrade ? (' · grade ' + smashGrade) : '')
-        + ' · ~16% is a normal 1σ rate; higher = boom-skewed';
+        + ' · ~31% is a normal 0.5σ rate (full Ceil is Avg+1σ)';
     }
     const smashCell = smashRate != null
       ? ('<td class="num" title="' + escapeHtml(smashTitle) + '">'
@@ -1955,7 +1954,7 @@ function renderLockIn(t){
 
   const note = basic
     ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Age, Trade ★, season Avg, '
-      + '<strong>Smash</strong> = % of games at/above that player’s own Avg+1σ (Ceil), with a letter grade (~16% ≈ normal), NBA '
+      + '<strong>Smash</strong> = % of games at/above that player’s own Avg+0.5σ (quality lock night; ~31% ≈ normal), NBA '
       + '<strong>Contract</strong> (years left / remaining total, nearest $0.1M), and an NBA '
       + '<strong>Role</strong> line from Sleeper depth chart + production tier. '
       + 'Lock blends smash bases — vets <strong>60% '
@@ -1979,7 +1978,7 @@ function renderLockIn(t){
       + 'Sophomores (1 year exp): 75% last · 25% proj. Rookies stay on Y1 proj + early-career comps, '
       + 'capped at Lock ' + ((window.LockInDist && LockInDist.ROOKIE_LOCK_OVR_CAP) || 82)
       + ' until they have smash samples. '
-      + '<strong>Smash</strong> = how often game FP hits that player’s Avg+1σ (Ceil); ~16% is normal, higher = boom-skewed. '
+      + '<strong>Smash</strong> = how often game FP hits that player’s Avg+0.5σ (lockable quality; full Ceil stays Avg+1σ); ~31% is normal. '
       + '<strong>Trade ★</strong> = prod OVR × age × injury × contract × situation × potential'
       + ' (young 1.10 +1 · prime 1.00 · decline 0.90 · unknown 1.00; chronic injury-prone list ×0.82–0.95; live tags ignored in offseason; FA ~0.80; same-slot crowding can fall to ~0.70), then '
       + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '

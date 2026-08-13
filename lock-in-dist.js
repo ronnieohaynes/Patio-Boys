@@ -719,20 +719,21 @@
       + SMASH_WEIGHTS.hit * smashHitScore(dist);
   }
 
-  /* Smash grade = how often game FP ≥ that player's own Avg+1σ (ceiling).
-     ~16% is a normal 1σ hit rate; higher = boom-skewed. Lock OVR still uses
-     SMASH_WEIGHTS separately. */
+  /* Smash grade = how often game FP ≥ that player's own Avg+0.5σ
+     (lockable “quality” night — personal, below full ceiling).
+     ~31% is a normal 0.5σ hit rate. Lock OVR still uses SMASH_WEIGHTS. */
+  const SMASH_BOOM_SIGMA = 0.5;
   const SMASH_GRADE_BANDS = [
-    {min: 0.28, grade: 'A+'},
-    {min: 0.24, grade: 'A'},
-    {min: 0.22, grade: 'A-'},
-    {min: 0.20, grade: 'B+'},
-    {min: 0.18, grade: 'B'},
-    {min: 0.16, grade: 'B-'},
-    {min: 0.14, grade: 'C+'},
-    {min: 0.12, grade: 'C'},
-    {min: 0.10, grade: 'C-'},
-    {min: 0.07, grade: 'D'},
+    {min: 0.42, grade: 'A+'},
+    {min: 0.38, grade: 'A'},
+    {min: 0.36, grade: 'A-'},
+    {min: 0.34, grade: 'B+'},
+    {min: 0.32, grade: 'B'},
+    {min: 0.30, grade: 'B-'},
+    {min: 0.28, grade: 'C+'},
+    {min: 0.26, grade: 'C'},
+    {min: 0.24, grade: 'C-'},
+    {min: 0.20, grade: 'D'},
     {min: 0, grade: 'F'}
   ];
 
@@ -741,9 +742,8 @@
     const mean = Number(dist.mean);
     const stdev = Number(dist.stdev);
     if (!Number.isFinite(mean)) return null;
-    if (Number.isFinite(Number(dist.ceiling))) return Number(dist.ceiling);
-    if (Number.isFinite(stdev) && stdev > 0) return mean + stdev;
-    return null;
+    if (!(Number.isFinite(stdev) && stdev > 0)) return mean;
+    return mean + SMASH_BOOM_SIGMA * stdev;
   }
 
   function smashBoomRate(dist){
@@ -2384,6 +2384,7 @@
     smashGradeFromBase,
     smashGradeClass,
     attachSmashGrade,
+    SMASH_BOOM_SIGMA,
     SMASH_GRADE_BANDS,
     seasonLockInput,
     blendWeightedBase,
