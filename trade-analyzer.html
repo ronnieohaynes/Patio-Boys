@@ -82,6 +82,7 @@
   .player-row:last-child{border-bottom:none}
   .player-row:hover{background:color-mix(in srgb, var(--gold) 6%, transparent)}
   .player-row.selected{background:color-mix(in srgb, var(--team-color, var(--gold)) 14%, transparent)}
+  .player-row.dim{opacity:.45;cursor:not-allowed}
   .player-row input{margin-top:3px;accent-color:var(--gold)}
   .player-row .name{font-weight:600;font-size:14px}
   .player-row .meta{
@@ -387,8 +388,8 @@
         <div class="field">
           <label>Direction</label>
           <div class="dir-toggle">
-            <button type="button" class="active" id="dirShop" data-dir="shop">Shop player</button>
-            <button type="button" id="dirWant" data-dir="want">Find player</button>
+            <button type="button" class="active" id="dirShop" data-dir="shop">Shop players</button>
+            <button type="button" id="dirWant" data-dir="want">Find players</button>
           </div>
         </div>
         <div class="field">
@@ -400,14 +401,14 @@
 
       <div class="finder-pick">
         <div class="board-head">
-          <h2 id="finderPickTitle">Select a player</h2>
-          <span class="hint" id="finderPickHint">On your roster</span>
+          <h2 id="finderPickTitle">Select players</h2>
+          <span class="hint" id="finderPickHint">On your roster · up to 4</span>
         </div>
         <div class="player-list" id="finderPlayerList" style="max-height:260px"></div>
       </div>
 
       <div id="finderResults" class="finder-results">
-        <div class="finder-empty">Select a player to generate packages.</div>
+        <div class="finder-empty">Select player(s) to generate packages.</div>
       </div>
     </div>
   </div>
@@ -415,7 +416,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260812-retired0';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-multishop';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -822,9 +823,11 @@ const state = {
   maxMetricLabel: 'Proj',
   mode: 'analyze',
   finderDir: 'shop', /* shop = available on your roster; want = acquire from others */
-  finderPlayerId: null,
+  finderPlayerIds: new Set(),
   finderOffers: []
 };
+
+const FINDER_MAX_SELECT = 4;
 
 function starsHtml(n){
   if (window.LockInDist && typeof LockInDist.formatStarsHtml === 'function'){
@@ -1635,7 +1638,7 @@ function setMode(mode){
   if (state.mode === 'finder'){
     lede.innerHTML = 'Trade Finder scans for <strong>1–3 asset</strong> packages (players + picks), including mismatched counts. '
       + 'It grades Trade ★ fairness, fringe seats, starter-lineup <strong>need</strong>, and <strong>max-for-min</strong> contracts. '
-      + '<strong>Shop</strong> = offers for your guy; <strong>Find</strong> = what you can send. Click to open in Analyze.';
+      + '<strong>Shop</strong> = offers for one or more of your players; <strong>Find</strong> = what you can send for players on one other team (up to 4). Click to open in Analyze.';
     renderFinder();
   } else {
     lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending. '
@@ -1817,11 +1820,47 @@ function packagesMatchingValue(giver, targetVal, opts){
   return uniq;
 }
 
+function clearFinderSelection(){
+  state.finderPlayerIds = new Set();
+}
+
+function finderSelectedPlayers(){
+  const out = [];
+  for (const id of state.finderPlayerIds){
+    const p = state.playersById.get(String(id));
+    if (p) out.push(p);
+  }
+  return out.sort((a, b) => finderValue(b) - finderValue(a));
+}
+
+function toggleFinderPlayer(id){
+  const sid = String(id);
+  if (state.finderPlayerIds.has(sid)){
+    state.finderPlayerIds.delete(sid);
+    renderFinder();
+    return;
+  }
+  if (state.finderDir === 'want'){
+    const owner = teamOwning(sid);
+    const ownerId = owner ? String(owner.rosterId) : null;
+    for (const existing of [...state.finderPlayerIds]){
+      const eo = teamOwning(existing);
+      if (!eo || String(eo.rosterId) !== ownerId) state.finderPlayerIds.delete(existing);
+    }
+  }
+  if (state.finderPlayerIds.size >= FINDER_MAX_SELECT) return;
+  state.finderPlayerIds.add(sid);
+  renderFinder();
+}
+
 function buildFinderOffers(){
   const mine = finderTeam();
-  const anchor = state.finderPlayerId ? state.playersById.get(String(state.finderPlayerId)) : null;
-  if (!mine || !anchor) return [];
+  const anchors = finderSelectedPlayers();
+  if (!mine || !anchors.length) return [];
 
+  const targetVal = anchors.reduce((s, p) => s + finderValue(p), 0);
+  if (!(targetVal > 0)) return [];
+  const againstIds = anchors.map(p => p.id);
   const groups = [];
 
   function offerFromPack(counterparty, youSend, youGet, pack, sendVal, getVal){
@@ -1843,42 +1882,44 @@ function buildFinderOffers(){
   }
 
   if (state.finderDir === 'shop'){
-    /* Shopping a player on MY roster — other teams offer pieces for him. */
+    /* Shopping player(s) on MY roster — other teams offer pieces for them. */
     const mineIds = new Set((mine.playerIds || []).map(String));
-    if (!mineIds.has(String(anchor.id))) return [];
-    const targetVal = finderValue(anchor);
+    if (anchors.some(a => !mineIds.has(String(a.id)))) return [];
     state.teams.forEach(other => {
       if (String(other.rosterId) === String(mine.rosterId)) return;
       const packs = packagesMatchingValue(other, targetVal, {
-        excludeIds: [anchor.id],
+        excludeIds: againstIds,
         receiverTeam: mine,
-        againstCount: 1,
-        againstAssets: [anchor]
+        againstCount: anchors.length,
+        againstAssets: anchors
       });
       if (!packs.length) return;
       groups.push({
         team: other,
         offers: packs.map(pack => offerFromPack(
-          other, [anchor], pack.assets || pack.players, pack, targetVal, pack.sendVal
+          other, anchors, pack.assets || pack.players, pack, targetVal, pack.sendVal
         ))
       });
     });
   } else {
-    /* Want a player on SOMEONE ELSE's roster — packages I can send to get him. */
-    const owner = teamOwning(anchor.id);
+    /* Want player(s) on SOMEONE ELSE's roster — packages I can send to get them. */
+    const owner = teamOwning(anchors[0].id);
     if (!owner || String(owner.rosterId) === String(mine.rosterId)) return [];
-    const targetVal = finderValue(anchor);
+    if (anchors.some(a => {
+      const o = teamOwning(a.id);
+      return !o || String(o.rosterId) !== String(owner.rosterId);
+    })) return [];
     const packs = packagesMatchingValue(mine, targetVal, {
-      excludeIds: [anchor.id],
+      excludeIds: againstIds,
       receiverTeam: owner,
-      againstCount: 1,
-      againstAssets: [anchor]
+      againstCount: anchors.length,
+      againstAssets: anchors
     });
     if (!packs.length) return [];
     groups.push({
       team: owner,
       offers: packs.map(pack => offerFromPack(
-        owner, pack.assets || pack.players, [anchor], pack, pack.sendVal, targetVal
+        owner, pack.assets || pack.players, anchors, pack, pack.sendVal, targetVal
       ))
     });
   }
@@ -1888,13 +1929,13 @@ function buildFinderOffers(){
   return groups;
 }
 
-/* Async Finder rebuild so selecting a player doesn't freeze HQ. */
+/* Async Finder rebuild so selecting players doesn't freeze HQ. */
 let finderBuildToken = 0;
 async function buildFinderOffersAsync(){
   const token = ++finderBuildToken;
   const mine = finderTeam();
-  const anchor = state.finderPlayerId ? state.playersById.get(String(state.finderPlayerId)) : null;
-  if (!mine || !anchor) return [];
+  const anchors = finderSelectedPlayers();
+  if (!mine || !anchors.length) return [];
   await yieldToMain();
   if (token !== finderBuildToken) return null;
   const groups = buildFinderOffers();
@@ -1912,17 +1953,21 @@ function renderFinderPlayerList(){
   const title = document.getElementById('finderPickTitle');
   const hint = document.getElementById('finderPickHint');
   const q = normalizeName(document.getElementById('finderSearch').value || '');
+  const selectedN = state.finderPlayerIds.size;
+  const selSuffix = selectedN
+    ? (' · ' + selectedN + '/' + FINDER_MAX_SELECT + ' selected')
+    : (' · up to ' + FINDER_MAX_SELECT);
 
   let players = [];
   if (state.finderDir === 'shop'){
     title.textContent = 'Your players';
-    hint.textContent = 'Shop these';
+    hint.textContent = 'Shop these' + selSuffix;
     players = mine
       ? mine.playerIds.map(id => state.playersById.get(String(id))).filter(Boolean)
       : [];
   } else {
     title.textContent = 'League players';
-    hint.textContent = 'Find these';
+    hint.textContent = 'Find these (one team)' + selSuffix;
     const mineIds = new Set((mine && mine.playerIds || []).map(String));
     state.teams.forEach(t => {
       if (mine && String(t.rosterId) === String(mine.rosterId)) return;
@@ -1945,10 +1990,12 @@ function renderFinderPlayerList(){
 
   list.innerHTML = players.map(p => {
     const owner = teamOwning(p.id);
-    const sel = String(state.finderPlayerId) === String(p.id) ? ' selected' : '';
-    return '<label class="player-row' + sel + '">'
-      + '<input type="radio" name="finderPlayer" value="' + escapeHtml(p.id) + '"'
-      + (sel ? ' checked' : '') + '>'
+    const sel = state.finderPlayerIds.has(String(p.id)) ? ' selected' : '';
+    const atMax = !sel && selectedN >= FINDER_MAX_SELECT;
+    return '<label class="player-row' + sel + (atMax ? ' dim' : '') + '">'
+      + '<input type="checkbox" name="finderPlayer" value="' + escapeHtml(p.id) + '"'
+      + (sel ? ' checked' : '')
+      + (atMax ? ' disabled' : '') + '>'
       + '<span><span class="name">' + escapeHtml(p.name) + '</span>'
       + '<div class="meta">' + escapeHtml(p.pos)
       + (Number.isFinite(p.age) ? ' · ' + p.age + 'y' : '')
@@ -1960,17 +2007,16 @@ function renderFinderPlayerList(){
 
   list.querySelectorAll('input[name="finderPlayer"]').forEach(inp => {
     inp.addEventListener('change', () => {
-      state.finderPlayerId = inp.value;
-      renderFinder();
+      toggleFinderPlayer(inp.value);
     });
   });
 }
 
 async function renderFinderResults(){
   const root = document.getElementById('finderResults');
-  if (!state.finderPlayerId){
+  if (!state.finderPlayerIds.size){
     state.finderOffers = [];
-    root.innerHTML = '<div class="finder-empty">Select a player to generate packages.</div>';
+    root.innerHTML = '<div class="finder-empty">Select player(s) to generate packages.</div>';
     return;
   }
   root.innerHTML = '<div class="finder-empty">Scanning packages\u2026</div>';
@@ -1979,7 +2025,7 @@ async function renderFinderResults(){
   state.finderOffers = groups;
   if (!groups.length){
     root.innerHTML = '<div class="finder-empty">No packages within fairness bands (ratio ≥ '
-      + FINDER_FAIR_HARD + '). Try another player.</div>';
+      + FINDER_FAIR_HARD + '). Try different players or fewer selections.</div>';
     return;
   }
 
@@ -2051,16 +2097,16 @@ function bindFinderUi(){
   document.getElementById('tabFinder').addEventListener('click', () => setMode('finder'));
   document.getElementById('dirShop').addEventListener('click', () => {
     state.finderDir = 'shop';
-    state.finderPlayerId = null;
+    clearFinderSelection();
     renderFinder();
   });
   document.getElementById('dirWant').addEventListener('click', () => {
     state.finderDir = 'want';
-    state.finderPlayerId = null;
+    clearFinderSelection();
     renderFinder();
   });
   document.getElementById('finderTeam').addEventListener('change', () => {
-    state.finderPlayerId = null;
+    clearFinderSelection();
     renderFinder();
   });
   document.getElementById('finderSearch').addEventListener('input', () => renderFinderPlayerList());
