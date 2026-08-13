@@ -338,7 +338,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Asset value is <strong>Trade ★</strong> from Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -416,7 +416,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260813-multishop';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-potential';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -848,9 +848,15 @@ function tradeValHtml(p){
   const score = Number(p.dynasty != null ? p.dynasty : p.tradeScore);
   const scoreTxt = Number.isFinite(score) ? score.toFixed(1) : '—';
   const ovrTxt = p.lockOvr != null ? ('OVR ' + p.lockOvr) : '';
+  const pot = Number(p.tradePotentialMult);
+  const potTxt = Number.isFinite(pot) && pot !== 1
+    ? ('Pot ×' + pot.toFixed(2))
+    : '';
+  const title = p.tradePotentialNote || '';
   return starsHtml(p.tradeStars)
     + '<span class="score">' + scoreTxt + '</span>'
-    + (ovrTxt ? '<span class="ovr-mini">' + ovrTxt + '</span>' : '');
+    + (ovrTxt ? '<span class="ovr-mini">' + ovrTxt + '</span>' : '')
+    + (potTxt ? '<span class="ovr-mini" title="' + escapeHtml(title) + '">' + potTxt + '</span>' : '');
 }
 
 function assetById(id){
@@ -1259,6 +1265,9 @@ function makePlayer(pid, playerDb, projMaps, lockDist, histById, sleeperMaps){
     lockOvr: lock && lock.lockOvr != null ? lock.lockOvr : null,
     tradeScore: lock && lock.tradeScore != null ? lock.tradeScore : null,
     tradeStars: lock && lock.tradeStars != null ? lock.tradeStars : null,
+    tradePotentialMult: lock && lock.tradePotentialMult != null ? lock.tradePotentialMult : null,
+    tradePotentialNote: lock && lock.tradePotentialNote ? lock.tradePotentialNote : null,
+    tradePotentialKind: lock && lock.tradePotentialKind ? lock.tradePotentialKind : null,
     lockAgeBand: (lock && lock.lockAgeBand) || null,
     ceiling: lock && Number.isFinite(Number(lock.ceiling)) ? Number(lock.ceiling) : null,
     ovr: hit && hit.ovr != null ? hit.ovr : null,
@@ -1642,7 +1651,8 @@ function setMode(mode){
     renderFinder();
   } else {
     lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending. '
-      + 'Player value is <strong>Trade ★</strong>; picks use snapshot fringe bases × slot/quality. '
+      + 'Player value is <strong>Trade ★</strong> (Lock OVR × age × injury × contract × situation × <strong>potential</strong>); picks use snapshot fringe bases × slot/quality. '
+      + 'Potential lifts young flashes and softens the age cut for vets who are still producing. '
       + 'Keeper-seat, starter-lineup need, and max-for-min contracts can nudge Allow → Caution. '
       + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
   }
@@ -2384,7 +2394,7 @@ async function load(){
                 .map(r => r + '=' + Number(state.draftPickRoundBases[r]).toFixed(0)).join('/'))
             : '';
           status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
-            + 'Players = Lock OVR × age × injury · picks = 16-keeper fringe medians × slot/quality'
+            + 'Players = Lock OVR × age × injury × potential · picks = 16-keeper fringe medians × slot/quality'
             + baseBits + ' · ' + (lockPack.scored || 0)
             + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
         }

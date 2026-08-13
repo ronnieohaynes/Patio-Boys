@@ -470,6 +470,12 @@
   const LOCK_OVR_FLOOR = 50;
   const LOCK_OVR_CEIL = 99;
   const AGE_MULT = { young: 1.10, prime: 1.0, decline: 0.9, unknown: 1.0 };
+  /* Trade Potential: young flashes (up to ×1.08) and decline-age durability
+     (recover up to 70% of the ×0.9 age haircut toward 1.0). Does not move Lock OVR. */
+  const POTENTIAL_YOUNG_MAX = 0.08;
+  const POTENTIAL_EARLY_PRIME_MAX = 0.05; /* age < 26 in prime band */
+  const POTENTIAL_EARLY_PRIME_AGE = 26;
+  const POTENTIAL_DECLINE_RELIEF = 0.70;
   const ROOKIE_PROJ_W = 0.5;
   const ROOKIE_COMP_W = 0.5;
   /* Peak-comp floors describe prime comps (Brown/Booker/etc). Lock OVR for
@@ -1000,7 +1006,106 @@
     return {mult, why, profile: salary || buyout || deal || null};
   }
 
-  /* tradeScore = LockOVR × age × injury × contract × situation (+1 young bump).
+  function clamp01(x){
+    return Math.max(0, Math.min(1, Number(x) || 0));
+  }
+
+  /* 0–1 “flashes of greatness”: smash premium, hit rates, base≫proj, rookie outlook. */
+  function potentialFlashSignal(info){
+    const row = info || {};
+    const mean = Number(row.mean);
+    const ceiling = Number(row.ceiling);
+    const stdev = Number(row.stdev);
+    const n = Number(row.n) || 0;
+    const hits = row.hits || {};
+    let best = 0;
+
+    if (n >= MIN_SAMPLES_FOR_SMASH && Number.isFinite(mean) && mean > 0){
+      const smash = smashLockBase({
+        mean: mean,
+        ceiling: Number.isFinite(ceiling) ? ceiling : mean,
+        hits: hits,
+        stdev: Number.isFinite(stdev) ? stdev : 0
+      });
+      if (smash != null && Number.isFinite(smash)){
+        best = Math.max(best, clamp01((smash - mean) / Math.max(8, mean * 0.45)));
+      }
+      best = Math.max(best, clamp01((Number(hits[40]) || 0) / 0.12));
+      best = Math.max(best, clamp01((Number(hits[50]) || 0) / 0.05));
+    }
+
+    const lockBase = Number(row.lockBase);
+    const proj = Number(row.proj);
+    if (Number.isFinite(lockBase) && Number.isFinite(proj) && proj > 0 && lockBase > proj){
+      best = Math.max(best, clamp01((lockBase - proj) / Math.max(6, proj * 0.35)));
+    }
+
+    if (row.isRookie && n < MIN_SAMPLES_FOR_SMASH){
+      const outlook = row.outlookRow || null;
+      const ceil = outlook && outlook.ceiling;
+      if (ceil === 'franchise') best = Math.max(best, 0.55);
+      else if (ceil === 'allstar_prospect') best = Math.max(best, 0.35);
+      else if (ceil === 'starter') best = Math.max(best, 0.15);
+    }
+    return clamp01(best);
+  }
+
+  /* 0–1 “hasn’t fallen off”: high prod OVR and/or last smash ≈ prior. */
+  function potentialDurabilitySignal(info){
+    const row = info || {};
+    const ovr = Number(row.ovr);
+    let d = 0;
+    if (Number.isFinite(ovr)) d = Math.max(d, clamp01((ovr - 70) / 20));
+    const last = Number(row.lastBase);
+    const prior = Number(row.priorBase);
+    if (Number.isFinite(last) && Number.isFinite(prior) && prior > 0){
+      d = Math.max(d, clamp01((last / prior - 0.85) / 0.15));
+    } else if (Number.isFinite(last) && last > 0 && Number.isFinite(ovr) && ovr >= 78){
+      d = Math.max(d, 0.5);
+    }
+    return clamp01(d);
+  }
+
+  /* Trade-only Potential multiplier. Young/early-prime upside or decline relief. */
+  function potentialTradeAdjust(meta){
+    const info = meta || {};
+    const band = info.ageBand || lockAgeBand(info.age, info.isRookie);
+    const age = Number(info.age);
+    let mult = 1;
+    let why = '';
+    let kind = 'none';
+    let signal = 0;
+
+    const earlyPrime = band === 'prime'
+      && Number.isFinite(age)
+      && age > 0
+      && age < POTENTIAL_EARLY_PRIME_AGE;
+    if (band === 'young' || earlyPrime){
+      signal = potentialFlashSignal(info);
+      if (signal > 0.05){
+        const maxBump = band === 'young' ? POTENTIAL_YOUNG_MAX : POTENTIAL_EARLY_PRIME_MAX;
+        mult = 1 + maxBump * signal;
+        mult = Math.round(mult * 1000) / 1000;
+        why = (band === 'young' ? 'Young flashes' : 'Early-prime flashes')
+          + ' ×' + mult.toFixed(3);
+        kind = 'upside';
+      }
+    } else if (band === 'decline'){
+      signal = potentialDurabilitySignal(info);
+      if (signal > 0.05){
+        const declineMult = AGE_MULT.decline || 0.9;
+        const ageGap = (1 / declineMult) - 1;
+        mult = 1 + ageGap * POTENTIAL_DECLINE_RELIEF * signal;
+        mult = Math.round(mult * 1000) / 1000;
+        why = 'Still producing ×' + mult.toFixed(3);
+        kind = 'durable';
+      }
+    }
+
+    return {mult: mult, why: why, kind: kind, signal: Math.round(signal * 1000) / 1000};
+  }
+
+  /* tradeScore = LockOVR × age × injury × contract × situation × potential (+1 young bump).
      Injury = chronic INJURY_PRONE × live Sleeper tag (tag ignored offseason). */
   function tradeScoreFromOvr(ovr, meta){
     const o = Number(ovr);
@@ -1021,7 +1126,10 @@
     const sm = info.situationMult != null && Number.isFinite(Number(info.situationMult))
       ? Number(info.situationMult)
       : 1;
-    let score = o * am * im * cm * sm;
+    const pm = info.potentialMult != null && Number.isFinite(Number(info.potentialMult))
+      ? Number(info.potentialMult)
+      : potentialTradeAdjust(Object.assign({}, info, {ageBand: band})).mult;
+    let score = o * am * im * cm * sm * pm;
     if (band === 'young') score += 1;
     return score;
   }
@@ -1163,6 +1271,9 @@
     d.tradeInjuryStatusMult = 1;
     d.tradeContractMult = 1;
     d.tradeContractNote = null;
+    d.tradePotentialMult = 1;
+    d.tradePotentialNote = null;
+    d.tradePotentialKind = null;
     d.tradeSituationMult = 1;
     d.tradeSituationNote = 'Retired — dynasty value zeroed';
     d.tradeSituationKind = 'retired';
@@ -1561,7 +1672,7 @@
 
   /* Mutates each dist with lockBase / lockOvr / lockTier / tradeScore / tradeStars.
      OVR is smash (multi-season blend for non-rookies) or rookie proj+comp.
-     Trade stars layer age + injury + contract + franchise situation. */
+     Trade stars layer age + injury + contract + potential + franchise situation. */
   function attachLockValues(distMap, opts){
     const options = opts || {};
     const playerDb = options.playerDb || {};
@@ -1658,6 +1769,9 @@
         d.lockBlend = null;
         d.tradeSituationMult = null;
         d.tradeSituationNote = null;
+        d.tradePotentialMult = null;
+        d.tradePotentialNote = null;
+        d.tradePotentialKind = null;
         d.rookieComp = comp;
         d.rookieCompPeak = peakComp;
         d.rookieEarlyMult = earlyMult;
@@ -1748,6 +1862,26 @@
       const proneMult = injuryProneMult(displayName);
       const statusMult = injuryStatusMult(injuryStatus, injOpts);
       const injuryMult = proneMult * statusMult;
+      const priorD = priorDistMap
+        ? (priorDistMap[pid] || priorDistMap[String(pid)] || null)
+        : null;
+      const proj = lockProjFromMap(projById, pid, p);
+      const pot = potentialTradeAdjust({
+        ageBand: band,
+        age: p.age,
+        isRookie: isRookie,
+        ovr: tradeBaseOvr,
+        mean: d.mean,
+        ceiling: d.ceiling,
+        stdev: d.stdev,
+        n: d.n,
+        hits: d.hits,
+        lockBase: d.lockBase,
+        proj: proj,
+        lastBase: seasonLockInput(d),
+        priorBase: seasonLockInput(priorD),
+        outlookRow: isRookie ? rookieOutlookRow(p) : null
+      });
       const tradeScore = tradeScoreFromOvr(tradeBaseOvr, {
         ageBand: band,
         age: p.age,
@@ -1758,7 +1892,8 @@
         ignoreInjuryStatus: options.ignoreInjuryStatus,
         offseason: options.offseason,
         contractMult: contractAdj.mult,
-        situationMult: sit.mult
+        situationMult: sit.mult,
+        potentialMult: pot.mult
       });
       const tradeStars = tradeStarsFromScore(tradeScore);
 
@@ -1775,6 +1910,9 @@
       d.tradeInjuryStatusMult = statusMult;
       d.tradeContractMult = contractAdj.mult;
       d.tradeContractNote = contractAdj.why || null;
+      d.tradePotentialMult = pot.mult;
+      d.tradePotentialNote = pot.why || null;
+      d.tradePotentialKind = pot.kind || null;
       d.tradeSituationMult = sit.mult;
       d.tradeSituationNote = sit.why || null;
       d.tradeSituationKind = sit.kind || null;
@@ -2108,6 +2246,10 @@
     SIT_MULT_MAX,
     SIT_FA_MULT,
     AGE_MULT,
+    POTENTIAL_YOUNG_MAX,
+    POTENTIAL_EARLY_PRIME_MAX,
+    POTENTIAL_EARLY_PRIME_AGE,
+    POTENTIAL_DECLINE_RELIEF,
     ROOKIE_PROJ_W,
     ROOKIE_COMP_W,
     ROOKIE_EARLY_CAREER_MULT,
@@ -2170,6 +2312,9 @@
     formatStarsHtml,
     tradeStarsFromScore,
     tradeScoreFromOvr,
+    potentialFlashSignal,
+    potentialDurabilitySignal,
+    potentialTradeAdjust,
     fantasyPosSet,
     isNbaSkater,
     playerHasNbaTeam,

@@ -584,7 +584,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260812-retired0';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260813-potential';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -1836,6 +1836,10 @@ function renderLockIn(t){
           ? (' × contract ' + Number(d.tradeContractMult).toFixed(2))
           : '')
         + (d.tradeContractNote ? (' (' + d.tradeContractNote + ')') : '')
+        + (d.tradePotentialMult != null && Number(d.tradePotentialMult) !== 1
+          ? (' × potential ' + Number(d.tradePotentialMult).toFixed(2))
+          : '')
+        + (d.tradePotentialNote ? (' (' + d.tradePotentialNote + ')') : '')
         + (d.tradeSituationMult != null && Number(d.tradeSituationMult) !== 1
           ? (' × situation ' + Number(d.tradeSituationMult).toFixed(2))
           : '')
