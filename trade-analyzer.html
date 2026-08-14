@@ -338,7 +338,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; clear step-downs as capped chips). Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution. Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; clear step-downs as capped chips). Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless a co-core closes the gap. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -416,7 +416,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260813-dualcore';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260814-primgap';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -887,6 +887,41 @@ const PKG_CHIP_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* chips only */
 const PKG_CHIPS_CAP = 0.25; /* chips ≤ 25% of primary */
 const PKG_EXTRAS_CAP = PKG_CHIPS_CAP; /* alias for older call sites */
 const PKG_PRIMARY_SOFT = 0.78; /* best-vs-best below this → caution when piles differ */
+const PKG_PRIMARY_GAP = 10; /* |#1 − #1| above this → caution; block unless co-cores close it */
+
+/* Primary-gap veto: best-vs-best jump > PKG_PRIMARY_GAP is at least Caution.
+   Block unless the trailing-primary side has a co-core whose coresEff reaches
+   within PKG_PRIMARY_GAP of the leading primary (real multi-talent exception). */
+function primaryGapVerdict(packA, packB){
+  const pA = Number(packA && packA.primary) || 0;
+  const pB = Number(packB && packB.primary) || 0;
+  const gap = Math.abs(pA - pB);
+  if (!(gap > PKG_PRIMARY_GAP)){
+    return {
+      gap: Math.round(gap * 100) / 100,
+      soft: false,
+      hard: false,
+      closedByCore: false,
+      leadPrimary: Math.max(pA, pB),
+      trailPrimary: Math.min(pA, pB)
+    };
+  }
+  const trail = pA <= pB ? packA : packB;
+  const lead = pA <= pB ? packB : packA;
+  const trailCores = Number(trail && trail.coresEff != null ? trail.coresEff : trail && trail.primary) || 0;
+  const leadPrimary = Number(lead && lead.primary) || 0;
+  const hasCoCore = (Number(trail && trail.coreCount) || 0) >= 2;
+  const closedByCore = hasCoCore && (leadPrimary - trailCores) <= PKG_PRIMARY_GAP + 1e-9;
+  return {
+    gap: Math.round(gap * 100) / 100,
+    soft: true,
+    hard: !closedByCore,
+    closedByCore: !!closedByCore,
+    leadPrimary: Math.round(leadPrimary * 100) / 100,
+    trailPrimary: Math.round(Math.min(pA, pB) * 100) / 100,
+    trailCores: Math.round(trailCores * 100) / 100
+  };
+}
 
 function packageValueParts(assets){
   const scored = (assets || []).map(p => ({
@@ -1400,8 +1435,9 @@ function analyze(){
     : (valueToA > valueToB ? aName : bName);
   const loser = winner == null ? null : (winner === aName ? bName : aName);
   const unfair = ratio < FINDER_FAIR_HARD || (high - low) >= 12;
+  const primaryGap = primaryGapVerdict(packToA, packToB);
   const primaryRatio = finderRatio(packToA.primary, packToB.primary);
-  const softPrimary = !unfair
+  const softPrimary = !unfair && !primaryGap.hard
     && Math.max(fromA.length, fromB.length) >= 2
     && primaryRatio < PKG_PRIMARY_SOFT
     && Math.abs(packToA.primary - packToB.primary) >= 8;
@@ -1458,13 +1494,38 @@ function analyze(){
 
   const aColor = teamColor(teamA);
   const bColor = teamColor(teamB);
-  const verdictCls = unfair ? 'unfair' : (runaway ? 'runaway' : '');
+  const verdictCls = (unfair || primaryGap.hard) ? 'unfair' : (runaway ? 'runaway' : '');
   let headline = 'Balanced enough on package value';
-  if (unfair && winner) headline = 'Lopsided — favors ' + winner;
+  if (primaryGap.hard){
+    headline = 'Blocked — primary assets too far apart';
+  } else if (unfair && winner) headline = 'Lopsided — favors ' + winner;
   else if (winner && ratio < FINDER_FAIR_SOFT) headline = 'Edge to ' + winner;
   else if (winner) headline = 'Slight edge to ' + winner;
 
   const flags = [];
+  if (primaryGap.hard){
+    flags.push({
+      cls: 'warn',
+      title: 'Primary gap block',
+      text: 'Best assets differ by '
+        + primaryGap.gap.toFixed(1) + ' Trade ★ ('
+        + primaryGap.leadPrimary.toFixed(0) + ' vs '
+        + primaryGap.trailPrimary.toFixed(0)
+        + '). Gap over ' + PKG_PRIMARY_GAP
+        + ' blocks unless the trailing side has a co-core that closes it — chips cannot.'
+    });
+  } else if (primaryGap.soft){
+    flags.push({
+      cls: 'warn',
+      title: 'Primary gap',
+      text: 'Best assets differ by '
+        + primaryGap.gap.toFixed(1) + ' Trade ★ ('
+        + primaryGap.leadPrimary.toFixed(0) + ' vs '
+        + primaryGap.trailPrimary.toFixed(0)
+        + '), but co-cores bring package cores within '
+        + PKG_PRIMARY_GAP + ' of the top piece — Caution, not Block.'
+    });
+  }
   if (unfair && loser){
     flags.push({
       cls: 'warn',
@@ -1601,20 +1662,36 @@ function analyze(){
   const aDelta = afterMap[teamA.rosterId].total - (beforeStandings.find(r => String(r.rosterId) === String(aId)) || {before:0}).before;
   const bDelta = afterMap[teamB.rosterId].total - (beforeStandings.find(r => String(r.rosterId) === String(bId)) || {before:0}).before;
 
-  /* League ruling: block lopsided value or Max Points runaways; soft imbalances → review.
+  /* League ruling: block lopsided value, primary-gap jumps without co-cores,
+     or Max Points runaways; soft imbalances → review.
      Fake-depth / need / max-for-min contract nudge Allow → Caution; they do not hard-block alone. */
   let ruling = 'allow';
   let rulingTitle = 'Allow this trade';
   let rulingWhy = 'Trade value is close enough; Max Points, need, and contract shape stay in band.';
-  const softEdge = !unfair && !runaway
+  const softEdge = !unfair && !runaway && !primaryGap.hard
     && (ratio < FINDER_FAIR_SOFT || /^[CD]/.test(grade));
-  const softMismatch = !unfair && !runaway && mismatch.softCaution;
-  const softNeed = !unfair && !runaway && needFit.softNeed;
-  const softContract = !unfair && !runaway && contractFit.softContract;
-  const softPackage = !unfair && !runaway && (softPrimary
+  const softMismatch = !unfair && !runaway && !primaryGap.hard && mismatch.softCaution;
+  const softNeed = !unfair && !runaway && !primaryGap.hard && needFit.softNeed;
+  const softContract = !unfair && !runaway && !primaryGap.hard && contractFit.softContract;
+  const softPackage = !unfair && !runaway && !primaryGap.hard && (softPrimary || primaryGap.soft
     || (Math.abs(rawToA - rawToB) <= 6 && Math.abs(valueToA - valueToB) >= 8));
   const softAny = softEdge || softMismatch || softNeed || softContract || softPackage;
-  if (unfair && runaway){
+  if (primaryGap.hard && (unfair || runaway)){
+    ruling = 'block';
+    rulingTitle = 'Do not allow';
+    rulingWhy = 'Blocked — #1 assets are more than ' + PKG_PRIMARY_GAP
+      + ' Trade ★ apart (' + primaryGap.leadPrimary.toFixed(0) + ' vs '
+      + primaryGap.trailPrimary.toFixed(0) + ') with no co-core to close it'
+      + (unfair ? ', and package value is also one-sided' : '')
+      + (runaway ? ', plus a Max Points runaway' : '') + '.';
+  } else if (primaryGap.hard){
+    ruling = 'block';
+    rulingTitle = 'Do not allow';
+    rulingWhy = 'Blocked — best assets differ by ' + primaryGap.gap.toFixed(1)
+      + ' Trade ★ (' + primaryGap.leadPrimary.toFixed(0) + ' vs '
+      + primaryGap.trailPrimary.toFixed(0) + '). Over ' + PKG_PRIMARY_GAP
+      + ' requires a co-core on the trailing side that closes the gap; chips do not count.';
+  } else if (unfair && runaway){
     ruling = 'block';
     rulingTitle = 'Do not allow';
     rulingWhy = 'Blocked on both counts: package value is super unfair'
@@ -1636,11 +1713,15 @@ function analyze(){
     rulingTitle = 'Allow with caution';
     const softBits = [];
     if (softEdge) softBits.push('Trade ★ edge (fairness ' + grade + ')');
-    if (softPackage) softBits.push('package quality (primary gap / extras vs raw sum)');
+    if (primaryGap.soft) softBits.push('primary gap closed by co-cores');
+    else if (softPackage) softBits.push('package quality (primary gap / extras vs raw sum)');
     if (softMismatch) softBits.push('soft package shape (fake depth / weak pick capital)');
     if (softNeed) softBits.push('starter-lineup need mismatch');
     if (softContract) softBits.push('max-for-min contract mismatch');
-    if (softPackage && softBits.length === 1){
+    if (primaryGap.soft && softBits.length === 1){
+      rulingWhy = 'Best assets are more than ' + PKG_PRIMARY_GAP
+        + ' Trade ★ apart, but co-cores on the trailing side close the gap. Allow with caution.';
+    } else if (softPackage && softBits.length === 1){
       rulingWhy = 'Raw chips may add up, but quality-weighted package value (co-cores near full; step-downs capped as chips) still favors one side. Allow with caution.';
     } else if (softContract && softBits.length === 1){
       rulingWhy = 'Trade ★ is close enough, but one side takes on max/near-max money while the other gets min/cheap deals. Allow with caution.';
@@ -1806,7 +1887,9 @@ function setMode(mode){
       + ' are <strong>co-cores</strong> (near-full Trade ★); clear step-downs are chips (diminishing + capped) so fringe piles cannot manufacture a star. '
       + 'Player Trade ★ = Lock OVR × age × injury × contract × situation × <strong>potential</strong>; picks use fringe bases × slot/quality. '
       + 'Keeper-seat, starter-lineup need, and max-for-min contracts can nudge Allow → Caution. '
-      + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>.';
+      + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>. '
+      + 'Primary assets more than ' + PKG_PRIMARY_GAP
+      + ' Trade ★ apart Block unless a co-core closes the gap.';
   }
 }
 
@@ -1832,8 +1915,8 @@ function finderRatio(a, b){
   return hi > 0 ? lo / hi : 0;
 }
 
-function finderRuling(ratio, delta, softCaution){
-  if (ratio < FINDER_FAIR_HARD || delta >= 12) return 'block';
+function finderRuling(ratio, delta, softCaution, primaryHard){
+  if (primaryHard || ratio < FINDER_FAIR_HARD || delta >= 12) return 'block';
   if (ratio < FINDER_FAIR_SOFT || softCaution) return 'caution';
   return 'allow';
 }
@@ -1898,32 +1981,41 @@ function packagesMatchingValue(giver, targetVal, opts){
       ? evaluateContractFit(giver, receiver, assets, againstAssets)
       : null;
     const againstPack = againstAssets.length ? packageValueParts(againstAssets) : null;
-    const primaryGap = againstPack
-      ? finderRatio(sendPack.primary, againstPack.primary)
-      : 1;
-    const softPrimaryGap = againstPack
-      && assets.length >= 2
-      && primaryGap < PKG_PRIMARY_SOFT
-      && Math.abs(sendPack.primary - againstPack.primary) >= 8;
+    const gapV = againstPack ? primaryGapVerdict(sendPack, againstPack) : null;
+    const primaryHard = !!(gapV && gapV.hard);
+    const softPrimaryGap = !!(gapV && gapV.soft && !gapV.hard)
+      || (againstPack
+        && !primaryHard
+        && assets.length >= 2
+        && finderRatio(sendPack.primary, againstPack.primary) < PKG_PRIMARY_SOFT
+        && Math.abs(sendPack.primary - againstPack.primary) >= 8);
     const softCaution = fakeDepth
       || !!(needFit && needFit.softNeed)
       || !!(contractFit && contractFit.softContract)
       || softPrimaryGap;
-    let ruling = finderRuling(ratio, delta, softCaution);
+    let ruling = finderRuling(ratio, delta, softCaution, primaryHard);
     if (ruling === 'block' && !options.includeBlocked) return;
     let mismatchNote = '';
-    if (fakeDepth && seat){
+    if (primaryHard && gapV){
+      mismatchNote = 'Primary gap block: '
+        + gapV.leadPrimary.toFixed(0) + ' vs ' + gapV.trailPrimary.toFixed(0)
+        + ' (>' + PKG_PRIMARY_GAP + ', no co-core close)';
+    } else if (fakeDepth && seat){
       mismatchNote = 'Fake depth risk: ' + seat.clearFringeN + '/' + assets.length
         + ' clear receiver fringe';
-    } else if (softPrimaryGap){
+    } else if (gapV && gapV.soft){
+      mismatchNote = 'Primary gap closed by co-cores ('
+        + gapV.leadPrimary.toFixed(0) + ' vs ' + gapV.trailPrimary.toFixed(0) + ')';
+    } else if (softPrimaryGap && againstPack){
       mismatchNote = 'Primary gap: pile vs '
         + againstPack.primary.toFixed(0) + ' top chip';
     } else if (contractFit && contractFit.softContract){
       mismatchNote = 'Contract mismatch: max/near-max for min/cheap';
     } else if (needFit && needFit.softNeed){
       mismatchNote = 'Need mismatch: giver '
-        + fmtNeedDelta(needFit.deltaA) + ' / receiver '
-        + fmtNeedDelta(needFit.deltaB) + ' starter FP/G';
+        + (needFit.deltaA >= 0 ? '+' : '') + needFit.deltaA.toFixed(1)
+        + ' / receiver ' + (needFit.deltaB >= 0 ? '+' : '') + needFit.deltaB.toFixed(1)
+        + ' starter FP/G';
     } else if (seat){
       mismatchNote = seat.clearFringeN + '/' + assets.length + ' clear fringe'
         + (seat.clearKeeperN ? (', ' + seat.clearKeeperN + ' keeper-seat') : '');

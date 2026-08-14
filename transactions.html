@@ -98,6 +98,13 @@
     font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.06em;
     text-transform:uppercase;color:var(--ink-dim);margin-left:4px;
   }
+  .tx-grade.block{color:var(--coral)}
+  .tx-grade.caution{color:var(--gold)}
+  .tx-grade .tx-ruling{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;
+    letter-spacing:.08em;text-transform:uppercase;margin-top:2px;opacity:.85;
+  }
+  .tx-card.blocked{border-color:color-mix(in srgb, var(--coral) 45%, var(--hairline))}
   .empty{
     padding:28px;text-align:center;color:var(--ink-dim);
     font-family:'IBM Plex Mono',monospace;font-size:12px;
@@ -126,7 +133,7 @@
 <div class="wrap hero">
   <p class="eyebrow">Ledger &middot; Trade ★ at the time</p>
   <h1 class="display">Trade<br>Ledger</h1>
-  <p>Completed player and pick trades across seasons, graded with Lock OVR / Trade ★ as of that season. Fairness uses <strong>quality-weighted package value</strong> (same model as Trade Analyzer) — no waiver adds/drops. Future picks use the same 16-keeper fringe values; drafted picks resolve to the player.</p>
+  <p>Completed player and pick trades across seasons, graded with Lock OVR / Trade ★ as of that season. Fairness uses <strong>quality-weighted package value</strong> (same model as Trade Analyzer). Best assets more than <strong>10 Trade ★</strong> apart are marked <strong>Block</strong> unless a co-core closes the gap.</p>
 </div>
 
 <div class="wrap">
@@ -149,12 +156,14 @@
           <option value="all">All</option>
           <option value="graded">Graded only</option>
           <option value="pending">Pending picks</option>
+          <option value="blocked">Would block</option>
         </select>
       </div>
     </div>
     <p class="caption" id="txCaption" hidden>
       Grades use quality-weighted package fairness on a normal letter scale (A+ ≥97%, A ≥94%, A- ≥90%, … F &lt;60%).
       Assets within 82% of the top piece and ≥ Trade ★ 70 are co-cores (near-full); clear step-downs are chips capped at 25% of the primary.
+      Primary assets more than 10 Trade ★ apart <strong>Block</strong> (ledger grade F) unless the trailing side has a co-core that closes the gap — then Caution.
       Rookies without NBA samples are reverse-engineered from next-year projections + comps.
       Future picks count via 16-keeper fringe medians × year/slot/quality; once drafted they grade as that player.
     </p>
@@ -165,7 +174,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260813-dualcore';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260814-primgap';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js','transactions.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -236,6 +245,7 @@ function filteredRows(){
     }
     if (grade === 'graded' && !r.grade) return false;
     if (grade === 'pending' && !r.pending) return false;
+    if (grade === 'blocked' && !(r.ruling === 'block' || r.primaryGapHard)) return false;
     return true;
   });
 }
@@ -269,12 +279,22 @@ function fmtPkg(effective, raw){
 function renderTradeCard(r){
   const a = (r.sides && r.sides[0]) || {};
   const b = (r.sides && r.sides[1]) || {};
+  const blocked = r.ruling === 'block' || r.primaryGapHard;
+  const caution = !blocked && (r.ruling === 'caution' || r.primaryGapSoft);
   const gradeHtml = r.grade
-    ? '<p class="tx-grade">' + escapeHtml(r.grade) + '</p>'
+    ? '<p class="tx-grade' + (blocked ? ' block' : (caution ? ' caution' : '')) + '">'
+      + escapeHtml(r.grade)
+      + (blocked ? '<span class="tx-ruling">Block</span>' : '')
+      + (caution ? '<span class="tx-ruling">Caution</span>' : '')
+      + '</p>'
     : '<p class="tx-grade dim">Pending</p>';
   const sub = [];
-  if (r.winner) sub.push(escapeHtml(r.winner) + ' won the haul');
+  if (blocked) sub.push('Would be blocked today (primary gap)');
+  if (r.winner && !blocked) sub.push(escapeHtml(r.winner) + ' won the haul');
   sub.push(fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB) + ' package');
+  if (r.packageGrade && r.packageGrade !== r.grade){
+    sub.push('package letter ' + escapeHtml(r.packageGrade));
+  }
   if (r.rawA != null && r.rawB != null
     && (Math.abs(Number(r.rawA) - Number(r.valueA || 0)) >= 0.05
       || Math.abs(Number(r.rawB) - Number(r.valueB || 0)) >= 0.05)){
@@ -287,7 +307,8 @@ function renderTradeCard(r){
   const pkgB = b.packageEffective != null ? b.packageEffective : r.valueB;
   const rawSideA = a.packageRaw != null ? a.packageRaw : r.rawA;
   const rawSideB = b.packageRaw != null ? b.packageRaw : r.rawB;
-  return '<article class="tx-card' + (r.pending ? ' pending' : '') + '">'
+  return '<article class="tx-card' + (r.pending ? ' pending' : '')
+    + (blocked ? ' blocked' : '') + '">'
     + '<div class="tx-head"><p class="tx-meta">' + escapeHtml(r.dateLabel)
     + ' · Season ' + escapeHtml(r.season) + ' · Trade</p>' + gradeHtml + '</div>'
     + '<h3 class="tx-title">' + escapeHtml(a.team || 'Side A') + ' ↔ ' + escapeHtml(b.team || 'Side B') + '</h3>'

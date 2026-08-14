@@ -3,8 +3,9 @@
    resolves drafted picks to players, and grades with Lock OVR / Trade ★
    as of that season (tradeScore-at-time). Fairness uses quality-weighted
    package value (co-cores near full; step-down chips capped) — same model
-   as Trade Analyzer. Future unresolved picks use DraftPickValue (16-keeper
-   fringe). Roster-fit uses lockBase (smash FP).
+   as Trade Analyzer. Primary assets more than 10 Trade ★ apart Block unless
+   a co-core closes the gap. Future unresolved picks use DraftPickValue
+   (16-keeper fringe). Roster-fit uses lockBase (smash FP).
    Pass { tradesOnly: true } to skip adds/drops / waiver grading. */
 (function(global){
   'use strict';
@@ -94,6 +95,7 @@
   const PKG_CHIPS_CAP = 0.25; /* chips ≤ 25% of primary */
   const PKG_EXTRAS_CAP = PKG_CHIPS_CAP; /* alias */
   const PKG_PRIMARY_SOFT = 0.78; /* best-vs-best below this → caution */
+  const PKG_PRIMARY_GAP = 10; /* |#1 − #1| → caution; block unless co-cores close */
 
   function assetPackageScore(a){
     if (!a || a.graded === false) return 0;
@@ -154,6 +156,38 @@
 
   function effectivePackageValue(assets){
     return packageValueParts(assets).effective;
+  }
+
+  /* Same primary-gap veto as Trade Analyzer. */
+  function primaryGapVerdict(packA, packB){
+    const pA = Number(packA && packA.primary) || 0;
+    const pB = Number(packB && packB.primary) || 0;
+    const gap = Math.abs(pA - pB);
+    if (!(gap > PKG_PRIMARY_GAP)){
+      return {
+        gap: Math.round(gap * 100) / 100,
+        soft: false,
+        hard: false,
+        closedByCore: false,
+        leadPrimary: Math.max(pA, pB),
+        trailPrimary: Math.min(pA, pB)
+      };
+    }
+    const trail = pA <= pB ? packA : packB;
+    const lead = pA <= pB ? packB : packA;
+    const trailCores = Number(trail && trail.coresEff != null ? trail.coresEff : trail && trail.primary) || 0;
+    const leadPrimary = Number(lead && lead.primary) || 0;
+    const hasCoCore = (Number(trail && trail.coreCount) || 0) >= 2;
+    const closedByCore = hasCoCore && (leadPrimary - trailCores) <= PKG_PRIMARY_GAP + 1e-9;
+    return {
+      gap: Math.round(gap * 100) / 100,
+      soft: true,
+      hard: !closedByCore,
+      closedByCore: !!closedByCore,
+      leadPrimary: Math.round(leadPrimary * 100) / 100,
+      trailPrimary: Math.round(Math.min(pA, pB) * 100) / 100,
+      trailCores: Math.round(trailCores * 100) / 100
+    };
   }
 
   /* Roster-fit quality delta → letter (lineup lift + cut/clog adjustments). */
@@ -659,6 +693,7 @@
         packageEffective: pack.effective,
         packageRaw: pack.raw,
         packagePrimary: pack.primary,
+        packageCoresEff: pack.coresEff,
         packageExtrasEff: pack.extrasEff,
         coreCount: pack.coreCount,
         chipCount: pack.chipCount,
@@ -675,8 +710,8 @@
     const valuedPicks = sideVals.reduce((n, s) => n + (s.valuedPicks || 0), 0);
     const emptySide = {
       dynastyIn: 0, packageEffective: 0, packageRaw: 0, packagePrimary: 0,
-      assetCount: 0, avgDynasty: 0, team: null, extrasCapped: false,
-      coreCount: 0, chipCount: 0
+      packageCoresEff: 0, assetCount: 0, avgDynasty: 0, team: null,
+      extrasCapped: false, coreCount: 0, chipCount: 0
     };
     const a = sideVals[0] || emptySide;
     const b = sideVals[1] || emptySide;
@@ -684,6 +719,8 @@
       return {
         sides: sideVals,
         grade: null,
+        packageGrade: null,
+        ruling: null,
         pending: true,
         pendingPicks,
         valuedPicks,
@@ -696,6 +733,8 @@
         avgB: b.avgDynasty || 0,
         uneven: false,
         extrasCapped: !!(a.extrasCapped || b.extrasCapped),
+        primaryGapHard: false,
+        primaryGapSoft: false,
         winner: null,
         ratio: null
       };
@@ -706,19 +745,37 @@
     const high = Math.max(scoreA, scoreB, 0.01);
     const low = Math.min(scoreA, scoreB);
     const ratio = low / high;
-    const grade = fairnessGrade(ratio);
+    const packageGrade = fairnessGrade(ratio);
+    const gapV = primaryGapVerdict(
+      { primary: a.packagePrimary, coresEff: a.packageCoresEff, coreCount: a.coreCount },
+      { primary: b.packagePrimary, coresEff: b.packageCoresEff, coreCount: b.coreCount }
+    );
+    /* Hard primary gap vetoes the deal — letter becomes F (same as Analyzer Block). */
+    const grade = gapV.hard ? 'F' : packageGrade;
+    const ruling = gapV.hard ? 'block' : (gapV.soft ? 'caution' : 'allow');
     const winner = scoreA === scoreB ? null : (scoreA > scoreB ? a.team : b.team);
     const uneven = a.assetCount !== b.assetCount;
     const primaryHigh = Math.max(a.packagePrimary || 0, b.packagePrimary || 0, 0.01);
     const primaryLow = Math.min(a.packagePrimary || 0, b.packagePrimary || 0);
     const primaryRatio = primaryLow / primaryHigh;
-    const softPrimary = Math.max(a.assetCount, b.assetCount) >= 2
+    const softPrimary = !gapV.hard
+      && Math.max(a.assetCount, b.assetCount) >= 2
       && primaryRatio < PKG_PRIMARY_SOFT
       && Math.abs((a.packagePrimary || 0) - (b.packagePrimary || 0)) >= 8;
     const rawClosePkgFar = Math.abs((a.packageRaw || 0) - (b.packageRaw || 0)) <= 6
       && Math.abs(scoreA - scoreB) >= 8;
 
     const reasonBits = [];
+    if (gapV.hard){
+      reasonBits.push('BLOCK — primary gap '
+        + gapV.gap.toFixed(1) + ' (' + gapV.leadPrimary.toFixed(0)
+        + ' vs ' + gapV.trailPrimary.toFixed(0) + ', >' + PKG_PRIMARY_GAP
+        + ', no co-core close)'
+        + (packageGrade && packageGrade !== 'F' ? '; package was ' + packageGrade : ''));
+    } else if (gapV.soft){
+      reasonBits.push('Caution — primary gap ' + gapV.gap.toFixed(1)
+        + ' closed by co-cores');
+    }
     if (valuedPicks){
       reasonBits.push(valuedPicks + ' future pick' + (valuedPicks === 1 ? '' : 's')
         + ' valued via 16-keeper fringe');
@@ -744,13 +801,15 @@
     if (rawClosePkgFar){
       reasonBits.push('Raw sums look close but package quality diverges');
     }
-    if (uneven && !softPrimary){
+    if (uneven && !softPrimary && !gapV.hard){
       reasonBits.push('Uneven haul (' + a.assetCount + ' vs ' + b.assetCount
         + ') — graded on package value, not raw volume');
     }
     return {
       sides: sideVals,
       grade,
+      packageGrade,
+      ruling,
       ratio,
       pending: pendingPicks > 0,
       pendingPicks,
@@ -758,6 +817,9 @@
       uneven,
       extrasCapped: !!(a.extrasCapped || b.extrasCapped),
       softPrimary: !!softPrimary,
+      primaryGapHard: !!gapV.hard,
+      primaryGapSoft: !!gapV.soft,
+      primaryGap: gapV.gap,
       reason: reasonBits.length ? reasonBits.join(' · ') : null,
       valueA: scoreA,
       valueB: scoreB,
@@ -1107,6 +1169,8 @@
           teams: [metaA.displayName, metaB.displayName].filter(Boolean),
           franchises: [metaA.franchise, metaB.franchise].filter(Boolean),
           grade: graded.grade,
+          packageGrade: graded.packageGrade,
+          ruling: graded.ruling,
           pending: graded.pending,
           pendingPicks: graded.pendingPicks,
           reason: graded.reason,
@@ -1120,6 +1184,9 @@
           uneven: !!graded.uneven,
           extrasCapped: !!graded.extrasCapped,
           softPrimary: !!graded.softPrimary,
+          primaryGapHard: !!graded.primaryGapHard,
+          primaryGapSoft: !!graded.primaryGapSoft,
+          primaryGap: graded.primaryGap,
           ratio: graded.ratio,
           sides: graded.sides,
           waiverBid: null
@@ -1213,11 +1280,13 @@
     gradeTrade,
     packageValueParts,
     effectivePackageValue,
+    primaryGapVerdict,
     PKG_EXTRAS_CAP,
     PKG_CHIPS_CAP,
     PKG_CORE_RATIO,
     PKG_CORE_FLOOR,
     PKG_CORE_WEIGHTS,
-    PKG_CHIP_WEIGHTS
+    PKG_CHIP_WEIGHTS,
+    PKG_PRIMARY_GAP
   };
 })(typeof window !== 'undefined' ? window : globalThis);
