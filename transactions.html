@@ -61,8 +61,18 @@
     font-family:'Anton',sans-serif;text-transform:uppercase;font-size:20px;margin:8px 0 0;
   }
   .tx-sub{
-    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);margin:6px 0 0;
+    font-size:14px;line-height:1.45;color:#C9CDD8;margin:8px 0 0;max-width:62ch;
   }
+  .tx-details{
+    margin-top:10px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);
+  }
+  .tx-details summary{
+    cursor:pointer;letter-spacing:.04em;text-transform:uppercase;list-style:none;
+  }
+  .tx-details summary::-webkit-details-marker{display:none}
+  .tx-details summary::before{content:'▸ ';opacity:.7}
+  .tx-details[open] summary::before{content:'▾ '}
+  .tx-details .tx-detail-body{margin:8px 0 0;line-height:1.4}
   .sides{
     display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;
   }
@@ -133,7 +143,7 @@
 <div class="wrap hero">
   <p class="eyebrow">Ledger &middot; Trade ★ at the time</p>
   <h1 class="display">Trade<br>Ledger</h1>
-  <p>Completed player and pick trades across seasons, graded with Lock OVR / Trade ★ as of that season. Fairness uses <strong>quality-weighted package value</strong> (same model as Trade Analyzer). Best assets more than <strong>10 Trade ★</strong> apart are marked <strong>Block</strong> unless a co-core closes the gap.</p>
+  <p>Completed player and pick trades across seasons. Each card gets a letter grade plus a short plain-English why — same fairness rules as Trade Analyzer.</p>
 </div>
 
 <div class="wrap">
@@ -161,11 +171,9 @@
       </div>
     </div>
     <p class="caption" id="txCaption" hidden>
-      Grades use quality-weighted package fairness on a normal letter scale (A+ ≥97%, A ≥94%, A- ≥90%, … F &lt;60%).
-      Assets within 82% of the top piece and ≥ Trade ★ 70 are co-cores (near-full); clear step-downs are chips capped at 25% of the primary.
-      Primary assets more than 10 Trade ★ apart <strong>Block</strong> (ledger grade F) unless the trailing side has a co-core that closes the gap — then Caution.
-      Rookies without NBA samples are reverse-engineered from next-year projections + comps.
-      Future picks count via 16-keeper fringe medians × year/slot/quality; once drafted they grade as that player.
+      Letter grades follow package fairness (A+ nearly even … F badly lopsided).
+      Best assets more than 10 Trade ★ apart block the deal unless a real co-core closes the gap.
+      Expand “Evaluation details” on a card if you want the raw math.
     </p>
     <div class="tx-list" id="txList"></div>
     <div class="empty" id="txEmpty" hidden>No trades match those filters.</div>
@@ -174,7 +182,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260814-primgap';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260814-justify';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js','transactions.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -269,11 +277,127 @@ function renderAssets(assets, drops){
   return lines.join('') || '<p class="asset pending">—</p>';
 }
 
-function fmtPkg(effective, raw){
-  const eff = fmtDyn(effective);
-  if (raw == null || !Number.isFinite(Number(raw))) return eff;
-  if (Math.abs(Number(raw) - Number(effective || 0)) < 0.05) return eff;
-  return eff + ' <span class="ceil">(raw ' + fmtDyn(raw) + ')</span>';
+function topGradedAsset(side){
+  const assets = ((side && side.assets) || [])
+    .filter(a => a && a.graded && Number(a.dynasty) > 0)
+    .slice()
+    .sort((x, y) => (Number(y.dynasty) || 0) - (Number(x.dynasty) || 0));
+  return assets[0] || null;
+}
+
+function assetShort(a){
+  if (!a) return 'their top piece';
+  return a.label || a.name || 'their top piece';
+}
+
+/* Plain-English 2–3 sentence grade write-up; mechanics stay under details. */
+function justifyTradeGrade(r){
+  const a = (r.sides && r.sides[0]) || {};
+  const b = (r.sides && r.sides[1]) || {};
+  const aName = a.team || 'Side A';
+  const bName = b.team || 'Side B';
+  const topA = topGradedAsset(a);
+  const topB = topGradedAsset(b);
+  const leadSide = (Number(a.packagePrimary) || 0) >= (Number(b.packagePrimary) || 0) ? a : b;
+  const trailSide = leadSide === a ? b : a;
+  const leadTop = topGradedAsset(leadSide);
+  const trailTop = topGradedAsset(trailSide);
+  const sentences = [];
+
+  if (!r.grade){
+    sentences.push('This trade is not fully graded yet'
+      + (r.pendingPicks ? ' because draft picks still need values.' : '.'));
+    sentences.push('Once those assets resolve, the letter grade will lock in.');
+    return sentences.join(' ');
+  }
+
+  if (r.ruling === 'block' || r.primaryGapHard){
+    sentences.push('Grade F — this deal would be blocked.'
+      + ' The top assets are too far apart ('
+      + assetShort(leadTop) + ' vs ' + assetShort(trailTop) + ').');
+    sentences.push('Extra role players and picks do not make up that kind of talent gap unless the weaker side also sends another near-equal piece.');
+    if (r.packageGrade && r.packageGrade !== 'F' && r.packageGrade !== r.grade){
+      sentences.push('The overall package looked like a '
+        + r.packageGrade + ' on totals alone, but best-for-best fails the league bar.');
+    }
+    return sentences.join(' ');
+  }
+
+  if (r.ruling === 'caution' || r.primaryGapSoft){
+    sentences.push('Grade ' + r.grade + ' with caution.'
+      + ' The headline pieces differ ('
+      + assetShort(leadTop) + ' vs ' + assetShort(trailTop)
+      + '), but the trailing side has another strong piece that keeps it legal.');
+    if (r.winner){
+      sentences.push(r.winner + ' still edges the overall haul.');
+    } else {
+      sentences.push('Value is close enough once both real talents are counted.');
+    }
+    return sentences.join(' ');
+  }
+
+  const matchPct = r.ratio != null && Number.isFinite(Number(r.ratio))
+    ? Math.round(Number(r.ratio) * 100)
+    : null;
+  const head = 'Grade ' + r.grade + '.';
+
+  if (/^A/.test(r.grade)){
+    sentences.push(head + ' Both sides received roughly equal quality'
+      + (matchPct != null ? (' (about a ' + matchPct + '% match).') : '.'));
+    if (r.winner){
+      sentences.push(r.winner + ' has a slight edge, not a steal.');
+    } else {
+      sentences.push('Neither side clearly fleeced the other.');
+    }
+    if (topA && topB){
+      sentences.push('The main pieces were ' + assetShort(topA) + ' and ' + assetShort(topB) + '.');
+    }
+    return sentences.slice(0, 3).join(' ');
+  }
+
+  if (/^B/.test(r.grade)){
+    sentences.push(head + ' One side got a real but modest edge on quality.');
+    sentences.push((r.winner || 'One team') + ' won the haul without breaking best-for-best.');
+    if (topA && topB){
+      sentences.push(assetShort(topA) + ' vs ' + assetShort(topB) + ' was the top-line matchup.');
+    }
+    return sentences.slice(0, 3).join(' ');
+  }
+
+  if (/^C/.test(r.grade)){
+    sentences.push(head + ' The trade is passable but clearly tilted.');
+    sentences.push((r.winner || 'One side') + ' came out ahead on value.');
+    sentences.push('It clears the block bar, but it is not a fair swap.');
+    return sentences.join(' ');
+  }
+
+  sentences.push(head + ' This was a lopsided swap on quality-weighted value.');
+  sentences.push((r.winner || 'One side') + ' won by a wide margin.');
+  if (topA && topB){
+    sentences.push(aName + ' got ' + assetShort(topA) + '; ' + bName + ' got ' + assetShort(topB) + '.');
+  }
+  return sentences.slice(0, 3).join(' ');
+}
+
+function evaluationDetails(r){
+  const bits = [];
+  if (r.valueA != null && r.valueB != null){
+    bits.push('Package ' + fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB));
+  }
+  if (r.rawA != null && r.rawB != null
+    && (Math.abs(Number(r.rawA) - Number(r.valueA || 0)) >= 0.05
+      || Math.abs(Number(r.rawB) - Number(r.valueB || 0)) >= 0.05)){
+    bits.push('raw ' + fmtDyn(r.rawA) + ' / ' + fmtDyn(r.rawB));
+  }
+  if (r.packageGrade && r.packageGrade !== r.grade){
+    bits.push('package letter ' + r.packageGrade);
+  }
+  if (r.primaryGap != null && Number(r.primaryGap) > 0){
+    bits.push('primary gap ' + Number(r.primaryGap).toFixed(1));
+  }
+  if (r.ruling) bits.push('ruling ' + r.ruling);
+  if (r.reason) bits.push(r.reason);
+  return bits.join(' · ');
 }
 
 function renderTradeCard(r){
@@ -288,38 +412,25 @@ function renderTradeCard(r){
       + (caution ? '<span class="tx-ruling">Caution</span>' : '')
       + '</p>'
     : '<p class="tx-grade dim">Pending</p>';
-  const sub = [];
-  if (blocked) sub.push('Would be blocked today (primary gap)');
-  if (r.winner && !blocked) sub.push(escapeHtml(r.winner) + ' won the haul');
-  sub.push(fmtDyn(r.valueA) + ' vs ' + fmtDyn(r.valueB) + ' package');
-  if (r.packageGrade && r.packageGrade !== r.grade){
-    sub.push('package letter ' + escapeHtml(r.packageGrade));
-  }
-  if (r.rawA != null && r.rawB != null
-    && (Math.abs(Number(r.rawA) - Number(r.valueA || 0)) >= 0.05
-      || Math.abs(Number(r.rawB) - Number(r.valueB || 0)) >= 0.05)){
-    sub.push('raw ' + fmtDyn(r.rawA) + ' / ' + fmtDyn(r.rawB));
-  }
-  if (r.reason) sub.push(escapeHtml(r.reason));
+  const why = justifyTradeGrade(r);
+  const detail = evaluationDetails(r);
   const countA = Number(a.assetCount) || (a.assets || []).filter(x => x.graded).length;
   const countB = Number(b.assetCount) || (b.assets || []).filter(x => x.graded).length;
-  const pkgA = a.packageEffective != null ? a.packageEffective : r.valueA;
-  const pkgB = b.packageEffective != null ? b.packageEffective : r.valueB;
-  const rawSideA = a.packageRaw != null ? a.packageRaw : r.rawA;
-  const rawSideB = b.packageRaw != null ? b.packageRaw : r.rawB;
   return '<article class="tx-card' + (r.pending ? ' pending' : '')
     + (blocked ? ' blocked' : '') + '">'
     + '<div class="tx-head"><p class="tx-meta">' + escapeHtml(r.dateLabel)
     + ' · Season ' + escapeHtml(r.season) + ' · Trade</p>' + gradeHtml + '</div>'
     + '<h3 class="tx-title">' + escapeHtml(a.team || 'Side A') + ' ↔ ' + escapeHtml(b.team || 'Side B') + '</h3>'
-    + '<p class="tx-sub">' + sub.join(' · ') + '</p>'
+    + '<p class="tx-sub">' + escapeHtml(why) + '</p>'
+    + (detail
+      ? ('<details class="tx-details"><summary>Evaluation details</summary>'
+        + '<p class="tx-detail-body">' + escapeHtml(detail) + '</p></details>')
+      : '')
     + '<div class="sides">'
     + '<div class="side"><p class="lbl">Received · ' + countA + ' asset' + (countA === 1 ? '' : 's')
-    + ' · pkg ' + fmtPkg(pkgA, rawSideA)
     + '</p><p class="team">' + escapeHtml(a.team || '—') + '</p>'
     + renderAssets(a.assets) + '</div>'
     + '<div class="side"><p class="lbl">Received · ' + countB + ' asset' + (countB === 1 ? '' : 's')
-    + ' · pkg ' + fmtPkg(pkgB, rawSideB)
     + '</p><p class="team">' + escapeHtml(b.team || '—') + '</p>'
     + renderAssets(b.assets) + '</div>'
     + '</div></article>';
