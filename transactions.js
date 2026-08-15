@@ -4,8 +4,9 @@
    as of that season (tradeScore-at-time). Fairness uses quality-weighted
    package value (co-cores near full; step-down chips capped) — same model
    as Trade Analyzer. Primary assets more than 10 Trade ★ apart Block unless
-   a co-core closes the gap. Future unresolved picks use DraftPickValue
-   (16-keeper fringe). Roster-fit uses lockBase (smash FP).
+   a co-core closes the gap. Package ages 3+ years apart tilt fairness toward
+   youth. Future unresolved picks use DraftPickValue (16-keeper fringe).
+   Roster-fit uses lockBase (smash FP).
    Pass { tradesOnly: true } to skip adds/drops / waiver grading. */
 (function(global){
   'use strict';
@@ -96,11 +97,28 @@
   const PKG_EXTRAS_CAP = PKG_CHIPS_CAP; /* alias */
   const PKG_PRIMARY_SOFT = 0.78; /* best-vs-best below this → caution */
   const PKG_PRIMARY_GAP = 10; /* |#1 − #1| → caution; block unless co-cores close */
+  const PKG_AGE_SOFT = 3; /* value-weighted mean age gap → fairness nudge + caution */
+  const PKG_AGE_ADJ_PER_YR = 0.03;
+  const PKG_AGE_ADJ_CAP = 0.12;
 
   function assetPackageScore(a){
     if (!a || a.graded === false) return 0;
     const v = Number(a.dynasty != null ? a.dynasty : a.tradeScore);
     return Number.isFinite(v) && v > 0 ? v : 0;
+  }
+
+  function pickAgeProxy(pick){
+    const round = Number(pick && pick.round) || 3;
+    if (round <= 1) return 19.5;
+    if (round === 2) return 20.5;
+    return 21.5;
+  }
+
+  function assetAgeYears(a){
+    if (!a || a.graded === false) return null;
+    if (a.kind === 'pick' && !a.resolvedPid) return pickAgeProxy(a);
+    const age = Number(a.age);
+    return Number.isFinite(age) && age > 0 ? age : null;
   }
 
   function packageValueParts(assets){
@@ -156,6 +174,69 @@
 
   function effectivePackageValue(assets){
     return packageValueParts(assets).effective;
+  }
+
+  function packageAgeParts(assets){
+    let wSum = 0;
+    let aSum = 0;
+    let n = 0;
+    let primaryAge = null;
+    const scored = (assets || []).map(p => ({
+      asset: p,
+      value: assetPackageScore(p),
+      age: assetAgeYears(p)
+    })).filter(x => x.value > 0 && x.age != null)
+      .sort((a, b) => b.value - a.value);
+    scored.forEach((x, i) => {
+      wSum += x.value;
+      aSum += x.age * x.value;
+      n += 1;
+      if (i === 0) primaryAge = x.age;
+    });
+    if (!(wSum > 0) || !n){
+      return { mean: null, primaryAge: null, n: 0, weight: 0 };
+    }
+    return {
+      mean: Math.round((aSum / wSum) * 10) / 10,
+      primaryAge: primaryAge != null ? Math.round(primaryAge * 10) / 10 : null,
+      n,
+      weight: Math.round(wSum * 100) / 100
+    };
+  }
+
+  function ageStructureMult(myMean, otherMean){
+    if (!Number.isFinite(myMean) || !Number.isFinite(otherMean)) return 1;
+    const gap = otherMean - myMean;
+    if (Math.abs(gap) + 1e-9 < PKG_AGE_SOFT) return 1;
+    const excess = Math.abs(gap) - (PKG_AGE_SOFT - 1);
+    const adj = Math.min(PKG_AGE_ADJ_CAP, excess * PKG_AGE_ADJ_PER_YR);
+    return gap > 0 ? (1 + adj) : (1 - adj);
+  }
+
+  function ageGapVerdict(ageA, ageB){
+    const mA = ageA && ageA.mean != null ? Number(ageA.mean) : null;
+    const mB = ageB && ageB.mean != null ? Number(ageB.mean) : null;
+    if (!Number.isFinite(mA) || !Number.isFinite(mB)){
+      return {
+        gap: 0, soft: false, hard: false, meanA: mA, meanB: mB,
+        youngSide: null, multA: 1, multB: 1
+      };
+    }
+    const gap = Math.abs(mA - mB);
+    const soft = gap + 1e-9 >= PKG_AGE_SOFT;
+    const hard = gap + 1e-9 >= PKG_AGE_SOFT + 2;
+    return {
+      gap: Math.round(gap * 10) / 10,
+      soft,
+      hard,
+      meanA: mA,
+      meanB: mB,
+      primaryA: ageA.primaryAge,
+      primaryB: ageB.primaryAge,
+      youngSide: mA === mB ? null : (mA < mB ? 'A' : 'B'),
+      multA: ageStructureMult(mA, mB),
+      multB: ageStructureMult(mB, mA)
+    };
   }
 
   /* Same primary-gap veto as Trade Analyzer. */
@@ -661,20 +742,25 @@
               graded: true,
               pickValued: true,
               pickNote: pickVal.note || '',
+              age: pickAgeProxy(a),
               label: assetLabel(a)
             });
           }
           pendingPicks++;
           return Object.assign({}, a, {
-            dynasty: null, tradeStars: null, graded: false, label: assetLabel(a)
+            dynasty: null, tradeStars: null, graded: false,
+            age: pickAgeProxy(a),
+            label: assetLabel(a)
           });
         }
         const pid = a.kind === 'player' ? a.pid : a.resolvedPid;
+        const adjusted = playerAtSeason(pid, playerDb, asOfSeason, currentSeason);
         const v = valueForPidAt(maps, pid, playerDb, asOfSeason, currentSeason);
         return Object.assign({}, a, {
           dynasty: v,
           tradeStars: tradeStarsForValue(v),
           graded: true,
+          age: adjusted && adjusted.age != null ? Number(adjusted.age) : null,
           label: assetLabel(Object.assign({}, a, { name: a.name || playerName(playerDb[pid], pid) }))
         });
       });
@@ -683,6 +769,7 @@
         gradedCount += 1;
       });
       const pack = packageValueParts(assets);
+      const agePack = packageAgeParts(assets);
       return {
         rosterId: side.rosterId,
         team: side.team,
@@ -695,6 +782,8 @@
         packagePrimary: pack.primary,
         packageCoresEff: pack.coresEff,
         packageExtrasEff: pack.extrasEff,
+        packageAgeMean: agePack.mean,
+        packageAgePrimary: agePack.primaryAge,
         coreCount: pack.coreCount,
         chipCount: pack.chipCount,
         extrasCapped: pack.extrasCapped,
@@ -710,8 +799,8 @@
     const valuedPicks = sideVals.reduce((n, s) => n + (s.valuedPicks || 0), 0);
     const emptySide = {
       dynastyIn: 0, packageEffective: 0, packageRaw: 0, packagePrimary: 0,
-      packageCoresEff: 0, assetCount: 0, avgDynasty: 0, team: null,
-      extrasCapped: false, coreCount: 0, chipCount: 0
+      packageCoresEff: 0, packageAgeMean: null, assetCount: 0, avgDynasty: 0,
+      team: null, extrasCapped: false, coreCount: 0, chipCount: 0
     };
     const a = sideVals[0] || emptySide;
     const b = sideVals[1] || emptySide;
@@ -735,6 +824,8 @@
         extrasCapped: !!(a.extrasCapped || b.extrasCapped),
         primaryGapHard: false,
         primaryGapSoft: false,
+        ageGapSoft: false,
+        ageGapHard: false,
         winner: null,
         ratio: null
       };
@@ -742,8 +833,14 @@
 
     const scoreA = a.packageEffective;
     const scoreB = b.packageEffective;
-    const high = Math.max(scoreA, scoreB, 0.01);
-    const low = Math.min(scoreA, scoreB);
+    const ageV = ageGapVerdict(
+      { mean: a.packageAgeMean, primaryAge: a.packageAgePrimary },
+      { mean: b.packageAgeMean, primaryAge: b.packageAgePrimary }
+    );
+    const fairA = scoreA * (ageV.multA || 1);
+    const fairB = scoreB * (ageV.multB || 1);
+    const high = Math.max(fairA, fairB, 0.01);
+    const low = Math.min(fairA, fairB);
     const ratio = low / high;
     const packageGrade = fairnessGrade(ratio);
     const gapV = primaryGapVerdict(
@@ -752,8 +849,8 @@
     );
     /* Hard primary gap vetoes the deal — letter becomes F (same as Analyzer Block). */
     const grade = gapV.hard ? 'F' : packageGrade;
-    const ruling = gapV.hard ? 'block' : (gapV.soft ? 'caution' : 'allow');
-    const winner = scoreA === scoreB ? null : (scoreA > scoreB ? a.team : b.team);
+    let ruling = gapV.hard ? 'block' : (gapV.soft || ageV.soft ? 'caution' : 'allow');
+    const winner = fairA === fairB ? null : (fairA > fairB ? a.team : b.team);
     const uneven = a.assetCount !== b.assetCount;
     const primaryHigh = Math.max(a.packagePrimary || 0, b.packagePrimary || 0, 0.01);
     const primaryLow = Math.min(a.packagePrimary || 0, b.packagePrimary || 0);
@@ -775,6 +872,15 @@
     } else if (gapV.soft){
       reasonBits.push('Caution — primary gap ' + gapV.gap.toFixed(1)
         + ' closed by co-cores');
+    }
+    if (ageV.soft){
+      const youngTeam = ageV.youngSide === 'A' ? a.team
+        : (ageV.youngSide === 'B' ? b.team : 'younger side');
+      reasonBits.push((ageV.hard ? 'Age gap ' : 'Age structure ')
+        + ageV.gap.toFixed(1) + 'y ('
+        + (ageV.meanA != null ? ageV.meanA.toFixed(1) : '?') + ' vs '
+        + (ageV.meanB != null ? ageV.meanB.toFixed(1) : '?')
+        + ') — fairness tilts to ' + youngTeam);
     }
     if (valuedPicks){
       reasonBits.push(valuedPicks + ' future pick' + (valuedPicks === 1 ? '' : 's')
@@ -820,9 +926,16 @@
       primaryGapHard: !!gapV.hard,
       primaryGapSoft: !!gapV.soft,
       primaryGap: gapV.gap,
+      ageGapSoft: !!ageV.soft,
+      ageGapHard: !!ageV.hard,
+      ageGap: ageV.gap,
+      ageMeanA: ageV.meanA,
+      ageMeanB: ageV.meanB,
       reason: reasonBits.length ? reasonBits.join(' · ') : null,
       valueA: scoreA,
       valueB: scoreB,
+      fairA: Math.round(fairA * 100) / 100,
+      fairB: Math.round(fairB * 100) / 100,
       rawA: a.packageRaw,
       rawB: b.packageRaw,
       avgA: a.avgDynasty,
@@ -1187,6 +1300,13 @@
           primaryGapHard: !!graded.primaryGapHard,
           primaryGapSoft: !!graded.primaryGapSoft,
           primaryGap: graded.primaryGap,
+          ageGapSoft: !!graded.ageGapSoft,
+          ageGapHard: !!graded.ageGapHard,
+          ageGap: graded.ageGap,
+          ageMeanA: graded.ageMeanA,
+          ageMeanB: graded.ageMeanB,
+          fairA: graded.fairA,
+          fairB: graded.fairB,
           ratio: graded.ratio,
           sides: graded.sides,
           waiverBid: null
@@ -1279,14 +1399,17 @@
     buildPickValueContext,
     gradeTrade,
     packageValueParts,
+    packageAgeParts,
     effectivePackageValue,
     primaryGapVerdict,
+    ageGapVerdict,
     PKG_EXTRAS_CAP,
     PKG_CHIPS_CAP,
     PKG_CORE_RATIO,
     PKG_CORE_FLOOR,
     PKG_CORE_WEIGHTS,
     PKG_CHIP_WEIGHTS,
-    PKG_PRIMARY_GAP
+    PKG_PRIMARY_GAP,
+    PKG_AGE_SOFT
   };
 })(typeof window !== 'undefined' ? window : globalThis);

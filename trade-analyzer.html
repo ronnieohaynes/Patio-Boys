@@ -338,7 +338,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; clear step-downs as capped chips). Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless a co-core closes the gap. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; clear step-downs as capped chips). Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless a co-core closes the gap. Package ages more than <strong>3 years</strong> apart nudge fairness toward youth. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -416,7 +416,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260814-primgap';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260815-agefair';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -888,10 +888,94 @@ const PKG_CHIPS_CAP = 0.25; /* chips ≤ 25% of primary */
 const PKG_EXTRAS_CAP = PKG_CHIPS_CAP; /* alias for older call sites */
 const PKG_PRIMARY_SOFT = 0.78; /* best-vs-best below this → caution when piles differ */
 const PKG_PRIMARY_GAP = 10; /* |#1 − #1| above this → caution; block unless co-cores close it */
+/* Side-vs-side age structure (beyond the age mult already inside Trade ★). */
+const PKG_AGE_SOFT = 3; /* value-weighted mean age gap (years) → caution + fairness nudge */
+const PKG_AGE_ADJ_PER_YR = 0.03; /* fairness mult per year past (SOFT−1) */
+const PKG_AGE_ADJ_CAP = 0.12; /* max ±12% fairness shift from age gap */
 
 /* Primary-gap veto: best-vs-best jump > PKG_PRIMARY_GAP is at least Caution.
    Block unless the trailing-primary side has a co-core whose coresEff reaches
    within PKG_PRIMARY_GAP of the leading primary (real multi-talent exception). */
+/* Draft picks count as young capital for package-age fairness. */
+function pickAgeProxy(pick){
+  const round = Number(pick && pick.round) || 3;
+  if (round <= 1) return 19.5;
+  if (round === 2) return 20.5;
+  return 21.5;
+}
+
+function assetAgeYears(p){
+  if (!p) return null;
+  if (p.kind === 'pick') return pickAgeProxy(p);
+  const a = Number(p.age);
+  return Number.isFinite(a) && a > 0 ? a : null;
+}
+
+/* Value-weighted mean age of a package (players + pick proxies). */
+function packageAgeParts(assets){
+  let wSum = 0;
+  let aSum = 0;
+  let n = 0;
+  let primaryAge = null;
+  const scored = (assets || []).map(p => ({
+    asset: p,
+    value: assetTradeValue(p),
+    age: assetAgeYears(p)
+  })).filter(x => x.value > 0 && x.age != null)
+    .sort((a, b) => b.value - a.value);
+  scored.forEach((x, i) => {
+    wSum += x.value;
+    aSum += x.age * x.value;
+    n += 1;
+    if (i === 0) primaryAge = x.age;
+  });
+  if (!(wSum > 0) || !n){
+    return { mean: null, primaryAge: null, n: 0, weight: 0 };
+  }
+  return {
+    mean: Math.round((aSum / wSum) * 10) / 10,
+    primaryAge: primaryAge != null ? Math.round(primaryAge * 10) / 10 : null,
+    n,
+    weight: Math.round(wSum * 100) / 100
+  };
+}
+
+/* Younger side gets a fairness boost; older side a haircut. Starts at PKG_AGE_SOFT. */
+function ageStructureMult(myMean, otherMean){
+  if (!Number.isFinite(myMean) || !Number.isFinite(otherMean)) return 1;
+  const gap = otherMean - myMean; /* + when I am younger */
+  if (Math.abs(gap) + 1e-9 < PKG_AGE_SOFT) return 1;
+  const excess = Math.abs(gap) - (PKG_AGE_SOFT - 1);
+  const adj = Math.min(PKG_AGE_ADJ_CAP, excess * PKG_AGE_ADJ_PER_YR);
+  return gap > 0 ? (1 + adj) : (1 - adj);
+}
+
+function ageGapVerdict(ageA, ageB){
+  const mA = ageA && ageA.mean != null ? Number(ageA.mean) : null;
+  const mB = ageB && ageB.mean != null ? Number(ageB.mean) : null;
+  if (!Number.isFinite(mA) || !Number.isFinite(mB)){
+    return {
+      gap: 0, soft: false, hard: false, meanA: mA, meanB: mB,
+      youngSide: null, multA: 1, multB: 1
+    };
+  }
+  const gap = Math.abs(mA - mB);
+  const soft = gap + 1e-9 >= PKG_AGE_SOFT;
+  const hard = gap + 1e-9 >= PKG_AGE_SOFT + 2; /* ≥5y → stronger caution copy */
+  return {
+    gap: Math.round(gap * 10) / 10,
+    soft,
+    hard,
+    meanA: mA,
+    meanB: mB,
+    primaryA: ageA.primaryAge,
+    primaryB: ageB.primaryAge,
+    youngSide: mA === mB ? null : (mA < mB ? 'A' : 'B'),
+    multA: ageStructureMult(mA, mB),
+    multB: ageStructureMult(mB, mA)
+  };
+}
+
 function primaryGapVerdict(packA, packB){
   const pA = Number(packA && packA.primary) || 0;
   const pB = Number(packB && packB.primary) || 0;
@@ -1423,16 +1507,21 @@ function analyze(){
 
   const packToA = packageValueParts(fromB); /* A receives fromB */
   const packToB = packageValueParts(fromA);
+  const ageToA = packageAgeParts(fromB);
+  const ageToB = packageAgeParts(fromA);
+  const ageGap = ageGapVerdict(ageToA, ageToB);
   const valueToA = packToA.effective;
   const valueToB = packToB.effective;
+  const fairToA = valueToA * (ageGap.multA || 1);
+  const fairToB = valueToB * (ageGap.multB || 1);
   const rawToA = packToA.raw;
   const rawToB = packToB.raw;
-  const high = Math.max(valueToA, valueToB, 0.01);
-  const low = Math.min(valueToA, valueToB);
+  const high = Math.max(fairToA, fairToB, 0.01);
+  const low = Math.min(fairToA, fairToB);
   const ratio = low / high;
   const grade = fairnessGrade(ratio);
-  const winner = valueToA === valueToB ? null
-    : (valueToA > valueToB ? aName : bName);
+  const winner = fairToA === fairToB ? null
+    : (fairToA > fairToB ? aName : bName);
   const loser = winner == null ? null : (winner === aName ? bName : aName);
   const unfair = ratio < FINDER_FAIR_HARD || (high - low) >= 12;
   const primaryGap = primaryGapVerdict(packToA, packToB);
@@ -1524,6 +1613,23 @@ function analyze(){
         + primaryGap.trailPrimary.toFixed(0)
         + '), but co-cores bring package cores within '
         + PKG_PRIMARY_GAP + ' of the top piece — Caution, not Block.'
+    });
+  }
+  if (ageGap.soft){
+    const youngName = ageGap.youngSide === 'A' ? aName
+      : (ageGap.youngSide === 'B' ? bName : null);
+    const oldName = youngName === aName ? bName : (youngName === bName ? aName : null);
+    flags.push({
+      cls: ageGap.hard ? 'warn' : 'ok',
+      title: ageGap.hard ? 'Age gap' : 'Age structure',
+      text: 'Value-weighted package ages differ by '
+        + ageGap.gap.toFixed(1) + ' years ('
+        + (ageGap.meanA != null ? ageGap.meanA.toFixed(1) : '?') + ' vs '
+        + (ageGap.meanB != null ? ageGap.meanB.toFixed(1) : '?')
+        + '). Fairness credits youth'
+        + (youngName ? (' — edge to ' + youngName) : '')
+        + (oldName && ageGap.hard ? ('; ' + oldName + ' is taking on the older haul') : '')
+        + '.'
     });
   }
   if (unfair && loser){
@@ -1673,7 +1779,7 @@ function analyze(){
   const softMismatch = !unfair && !runaway && !primaryGap.hard && mismatch.softCaution;
   const softNeed = !unfair && !runaway && !primaryGap.hard && needFit.softNeed;
   const softContract = !unfair && !runaway && !primaryGap.hard && contractFit.softContract;
-  const softPackage = !unfair && !runaway && !primaryGap.hard && (softPrimary || primaryGap.soft
+  const softPackage = !unfair && !runaway && !primaryGap.hard && (softPrimary || primaryGap.soft || ageGap.soft
     || (Math.abs(rawToA - rawToB) <= 6 && Math.abs(valueToA - valueToB) >= 8));
   const softAny = softEdge || softMismatch || softNeed || softContract || softPackage;
   if (primaryGap.hard && (unfair || runaway)){
@@ -1713,12 +1819,19 @@ function analyze(){
     rulingTitle = 'Allow with caution';
     const softBits = [];
     if (softEdge) softBits.push('Trade ★ edge (fairness ' + grade + ')');
+    if (ageGap.soft) softBits.push('age gap ' + ageGap.gap.toFixed(1) + 'y');
     if (primaryGap.soft) softBits.push('primary gap closed by co-cores');
-    else if (softPackage) softBits.push('package quality (primary gap / extras vs raw sum)');
+    else if (softPackage && !ageGap.soft) softBits.push('package quality (primary gap / extras vs raw sum)');
     if (softMismatch) softBits.push('soft package shape (fake depth / weak pick capital)');
     if (softNeed) softBits.push('starter-lineup need mismatch');
     if (softContract) softBits.push('max-for-min contract mismatch');
-    if (primaryGap.soft && softBits.length === 1){
+    if (ageGap.soft && softBits.length === 1){
+      const youngName = ageGap.youngSide === 'A' ? aName
+        : (ageGap.youngSide === 'B' ? bName : 'the younger side');
+      rulingWhy = 'Trade ★ is in band, but package ages differ by '
+        + ageGap.gap.toFixed(1) + ' years. Fairness tilts toward '
+        + youngName + '. Allow with caution.';
+    } else if (primaryGap.soft && softBits.length === 1){
       rulingWhy = 'Best assets are more than ' + PKG_PRIMARY_GAP
         + ' Trade ★ apart, but co-cores on the trailing side close the gap. Allow with caution.';
     } else if (softPackage && softBits.length === 1){
@@ -1749,9 +1862,13 @@ function analyze(){
     + '<p>' + escapeHtml(aName) + ' receives <strong>' + valueToA.toFixed(1)
     + '</strong> package value'
     + (Math.abs(rawToA - valueToA) >= 0.5 ? (' <span style="color:var(--ink-dim)">(raw ' + rawToA.toFixed(1) + ')</span>') : '')
+    + (ageGap.soft && Math.abs(fairToA - valueToA) >= 0.3
+      ? (' <span style="color:var(--ink-dim)">· age-adj ' + fairToA.toFixed(1) + '</span>') : '')
     + ' &middot; ' + escapeHtml(bName) + ' receives <strong>'
     + valueToB.toFixed(1) + '</strong>'
     + (Math.abs(rawToB - valueToB) >= 0.5 ? (' <span style="color:var(--ink-dim)">(raw ' + rawToB.toFixed(1) + ')</span>') : '')
+    + (ageGap.soft && Math.abs(fairToB - valueToB) >= 0.3
+      ? (' <span style="color:var(--ink-dim)">· age-adj ' + fairToB.toFixed(1) + '</span>') : '')
     + '</p></div></div>'
     + '<div class="flags">' + flags.map(f =>
       '<div class="flag ' + f.cls + '"><strong>' + escapeHtml(f.title)
@@ -1889,7 +2006,9 @@ function setMode(mode){
       + 'Keeper-seat, starter-lineup need, and max-for-min contracts can nudge Allow → Caution. '
       + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>. '
       + 'Primary assets more than ' + PKG_PRIMARY_GAP
-      + ' Trade ★ apart Block unless a co-core closes the gap.';
+      + ' Trade ★ apart Block unless a co-core closes the gap. '
+      + 'Package ages more than ' + PKG_AGE_SOFT
+      + ' years apart tilt fairness toward the younger haul.';
   }
 }
 
@@ -1968,19 +2087,26 @@ function packagesMatchingValue(giver, targetVal, opts){
   function consider(assets){
     const sendPack = packageValueParts(assets);
     const sendVal = sendPack.effective;
-    const ratio = finderRatio(sendVal, targetVal);
+    const againstAssets = options.againstAssets || [];
+    const againstPack = againstAssets.length ? packageValueParts(againstAssets) : null;
+    const ageSend = packageAgeParts(assets);
+    const ageAgainst = againstAssets.length ? packageAgeParts(againstAssets) : null;
+    const ageV = (ageAgainst && ageAgainst.mean != null && ageSend.mean != null)
+      ? ageGapVerdict(ageSend, ageAgainst)
+      : null;
+    const fairSend = sendVal * ((ageV && ageV.multA) || 1);
+    const fairTarget = (againstPack ? againstPack.effective : targetVal) * ((ageV && ageV.multB) || 1);
+    const ratio = finderRatio(fairSend, fairTarget);
     if (ratio < FINDER_FAIR_HARD) return;
-    const delta = Math.abs(sendVal - targetVal);
+    const delta = Math.abs(fairSend - fairTarget);
     const seat = receiver ? packageSeatCheck(assets, receiver) : null;
     const fakeDepth = !!(seat && isFakeDepth(seat, againstCount));
-    const againstAssets = options.againstAssets || [];
     const needFit = (receiver && againstAssets.length)
       ? evaluateNeedFit(giver, receiver, assets, againstAssets)
       : null;
     const contractFit = (receiver && againstAssets.length)
       ? evaluateContractFit(giver, receiver, assets, againstAssets)
       : null;
-    const againstPack = againstAssets.length ? packageValueParts(againstAssets) : null;
     const gapV = againstPack ? primaryGapVerdict(sendPack, againstPack) : null;
     const primaryHard = !!(gapV && gapV.hard);
     const softPrimaryGap = !!(gapV && gapV.soft && !gapV.hard)
@@ -1989,10 +2115,12 @@ function packagesMatchingValue(giver, targetVal, opts){
         && assets.length >= 2
         && finderRatio(sendPack.primary, againstPack.primary) < PKG_PRIMARY_SOFT
         && Math.abs(sendPack.primary - againstPack.primary) >= 8);
+    const softAge = !!(ageV && ageV.soft);
     const softCaution = fakeDepth
       || !!(needFit && needFit.softNeed)
       || !!(contractFit && contractFit.softContract)
-      || softPrimaryGap;
+      || softPrimaryGap
+      || softAge;
     let ruling = finderRuling(ratio, delta, softCaution, primaryHard);
     if (ruling === 'block' && !options.includeBlocked) return;
     let mismatchNote = '';
@@ -2003,6 +2131,9 @@ function packagesMatchingValue(giver, targetVal, opts){
     } else if (fakeDepth && seat){
       mismatchNote = 'Fake depth risk: ' + seat.clearFringeN + '/' + assets.length
         + ' clear receiver fringe';
+    } else if (softAge && ageV){
+      mismatchNote = 'Age gap ' + ageV.gap.toFixed(1) + 'y ('
+        + ageV.meanA.toFixed(1) + ' vs ' + ageV.meanB.toFixed(1) + ')';
     } else if (gapV && gapV.soft){
       mismatchNote = 'Primary gap closed by co-cores ('
         + gapV.leadPrimary.toFixed(0) + ' vs ' + gapV.trailPrimary.toFixed(0) + ')';

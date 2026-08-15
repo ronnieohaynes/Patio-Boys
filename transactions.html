@@ -171,7 +171,7 @@
       </div>
     </div>
     <p class="caption" id="txCaption" hidden>
-      Letter grades follow package fairness (A+ nearly even … F badly lopsided).
+      Letter grades follow package fairness (A+ nearly even … F badly lopsided), with youth credited when package ages differ by 3+ years.
       Best assets more than 10 Trade ★ apart block the deal unless a real co-core closes the gap.
       Expand “Evaluation details” on a card if you want the raw math.
     </p>
@@ -182,7 +182,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260814-justify';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260815-agefair';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js','transactions.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -323,17 +323,33 @@ function justifyTradeGrade(r){
     return sentences.join(' ');
   }
 
-  if (r.ruling === 'caution' || r.primaryGapSoft){
-    sentences.push('Grade ' + r.grade + ' with caution.'
-      + ' The headline pieces differ ('
-      + assetShort(leadTop) + ' vs ' + assetShort(trailTop)
-      + '), but the trailing side has another strong piece that keeps it legal.');
-    if (r.winner){
-      sentences.push(r.winner + ' still edges the overall haul.');
+  if (r.ruling === 'caution' || r.primaryGapSoft || r.ageGapSoft){
+    if (r.primaryGapSoft && !r.ageGapSoft){
+      sentences.push('Grade ' + r.grade + ' with caution.'
+        + ' The headline pieces differ ('
+        + assetShort(leadTop) + ' vs ' + assetShort(trailTop)
+        + '), but the trailing side has another strong piece that keeps it legal.');
+    } else if (r.ageGapSoft){
+      const youngTeam = (Number(a.packageAgeMean) || 99) <= (Number(b.packageAgeMean) || 99)
+        ? aName : bName;
+      sentences.push('Grade ' + r.grade + ' with caution.'
+        + ' The packages differ by about '
+        + (r.ageGap != null ? Number(r.ageGap).toFixed(1) : '3+')
+        + ' years of age'
+        + (r.ageMeanA != null && r.ageMeanB != null
+          ? (' (' + Number(r.ageMeanA).toFixed(1) + ' vs ' + Number(r.ageMeanB).toFixed(1) + ')')
+          : '')
+        + '.');
+      sentences.push('Fairness tilts toward ' + youngTeam + ' for the younger haul.');
     } else {
+      sentences.push('Grade ' + r.grade + ' with caution.');
+    }
+    if (r.winner && sentences.length < 3){
+      sentences.push(r.winner + ' still edges the overall haul.');
+    } else if (!r.ageGapSoft && sentences.length < 3){
       sentences.push('Value is close enough once both real talents are counted.');
     }
-    return sentences.join(' ');
+    return sentences.slice(0, 3).join(' ');
   }
 
   const matchPct = r.ratio != null && Number.isFinite(Number(r.ratio))
@@ -395,6 +411,17 @@ function evaluationDetails(r){
   if (r.primaryGap != null && Number(r.primaryGap) > 0){
     bits.push('primary gap ' + Number(r.primaryGap).toFixed(1));
   }
+  if (r.ageGap != null && Number(r.ageGap) > 0){
+    bits.push('age gap ' + Number(r.ageGap).toFixed(1) + 'y'
+      + (r.ageMeanA != null && r.ageMeanB != null
+        ? (' (' + Number(r.ageMeanA).toFixed(1) + '/' + Number(r.ageMeanB).toFixed(1) + ')')
+        : ''));
+  }
+  if (r.fairA != null && r.fairB != null
+    && (Math.abs(Number(r.fairA) - Number(r.valueA || 0)) >= 0.3
+      || Math.abs(Number(r.fairB) - Number(r.valueB || 0)) >= 0.3)){
+    bits.push('age-adj ' + fmtDyn(r.fairA) + ' / ' + fmtDyn(r.fairB));
+  }
   if (r.ruling) bits.push('ruling ' + r.ruling);
   if (r.reason) bits.push(r.reason);
   return bits.join(' · ');
@@ -404,7 +431,7 @@ function renderTradeCard(r){
   const a = (r.sides && r.sides[0]) || {};
   const b = (r.sides && r.sides[1]) || {};
   const blocked = r.ruling === 'block' || r.primaryGapHard;
-  const caution = !blocked && (r.ruling === 'caution' || r.primaryGapSoft);
+  const caution = !blocked && (r.ruling === 'caution' || r.primaryGapSoft || r.ageGapSoft);
   const gradeHtml = r.grade
     ? '<p class="tx-grade' + (blocked ? ' block' : (caution ? ' caution' : '')) + '">'
       + escapeHtml(r.grade)
