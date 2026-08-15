@@ -1,16 +1,16 @@
 /* Draft-pick Trade ★ for Patio Boys (16-keeper fringe model).
-   Round base = league median Trade ★ of each team's Nth-best rostered
-   player (17th→1st … 21st→5th). Next draft year applies a slot mult from
-   projected finish (standings when meaningful; else team quality). Later
-   years use team-quality mult + a soft year discount. Pick slot always
-   follows the original franchise (Sleeper traded_picks roster_id). */
+   Round-1 fringe median (17th-best roster Trade ★) anchors the scale.
+   Later rounds apply ROUND_SCALE so 2nds–5ths decay as real chips — live
+   fringe ranks 17–21 are nearly flat and must not price a 3rd like a
+   starter. Slot/quality mults + year discount (uncertainty) still apply.
+   Pick slot follows the original franchise (Sleeper traded_picks roster_id). */
 (function (global) {
   'use strict';
 
   const KEEPER_COUNT = 16;
   const FRINGE_START = 17; /* roster rank → round 1 */
   const DEFAULT_ROUNDS = 5;
-  /* Snapshot fallbacks if live medians cannot be built yet. */
+  /* Snapshot fallbacks if live medians cannot be built yet (pre-scale). */
   const FALLBACK_ROUND_BASE = {
     1: 67.7,
     2: 66.7,
@@ -18,8 +18,16 @@
     4: 62.0,
     5: 61.4
   };
-  /* yearsOut from the next unsettled draft season. */
-  const YEAR_DISCOUNT = [1.0, 0.92, 0.85];
+  /* Steep round decay so late picks stay sweetener, not co-primaries. */
+  const ROUND_SCALE = {
+    1: 1.00,
+    2: 0.70,
+    3: 0.40,
+    4: 0.24,
+    5: 0.15
+  };
+  /* yearsOut from the next unsettled draft season — steeper for uncertainty. */
+  const YEAR_DISCOUNT = [1.0, 0.85, 0.72];
 
   function median(values) {
     const arr = (values || []).filter(v => Number.isFinite(Number(v))).map(Number)
@@ -258,12 +266,19 @@
     return list;
   }
 
+  function roundScale(round) {
+    const r = Number(round) || 1;
+    if (ROUND_SCALE[r] != null) return ROUND_SCALE[r];
+    return 0.12;
+  }
+
   function valuePick(pick, ctx) {
     const context = ctx || {};
     const round = Number(pick && pick.round) || 1;
     const bases = context.roundBases || FALLBACK_ROUND_BASE;
     const base = Number(bases[round] != null ? bases[round]
       : (FALLBACK_ROUND_BASE[round] != null ? FALLBACK_ROUND_BASE[round] : 60));
+    const rs = roundScale(round);
     const nextSeason = String(context.nextDraftSeason || pick.season);
     const yearsOut = Math.max(0, Number(pick.season) - Number(nextSeason));
     const ym = yearMult(yearsOut);
@@ -298,10 +313,11 @@
       }
     }
 
-    const tradeScore = Math.round(base * ym * sm * qm * 100) / 100;
+    const tradeScore = Math.round(base * rs * ym * sm * qm * 100) / 100;
     const tradeStars = tradeStarsFromScore(tradeScore);
     const noteParts = [
-      'base ' + base.toFixed(1) + ' (r' + round + ' median)',
+      'base ' + base.toFixed(1) + ' (r' + round + ' fringe)',
+      '× round ' + rs.toFixed(2),
       '× year ' + ym.toFixed(2)
     ];
     if (sm !== 1) noteParts.push('× slot ' + sm.toFixed(2) + ' (' + bandLabel(band) + ')');
@@ -314,6 +330,7 @@
       tradeScore,
       tradeStars,
       base,
+      roundScale: rs,
       yearMult: ym,
       slotMult: sm,
       qualityMult: qm,
@@ -394,6 +411,7 @@
     KEEPER_COUNT,
     FRINGE_START,
     FALLBACK_ROUND_BASE,
+    ROUND_SCALE,
     YEAR_DISCOUNT,
     median,
     roundOrdinal,
@@ -406,6 +424,7 @@
     slotMult,
     qualityMult,
     yearMult,
+    roundScale,
     assignQualityRanks,
     valuePick,
     attachPickValues,

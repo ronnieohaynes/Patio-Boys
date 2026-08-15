@@ -171,8 +171,8 @@
       </div>
     </div>
     <p class="caption" id="txCaption" hidden>
-      Letter grades follow package fairness (A+ nearly even … F badly lopsided), with youth credited when package ages differ by 3+ years.
-      Best assets more than 10 Trade ★ apart block the deal unless a real co-core closes the gap.
+      Letter grades follow package fairness (A+ nearly even … F badly lopsided), with youth credited when <em>player</em> package ages differ by 3+ years (picks excluded).
+      Late-round picks use steep round decay so they stay chips. Best assets more than 10 Trade ★ apart block unless a co-core closes the gap.
       Expand “Evaluation details” on a card if you want the raw math.
     </p>
     <div class="tx-list" id="txList"></div>
@@ -182,7 +182,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260815-agefair';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260815-pickage';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js','transactions.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }

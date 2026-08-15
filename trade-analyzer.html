@@ -338,7 +338,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; clear step-downs as capped chips). Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless a co-core closes the gap. Package ages more than <strong>3 years</strong> apart nudge fairness toward youth. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; clear step-downs as capped chips). Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless a co-core closes the gap. Player ages more than <strong>3 years</strong> apart nudge fairness toward youth (picks excluded). Late-round picks use steep round decay so they stay chips. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -416,7 +416,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260815-agefair';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260815-pickage';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -896,22 +896,14 @@ const PKG_AGE_ADJ_CAP = 0.12; /* max ±12% fairness shift from age gap */
 /* Primary-gap veto: best-vs-best jump > PKG_PRIMARY_GAP is at least Caution.
    Block unless the trailing-primary side has a co-core whose coresEff reaches
    within PKG_PRIMARY_GAP of the leading primary (real multi-talent exception). */
-/* Draft picks count as young capital for package-age fairness. */
-function pickAgeProxy(pick){
-  const round = Number(pick && pick.round) || 3;
-  if (round <= 1) return 19.5;
-  if (round === 2) return 20.5;
-  return 21.5;
-}
-
+/* Draft picks have unknown ages — excluded from package-age fairness. */
 function assetAgeYears(p){
-  if (!p) return null;
-  if (p.kind === 'pick') return pickAgeProxy(p);
+  if (!p || p.kind === 'pick') return null;
   const a = Number(p.age);
   return Number.isFinite(a) && a > 0 ? a : null;
 }
 
-/* Value-weighted mean age of a package (players + pick proxies). */
+/* Value-weighted mean age of graded players only (no pick proxies). */
 function packageAgeParts(assets){
   let wSum = 0;
   let aSum = 0;
@@ -921,7 +913,7 @@ function packageAgeParts(assets){
     asset: p,
     value: assetTradeValue(p),
     age: assetAgeYears(p)
-  })).filter(x => x.value > 0 && x.age != null)
+  })).filter(x => x.value > 0 && x.age != null && (!x.asset || x.asset.kind !== 'pick'))
     .sort((a, b) => b.value - a.value);
   scored.forEach((x, i) => {
     wSum += x.value;
@@ -2002,13 +1994,13 @@ function setMode(mode){
       + Math.round(PKG_CORE_RATIO * 100)
       + '% of the top piece and ≥ Trade ★ ' + PKG_CORE_FLOOR
       + ' are <strong>co-cores</strong> (near-full Trade ★); clear step-downs are chips (diminishing + capped) so fringe piles cannot manufacture a star. '
-      + 'Player Trade ★ = Lock OVR × age × injury × contract × situation × <strong>potential</strong>; picks use fringe bases × slot/quality. '
+      + 'Player Trade ★ = Lock OVR × age × injury × contract × situation × <strong>potential</strong>; picks use fringe bases × <strong>round decay</strong> × slot/quality (late rounds are chips). '
       + 'Keeper-seat, starter-lineup need, and max-for-min contracts can nudge Allow → Caution. '
       + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>. '
       + 'Primary assets more than ' + PKG_PRIMARY_GAP
       + ' Trade ★ apart Block unless a co-core closes the gap. '
-      + 'Package ages more than ' + PKG_AGE_SOFT
-      + ' years apart tilt fairness toward the younger haul.';
+      + 'Player ages more than ' + PKG_AGE_SOFT
+      + ' years apart tilt fairness toward the younger haul (picks excluded from age).';
   }
 }
 
@@ -2782,7 +2774,7 @@ async function load(){
                 .map(r => r + '=' + Number(state.draftPickRoundBases[r]).toFixed(0)).join('/'))
             : '';
           status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
-            + 'Package grade = top asset full + capped extras · players = Lock OVR × age × injury × potential · picks = fringe medians'
+            + 'Package grade = top asset full + capped extras · players = Lock OVR × age × injury × potential · picks = fringe × round decay'
             + baseBits + ' · ' + (lockPack.scored || 0)
             + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
         }

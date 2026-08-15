@@ -108,15 +108,13 @@
   }
 
   function pickAgeProxy(pick){
-    const round = Number(pick && pick.round) || 3;
-    if (round <= 1) return 19.5;
-    if (round === 2) return 20.5;
-    return 21.5;
+    /* Undrafted picks have unknown ages — never used for package-age fairness. */
+    return null;
   }
 
   function assetAgeYears(a){
     if (!a || a.graded === false) return null;
-    if (a.kind === 'pick' && !a.resolvedPid) return pickAgeProxy(a);
+    if (a.kind === 'pick' && !a.resolvedPid) return null;
     const age = Number(a.age);
     return Number.isFinite(age) && age > 0 ? age : null;
   }
@@ -742,14 +740,14 @@
               graded: true,
               pickValued: true,
               pickNote: pickVal.note || '',
-              age: pickAgeProxy(a),
+              age: null,
               label: assetLabel(a)
             });
           }
           pendingPicks++;
           return Object.assign({}, a, {
             dynasty: null, tradeStars: null, graded: false,
-            age: pickAgeProxy(a),
+            age: null,
             label: assetLabel(a)
           });
         }

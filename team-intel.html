@@ -604,7 +604,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260813-agerelief';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260815-pickage';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -3630,9 +3630,9 @@ function renderDraftPicks(t){
     return '<div class="picks-year"><h3>' + escapeHtml(season) + ' draft</h3>'
       + '<div class="picks-chips">' + chips + '</div></div>';
   }).join('')
-    + '<p class="lineup-foot">Pick Trade ★ = median fringe (16-keeper ranks 17–21)'
+    + '<p class="lineup-foot">Pick Trade ★ = fringe median (16-keeper ranks 17–21)'
     + (baseBits.length ? (' [' + escapeHtml(baseBits.join(' · ')) + ']') : '')
-    + ' × year discount × '
+    + ' × <strong>round decay</strong> (1.00 / 0.70 / 0.40 / 0.24 / 0.15) × year discount × '
     + escapeHtml(nextMode)
     + '; later years use original-franchise quality. '
     + 'Own picks are plain; traded picks show the original franchise.</p>';
