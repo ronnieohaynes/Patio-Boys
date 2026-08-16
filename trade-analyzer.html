@@ -550,7 +550,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260816-shotfair';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260816-shot2';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -3052,10 +3052,14 @@ function resizeImageForOcr(file){
     const img = new Image();
     img.onload = () => {
       try {
-        const maxSide = 1600;
+        const maxSide = 2000;
+        const minSide = 1200;
         let w = img.naturalWidth || img.width;
         let h = img.naturalHeight || img.height;
-        const scale = Math.min(1, maxSide / Math.max(w, h));
+        let scale = Math.min(1, maxSide / Math.max(w, h));
+        if (Math.max(w, h) < minSide){
+          scale = minSide / Math.max(w, h);
+        }
         w = Math.max(1, Math.round(w * scale));
         h = Math.max(1, Math.round(h * scale));
         const canvas = document.createElement('canvas');
@@ -3065,10 +3069,35 @@ function resizeImageForOcr(file){
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, w, h);
         ctx.drawImage(img, 0, 0, w, h);
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const d = imageData.data;
+        let sum = 0;
+        const step = 16;
+        for (let i = 0; i < d.length; i += 4 * step){
+          sum += (d[i] + d[i + 1] + d[i + 2]) / 3;
+        }
+        const avg = sum / Math.max(1, Math.floor(d.length / (4 * step)));
+        /* Sleeper trade UI is dark — invert + contrast so Tesseract sees ink on paper. */
+        if (avg < 110){
+          const contrast = 1.55;
+          for (let i = 0; i < d.length; i += 4){
+            let r = 255 - d[i];
+            let g = 255 - d[i + 1];
+            let b = 255 - d[i + 2];
+            r = Math.min(255, Math.max(0, (r - 128) * contrast + 128));
+            g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
+            b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
+            /* Soft threshold toward pure B/W for name glyphs. */
+            const y = 0.299 * r + 0.587 * g + 0.114 * b;
+            const v = y > 140 ? 255 : (y < 90 ? 0 : y);
+            d[i] = v; d[i + 1] = v; d[i + 2] = v;
+          }
+          ctx.putImageData(imageData, 0, 0);
+        }
         canvas.toBlob(blob => {
           URL.revokeObjectURL(url);
           if (!blob) reject(new Error('Could not prepare image'));
-          else resolve(blob);
+          else resolve({ blob, inverted: avg < 110, avg: Math.round(avg) });
         }, 'image/png');
       } catch (e){
         URL.revokeObjectURL(url);
@@ -3094,21 +3123,51 @@ function roundWordToNum(word){
   return m ? Number(m[1]) : null;
 }
 
+function splitPlayerName(fullName){
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { first: '', last: '', suffix: '' };
+  let last = parts[parts.length - 1];
+  let first = parts[0];
+  /* Drop Jr/Sr/II/III from last-token matching. */
+  if (/^(jr|sr|ii|iii|iv)$/i.test(last) && parts.length >= 2){
+    last = parts[parts.length - 2];
+    first = parts[0];
+  }
+  return { first, last, suffix: parts.slice(1).join(' ') };
+}
+
+function playerOcrKeys(fullName){
+  const { first, last } = splitPlayerName(fullName);
+  const nameNorm = normalizeName(fullName);
+  const lastNorm = normalizeName(last);
+  const firstInit = (first[0] || '').toLowerCase();
+  const abbrevNorm = normalizeName(firstInit + last); /* "K. Durant" → kdurant */
+  return { nameNorm, lastNorm, abbrevNorm, firstInit, last };
+}
+
 function buildShotAssetIndex(){
   const assets = [];
+  const lastCounts = new Map();
   state.teams.forEach(team => {
     (team.playerIds || []).forEach(id => {
       const p = state.playersById.get(String(id));
       if (!p || !p.name) return;
-      const nameNorm = normalizeName(p.name);
-      if (nameNorm.length < 5) return;
+      const keys = playerOcrKeys(p.name);
+      if (keys.nameNorm.length < 4) return;
+      if (keys.lastNorm.length >= 4){
+        lastCounts.set(keys.lastNorm, (lastCounts.get(keys.lastNorm) || 0) + 1);
+      }
       assets.push({
         id: String(p.id),
         kind: 'player',
         name: p.name,
-        nameNorm,
+        nameNorm: keys.nameNorm,
+        lastNorm: keys.lastNorm,
+        abbrevNorm: keys.abbrevNorm,
+        firstInit: keys.firstInit,
         rosterId: String(team.rosterId),
         teamName: team.displayName,
+        manager: team.manager || '',
         score: Number(p.dynasty || p.tradeScore || 0)
       });
     });
@@ -3118,6 +3177,7 @@ function buildShotAssetIndex(){
       const season = String(p.season || '');
       const round = Number(p.round);
       const nameNorm = normalizeName(label);
+      const orig = teamById(p.originalRosterId);
       assets.push({
         id: String(p.id),
         kind: 'pick',
@@ -3127,15 +3187,26 @@ function buildShotAssetIndex(){
         round,
         rosterId: String(team.rosterId),
         teamName: team.displayName,
+        manager: team.manager || '',
+        viaManager: (orig && orig.manager) || '',
+        viaTeam: (orig && orig.displayName) || '',
+        originalRosterId: p.originalRosterId != null ? String(p.originalRosterId) : '',
         score: Number(p.dynasty || p.tradeScore || 0)
       });
     });
   });
-  assets.sort((a, b) => b.nameNorm.length - a.nameNorm.length || b.score - a.score);
+  assets.forEach(a => {
+    if (a.kind === 'player'){
+      a.lastUnique = !!(a.lastNorm && lastCounts.get(a.lastNorm) === 1);
+    }
+  });
+  assets.sort((a, b) => (b.nameNorm || '').length - (a.nameNorm || '').length
+    || b.score - a.score);
   return assets;
 }
 
-function detectTeamsInText(ocrNorm){
+function detectTeamsInText(ocrNorm, raw){
+  const rawLower = String(raw || '').toLowerCase();
   const hits = [];
   state.teams.forEach(team => {
     const names = [
@@ -3148,7 +3219,12 @@ function detectTeamsInText(ocrNorm){
     names.forEach(n => {
       const nn = normalizeName(n);
       if (nn.length >= 4 && ocrNorm.includes(nn)){
-        best = Math.max(best, nn.length);
+        best = Math.max(best, nn.length + (n === team.manager ? 3 : 0));
+      }
+      /* Raw username match (Sleeper headers use manager handles). */
+      const handle = String(n || '').toLowerCase();
+      if (handle.length >= 4 && rawLower.includes(handle)){
+        best = Math.max(best, handle.length + 4);
       }
     });
     if (best) hits.push({ team, score: best });
@@ -3157,74 +3233,207 @@ function detectTeamsInText(ocrNorm){
   return hits.map(h => h.team);
 }
 
+function consumeNeedle(hay, needle){
+  if (!needle || needle.length < 3) return { hay, hit: false };
+  const idx = hay.indexOf(needle);
+  if (idx < 0) return { hay, hit: false };
+  return {
+    hay: hay.slice(0, idx) + 'x'.repeat(needle.length) + hay.slice(idx + needle.length),
+    hit: true
+  };
+}
+
+function matchPlayersFromOcr(raw, ocrNorm, assets){
+  let hay = ocrNorm;
+  const matched = [];
+  const usedIds = new Set();
+  const players = assets.filter(a => a.kind === 'player');
+
+  /* 1) Full name */
+  players.forEach(asset => {
+    if (usedIds.has(asset.id)) return;
+    if (asset.nameNorm.length < 6) return;
+    const r = consumeNeedle(hay, asset.nameNorm);
+    if (!r.hit) return;
+    hay = r.hay;
+    matched.push(asset);
+    usedIds.add(asset.id);
+  });
+
+  /* 2) Sleeper abbrev "K. Durant" / "K Durant" → kdurant */
+  players.forEach(asset => {
+    if (usedIds.has(asset.id)) return;
+    if (!asset.abbrevNorm || asset.abbrevNorm.length < 5) return;
+    const r = consumeNeedle(hay, asset.abbrevNorm);
+    if (!r.hit) return;
+    hay = r.hay;
+    matched.push(Object.assign({}, asset, { matchHow: 'abbrev' }));
+    usedIds.add(asset.id);
+  });
+
+  /* 3) Explicit "X. Lastname" tokens in raw OCR (period often survives). */
+  const abbrevRe = /\b([A-Za-z])\s*[.\u00B7]\s*([A-Za-z][A-Za-z'\-]{2,})\b/g;
+  let m;
+  while ((m = abbrevRe.exec(raw)) !== null){
+    const init = m[1].toLowerCase();
+    const lastNorm = normalizeName(m[2]);
+    const hit = players.find(a =>
+      !usedIds.has(a.id)
+      && a.firstInit === init
+      && a.lastNorm === lastNorm
+    );
+    if (!hit) continue;
+    matched.push(Object.assign({}, hit, { matchHow: 'initial-last' }));
+    usedIds.add(hit.id);
+    const r = consumeNeedle(hay, hit.abbrevNorm || (init + lastNorm));
+    hay = r.hay;
+  }
+
+  /* 4) Unique last names (≥5 letters) — OCR often drops first names on dark UI. */
+  players.forEach(asset => {
+    if (usedIds.has(asset.id)) return;
+    if (!asset.lastUnique || !asset.lastNorm || asset.lastNorm.length < 5) return;
+    const r = consumeNeedle(hay, asset.lastNorm);
+    if (!r.hit) return;
+    hay = r.hay;
+    matched.push(Object.assign({}, asset, { matchHow: 'lastname' }));
+    usedIds.add(asset.id);
+  });
+
+  return { matched, usedIds, hay };
+}
+
+function findViaNear(raw, index){
+  const start = Math.max(0, index - 60);
+  const end = Math.min(raw.length, index + 100);
+  const window = raw.slice(start, end);
+  const m = window.match(/\bvia\s+([A-Za-z0-9_]{3,})\b/i);
+  return m ? m[1] : null;
+}
+
+function teamMatchesHandle(team, handle){
+  if (!team || !handle) return false;
+  const h = normalizeName(handle);
+  if (h.length < 3) return false;
+  return [team.manager, team.displayName, team.key].filter(Boolean)
+    .some(n => normalizeName(n) === h || normalizeName(n).includes(h) || h.includes(normalizeName(n)));
+}
+
 function matchAssetsFromOcr(text){
   const raw = String(text || '');
   const ocrNorm = normalizeName(raw);
   const assets = buildShotAssetIndex();
-  let hay = ocrNorm;
-  const matched = [];
-  const usedIds = new Set();
+  const playerPack = matchPlayersFromOcr(raw, ocrNorm, assets);
+  const matched = playerPack.matched.slice();
+  const usedIds = playerPack.usedIds;
+  let hay = playerPack.hay;
 
-  assets.forEach(asset => {
-    if (usedIds.has(asset.id)) return;
-    if (asset.kind === 'player'){
-      if (asset.nameNorm.length < 6 && !/[a-z]{4,}/.test(asset.nameNorm)) return;
-      const idx = hay.indexOf(asset.nameNorm);
-      if (idx < 0) return;
-      matched.push(asset);
-      usedIds.add(asset.id);
-      hay = hay.slice(0, idx) + 'x'.repeat(asset.nameNorm.length) + hay.slice(idx + asset.nameNorm.length);
-    }
+  const detectedTeams = detectTeamsInText(ocrNorm, raw);
+  /* Prefer teams that own matched players. */
+  const ownerCounts = new Map();
+  matched.forEach(a => {
+    ownerCounts.set(a.rosterId, (ownerCounts.get(a.rosterId) || 0) + 1);
   });
+  const playerTeams = [...ownerCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([id]) => id);
+  const preferredOwners = new Set([
+    ...playerTeams.slice(0, 2),
+    ...detectedTeams.slice(0, 2).map(t => String(t.rosterId))
+  ]);
 
-  /* Picks: year + round near each other in raw OCR (handles "2026 Mid 1st Round Pick"). */
-  const pickRe = /(?:20\d{2})\s*(?:early|mid|late)?\s*(?:round)?\s*(1st|2nd|3rd|4th|5th|first|second|third|fourth|fifth|lst|ist|znd|srd)/gi;
+  /* Picks: year + round (+ optional Rd). Dedupe identical season/round hits. */
+  const pickRe = /(?:20\d{2})\s*(?:early|mid|late)?\s*(?:round|rd)?\s*(1st|2nd|3rd|4th|5th|first|second|third|fourth|fifth|lst|ist|znd|srd)\b/gi;
   const pickHits = [];
   let m;
   while ((m = pickRe.exec(raw)) !== null){
     const season = m[0].match(/20\d{2}/);
     const round = roundWordToNum(m[1]);
     if (!season || !round) continue;
-    pickHits.push({ season: season[0], round, index: m.index });
+    pickHits.push({
+      season: season[0],
+      round,
+      index: m.index,
+      via: findViaNear(raw, m.index)
+    });
   }
-  /* Also "1st Round Pick 2027" style */
-  const pickRe2 = /(1st|2nd|3rd|4th|5th|first|second|third)\s*(?:round)?\s*(?:pick)?\s*(?:20\d{2})/gi;
+  const pickRe2 = /(1st|2nd|3rd|4th|5th|first|second|third)\s*(?:round|rd)?\s*(?:pick)?\s*(?:20\d{2})/gi;
   while ((m = pickRe2.exec(raw)) !== null){
     const season = m[0].match(/20\d{2}/);
     const round = roundWordToNum(m[1]);
     if (!season || !round) continue;
-    pickHits.push({ season: season[0], round, index: m.index });
+    pickHits.push({
+      season: season[0],
+      round,
+      index: m.index,
+      via: findViaNear(raw, m.index)
+    });
   }
 
-  const detectedTeams = detectTeamsInText(ocrNorm);
-  const preferredOwners = new Set(detectedTeams.slice(0, 2).map(t => String(t.rosterId)));
-
+  /* Collapse duplicate OCR of the same pick (Sleeper shows each asset twice). */
+  const pickSeen = new Map();
   pickHits.forEach(hit => {
-    const candidates = assets.filter(a =>
+    const key = hit.season + ':' + hit.round;
+    const prev = pickSeen.get(key);
+    if (!prev){
+      pickSeen.set(key, hit);
+      return;
+    }
+    /* Prefer the hit that has a via= handle. */
+    if (!prev.via && hit.via) pickSeen.set(key, hit);
+  });
+
+  [...pickSeen.values()].forEach(hit => {
+    let candidates = assets.filter(a =>
       a.kind === 'pick'
       && !usedIds.has(a.id)
       && String(a.season) === String(hit.season)
       && Number(a.round) === Number(hit.round)
     );
     if (!candidates.length) return;
+
+    if (hit.via){
+      const viaHits = candidates.filter(a =>
+        teamMatchesHandle({ manager: a.manager, displayName: a.teamName, key: '' }, hit.via)
+        || teamMatchesHandle({ manager: a.viaManager, displayName: a.viaTeam, key: '' }, hit.via)
+      );
+      if (viaHits.length) candidates = viaHits;
+    }
+
+    if (preferredOwners.size){
+      const scoped = candidates.filter(a => preferredOwners.has(String(a.rosterId)));
+      if (scoped.length) candidates = scoped;
+    }
+
     candidates.sort((a, b) => {
       const ap = preferredOwners.has(a.rosterId) ? 1 : 0;
       const bp = preferredOwners.has(b.rosterId) ? 1 : 0;
-      return bp - ap || b.score - a.score;
+      const av = hit.via && (
+        teamMatchesHandle({ manager: a.manager, displayName: a.teamName }, hit.via)
+        || teamMatchesHandle({ manager: a.viaManager, displayName: a.viaTeam }, hit.via)
+      ) ? 1 : 0;
+      const bv = hit.via && (
+        teamMatchesHandle({ manager: b.manager, displayName: b.teamName }, hit.via)
+        || teamMatchesHandle({ manager: b.viaManager, displayName: b.viaTeam }, hit.via)
+      ) ? 1 : 0;
+      return bv - av || bp - ap || b.score - a.score;
     });
     const pick = candidates[0];
     matched.push(pick);
     usedIds.add(pick.id);
   });
 
-  /* Fallback: pick label substring (e.g. "20261st") */
-  assets.forEach(asset => {
-    if (asset.kind !== 'pick' || usedIds.has(asset.id)) return;
-    if (!asset.nameNorm || asset.nameNorm.length < 6) return;
-    if (hay.indexOf(asset.nameNorm) < 0) return;
-    matched.push(asset);
-    usedIds.add(asset.id);
-  });
+  /* Fallback: pick label substring only if we still have room and preferred sides. */
+  if (matched.filter(a => a.kind === 'player').length >= 1){
+    assets.forEach(asset => {
+      if (asset.kind !== 'pick' || usedIds.has(asset.id)) return;
+      if (preferredOwners.size && !preferredOwners.has(String(asset.rosterId))) return;
+      if (!asset.nameNorm || asset.nameNorm.length < 6) return;
+      if (hay.indexOf(asset.nameNorm) < 0) return;
+      matched.push(asset);
+      usedIds.add(asset.id);
+    });
+  }
 
   return { matched, detectedTeams, ocrNorm, raw };
 }
@@ -3247,7 +3456,9 @@ function groupMatchedByTeam(matched){
   groups.sort((a, b) => {
     const sa = a.assets.reduce((s, x) => s + x.score, 0);
     const sb = b.assets.reduce((s, x) => s + x.score, 0);
-    return b.assets.length - a.assets.length || sb - sa;
+    const pa = a.assets.filter(x => x.kind === 'player').length;
+    const pb = b.assets.filter(x => x.kind === 'player').length;
+    return pb - pa || b.assets.length - a.assets.length || sb - sa;
   });
   return groups;
 }
@@ -3259,7 +3470,6 @@ function resolveShotSides(parseResult){
   let sideB = null;
 
   if (groups.length >= 2){
-    /* Prefer detected team order when both appear among top groups. */
     if (detected.length >= 2){
       const gA = groups.find(g => String(g.rosterId) === String(detected[0].rosterId));
       const gB = groups.find(g => String(g.rosterId) === String(detected[1].rosterId));
@@ -3273,7 +3483,6 @@ function resolveShotSides(parseResult){
       sideB = groups[1];
     }
   } else if (groups.length === 1 && detected.length >= 2){
-    /* One side's assets OCR'd; other team named but sending nothing matched. */
     const only = groups[0];
     const other = detected.find(t => String(t.rosterId) !== String(only.rosterId));
     if (other){
@@ -3343,7 +3552,8 @@ function renderShotMatch(parseResult, sides){
 async function runOcrOnImage(file){
   const Tesseract = await loadTesseract();
   setShotStatus('Preparing image…');
-  const blob = await resizeImageForOcr(file);
+  const prepared = await resizeImageForOcr(file);
+  const blob = prepared.blob || prepared;
   setShotStatus('Reading screenshot (OCR)… 0%');
   const worker = await Tesseract.createWorker('eng', 1, {
     logger: m => {
@@ -3353,8 +3563,28 @@ async function runOcrOnImage(file){
     }
   });
   try {
+    await worker.setParameters({
+      tessedit_pageseg_mode: '6',
+      preserve_interword_spaces: '1'
+    });
     const result = await worker.recognize(blob);
-    return (result && result.data && result.data.text) || '';
+    let text = (result && result.data && result.data.text) || '';
+    /* If names look missing, try a second pass with sparse-text mode. */
+    const abbrevHits = (text.match(/\b[A-Z]\s*[.]\s*[A-Z][a-z]{2,}/g) || []).length;
+    const longWords = (text.match(/\b[A-Za-z]{6,}\b/g) || []).length;
+    if (abbrevHits < 2 && longWords < 6){
+      setShotStatus('Retrying OCR (sparse text)…');
+      await worker.setParameters({
+        tessedit_pageseg_mode: '11',
+        preserve_interword_spaces: '1'
+      });
+      const result2 = await worker.recognize(blob);
+      const text2 = (result2 && result2.data && result2.data.text) || '';
+      if (text2 && text2.length > text.length * 0.6){
+        text = text + '\n' + text2;
+      }
+    }
+    return text;
   } finally {
     try { await worker.terminate(); } catch (e){ /* ignore */ }
   }
