@@ -252,6 +252,73 @@
   }
   .mode-panel[hidden]{display:none}
 
+  /* sleeper screenshot → analyze */
+  .shot-panel{
+    border:1px solid var(--hairline);border-radius:8px;background:var(--surface);
+    margin:14px 0 4px;overflow:hidden;
+  }
+  .shot-head{
+    display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;
+    padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--hairline);
+  }
+  .shot-head h3{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:16px;margin:0 0 4px;
+    letter-spacing:.02em;
+  }
+  .shot-hint{margin:0;font-size:12px;color:var(--ink-dim);max-width:520px;line-height:1.45}
+  .shot-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .shot-btn{
+    display:inline-flex;align-items:center;justify-content:center;
+    background:color-mix(in srgb, var(--gold) 18%, var(--surface));
+    border:1px solid var(--gold);border-radius:6px;color:var(--ink);
+    font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;
+    letter-spacing:.05em;text-transform:uppercase;padding:9px 12px;cursor:pointer;
+  }
+  .shot-btn.ghost{
+    background:var(--surface);border-color:var(--hairline);color:var(--ink-dim);
+  }
+  .shot-btn.ghost:hover{color:var(--ink);border-color:var(--ink-dim)}
+  .shot-btn:disabled{opacity:.55;cursor:wait}
+  .shot-status{
+    padding:10px 14px;font-family:'IBM Plex Mono',monospace;font-size:11px;
+    color:var(--gold);letter-spacing:.03em;
+  }
+  .shot-status.error{color:var(--coral)}
+  .shot-status[hidden],.shot-preview[hidden]{display:none}
+  .shot-preview{
+    display:grid;grid-template-columns:minmax(120px,180px) 1fr;gap:14px;
+    padding:12px 14px;align-items:start;
+  }
+  @media(max-width:640px){
+    .shot-preview{grid-template-columns:1fr}
+  }
+  .shot-preview img{
+    width:100%;max-height:160px;object-fit:contain;border-radius:6px;
+    background:var(--bg);border:1px solid var(--hairline);
+  }
+  .shot-match{font-size:13px;color:#C9CDD8;line-height:1.45}
+  .shot-match .side-line{
+    margin:0 0 8px;padding-left:10px;border-left:3px solid var(--team-color, var(--gold));
+  }
+  .shot-match .side-line strong{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:14px;
+    letter-spacing:.02em;color:var(--ink);font-weight:400;
+  }
+  .shot-match .assets{color:var(--ink-dim);font-size:12px;margin-top:2px}
+  .shot-match .miss{
+    margin:8px 0 0;font-family:'IBM Plex Mono',monospace;font-size:10px;
+    color:var(--coral);letter-spacing:.03em;text-transform:uppercase;
+  }
+  .shot-match details{
+    margin-top:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+  }
+  .shot-match details summary{cursor:pointer;letter-spacing:.04em;text-transform:uppercase}
+  .shot-match pre{
+    white-space:pre-wrap;word-break:break-word;margin:8px 0 0;padding:8px;
+    background:var(--bg);border-radius:4px;border:1px solid var(--hairline);
+    max-height:140px;overflow:auto;font-size:10px;line-height:1.35;
+  }
+
   /* trade finder */
   .finder-controls{
     display:grid;grid-template-columns:1.1fr 1fr 1.4fr;gap:12px;align-items:end;
@@ -338,7 +405,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; clear step-downs as capped chips). Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless a co-core closes the gap. Player ages more than <strong>3 years</strong> apart nudge fairness toward youth (picks excluded). Late-round picks use steep round decay so they stay chips. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending — or <strong>upload a Sleeper trade screenshot</strong> and we&rsquo;ll fill the boards. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; clear step-downs as capped chips). Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless a co-core closes the gap. Player ages more than <strong>3 years</strong> apart nudge fairness toward youth (picks excluded). Late-round picks use steep round decay so they stay chips. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -347,6 +414,26 @@
     </div>
 
     <div class="mode-panel" id="modeAnalyze">
+      <div class="shot-panel" id="shotPanel">
+        <div class="shot-head">
+          <div>
+            <h3>From Sleeper screenshot</h3>
+            <p class="shot-hint">Drop a trade offer or confirmation shot. On-device OCR matches rostered players &amp; picks to this league, then runs the analyzer.</p>
+          </div>
+          <div class="shot-actions">
+            <label class="shot-btn" for="shotFile" id="shotUploadLabel">Upload screenshot</label>
+            <input type="file" id="shotFile" accept="image/*" hidden>
+            <button type="button" class="shot-btn ghost" id="shotPaste">Paste</button>
+            <button type="button" class="shot-btn ghost" id="shotClear" hidden>Clear</button>
+          </div>
+        </div>
+        <div class="shot-status" id="shotStatus" hidden></div>
+        <div class="shot-preview" id="shotPreview" hidden>
+          <img id="shotThumb" alt="Uploaded trade screenshot">
+          <div class="shot-match" id="shotMatch"></div>
+        </div>
+      </div>
+
       <div class="team-pick">
         <div class="field">
           <label for="teamA">Team A receives from Team B</label>
@@ -416,7 +503,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260815-pickage';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260816-shot';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -1989,7 +2076,7 @@ function setMode(mode){
       + '<strong>Shop</strong> = offers for one or more of your players; <strong>Find</strong> = what you can send for players on one other team (up to 4). Click to open in Analyze.';
     renderFinder();
   } else {
-    lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending. '
+    lede.innerHTML = 'Pick two teams and the players or <strong>draft picks</strong> each side is sending — or <strong>upload a Sleeper screenshot</strong> above. '
       + 'Fairness is <strong>quality-weighted package value</strong>: assets within '
       + Math.round(PKG_CORE_RATIO * 100)
       + '% of the top piece and ≥ Trade ★ ' + PKG_CORE_FLOOR
@@ -2460,6 +2547,461 @@ async function renderFinderResults(){
   });
 }
 
+/* ---------- Sleeper screenshot → analyze (client OCR) ---------- */
+let shotObjectUrl = null;
+let tesseractLoading = null;
+
+function setShotStatus(msg, isError){
+  const el = document.getElementById('shotStatus');
+  if (!el) return;
+  if (!msg){ el.hidden = true; el.textContent = ''; return; }
+  el.hidden = false;
+  el.textContent = msg;
+  el.classList.toggle('error', !!isError);
+}
+
+function clearShotUi(){
+  if (shotObjectUrl){
+    try { URL.revokeObjectURL(shotObjectUrl); } catch (e){ /* ignore */ }
+    shotObjectUrl = null;
+  }
+  const file = document.getElementById('shotFile');
+  if (file) file.value = '';
+  const preview = document.getElementById('shotPreview');
+  const thumb = document.getElementById('shotThumb');
+  const match = document.getElementById('shotMatch');
+  const clearBtn = document.getElementById('shotClear');
+  if (preview) preview.hidden = true;
+  if (thumb) thumb.removeAttribute('src');
+  if (match) match.innerHTML = '';
+  if (clearBtn) clearBtn.hidden = true;
+  setShotStatus('');
+}
+
+function loadTesseract(){
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (tesseractLoading) return tesseractLoading;
+  tesseractLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+    s.async = true;
+    s.onload = () => {
+      if (window.Tesseract) resolve(window.Tesseract);
+      else reject(new Error('OCR library loaded without Tesseract global'));
+    };
+    s.onerror = () => reject(new Error('Could not load OCR library (cdn.jsdelivr.net)'));
+    document.head.appendChild(s);
+  }).catch(err => {
+    tesseractLoading = null;
+    throw err;
+  });
+  return tesseractLoading;
+}
+
+function resizeImageForOcr(file){
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const maxSide = 1600;
+        let w = img.naturalWidth || img.width;
+        let h = img.naturalHeight || img.height;
+        const scale = Math.min(1, maxSide / Math.max(w, h));
+        w = Math.max(1, Math.round(w * scale));
+        h = Math.max(1, Math.round(h * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob(blob => {
+          URL.revokeObjectURL(url);
+          if (!blob) reject(new Error('Could not prepare image'));
+          else resolve(blob);
+        }, 'image/png');
+      } catch (e){
+        URL.revokeObjectURL(url);
+        reject(e);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not read image'));
+    };
+    img.src = url;
+  });
+}
+
+function roundWordToNum(word){
+  const w = String(word || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (w === '1st' || w === 'first' || w === 'lst' || w === 'ist') return 1;
+  if (w === '2nd' || w === 'second' || w === 'znd') return 2;
+  if (w === '3rd' || w === 'third' || w === 'srd') return 3;
+  if (w === '4th' || w === 'fourth') return 4;
+  if (w === '5th' || w === 'fifth') return 5;
+  const m = w.match(/^([1-5])(?:st|nd|rd|th)?$/);
+  return m ? Number(m[1]) : null;
+}
+
+function buildShotAssetIndex(){
+  const assets = [];
+  state.teams.forEach(team => {
+    (team.playerIds || []).forEach(id => {
+      const p = state.playersById.get(String(id));
+      if (!p || !p.name) return;
+      const nameNorm = normalizeName(p.name);
+      if (nameNorm.length < 5) return;
+      assets.push({
+        id: String(p.id),
+        kind: 'player',
+        name: p.name,
+        nameNorm,
+        rosterId: String(team.rosterId),
+        teamName: team.displayName,
+        score: Number(p.dynasty || p.tradeScore || 0)
+      });
+    });
+    (team.picks || []).forEach(p => {
+      if (!p) return;
+      const label = p.label || (String(p.season) + ' pick');
+      const season = String(p.season || '');
+      const round = Number(p.round);
+      const nameNorm = normalizeName(label);
+      assets.push({
+        id: String(p.id),
+        kind: 'pick',
+        name: label,
+        nameNorm,
+        season,
+        round,
+        rosterId: String(team.rosterId),
+        teamName: team.displayName,
+        score: Number(p.dynasty || p.tradeScore || 0)
+      });
+    });
+  });
+  assets.sort((a, b) => b.nameNorm.length - a.nameNorm.length || b.score - a.score);
+  return assets;
+}
+
+function detectTeamsInText(ocrNorm){
+  const hits = [];
+  state.teams.forEach(team => {
+    const names = [
+      team.displayName,
+      team.key,
+      team.manager,
+      team.teamName
+    ].filter(Boolean);
+    let best = 0;
+    names.forEach(n => {
+      const nn = normalizeName(n);
+      if (nn.length >= 4 && ocrNorm.includes(nn)){
+        best = Math.max(best, nn.length);
+      }
+    });
+    if (best) hits.push({ team, score: best });
+  });
+  hits.sort((a, b) => b.score - a.score);
+  return hits.map(h => h.team);
+}
+
+function matchAssetsFromOcr(text){
+  const raw = String(text || '');
+  const ocrNorm = normalizeName(raw);
+  const assets = buildShotAssetIndex();
+  let hay = ocrNorm;
+  const matched = [];
+  const usedIds = new Set();
+
+  assets.forEach(asset => {
+    if (usedIds.has(asset.id)) return;
+    if (asset.kind === 'player'){
+      if (asset.nameNorm.length < 6 && !/[a-z]{4,}/.test(asset.nameNorm)) return;
+      const idx = hay.indexOf(asset.nameNorm);
+      if (idx < 0) return;
+      matched.push(asset);
+      usedIds.add(asset.id);
+      hay = hay.slice(0, idx) + 'x'.repeat(asset.nameNorm.length) + hay.slice(idx + asset.nameNorm.length);
+    }
+  });
+
+  /* Picks: year + round near each other in raw OCR (handles "2026 Mid 1st Round Pick"). */
+  const pickRe = /(?:20\d{2})\s*(?:early|mid|late)?\s*(?:round)?\s*(1st|2nd|3rd|4th|5th|first|second|third|fourth|fifth|lst|ist|znd|srd)/gi;
+  const pickHits = [];
+  let m;
+  while ((m = pickRe.exec(raw)) !== null){
+    const season = m[0].match(/20\d{2}/);
+    const round = roundWordToNum(m[1]);
+    if (!season || !round) continue;
+    pickHits.push({ season: season[0], round, index: m.index });
+  }
+  /* Also "1st Round Pick 2027" style */
+  const pickRe2 = /(1st|2nd|3rd|4th|5th|first|second|third)\s*(?:round)?\s*(?:pick)?\s*(?:20\d{2})/gi;
+  while ((m = pickRe2.exec(raw)) !== null){
+    const season = m[0].match(/20\d{2}/);
+    const round = roundWordToNum(m[1]);
+    if (!season || !round) continue;
+    pickHits.push({ season: season[0], round, index: m.index });
+  }
+
+  const detectedTeams = detectTeamsInText(ocrNorm);
+  const preferredOwners = new Set(detectedTeams.slice(0, 2).map(t => String(t.rosterId)));
+
+  pickHits.forEach(hit => {
+    const candidates = assets.filter(a =>
+      a.kind === 'pick'
+      && !usedIds.has(a.id)
+      && String(a.season) === String(hit.season)
+      && Number(a.round) === Number(hit.round)
+    );
+    if (!candidates.length) return;
+    candidates.sort((a, b) => {
+      const ap = preferredOwners.has(a.rosterId) ? 1 : 0;
+      const bp = preferredOwners.has(b.rosterId) ? 1 : 0;
+      return bp - ap || b.score - a.score;
+    });
+    const pick = candidates[0];
+    matched.push(pick);
+    usedIds.add(pick.id);
+  });
+
+  /* Fallback: pick label substring (e.g. "20261st") */
+  assets.forEach(asset => {
+    if (asset.kind !== 'pick' || usedIds.has(asset.id)) return;
+    if (!asset.nameNorm || asset.nameNorm.length < 6) return;
+    if (hay.indexOf(asset.nameNorm) < 0) return;
+    matched.push(asset);
+    usedIds.add(asset.id);
+  });
+
+  return { matched, detectedTeams, ocrNorm, raw };
+}
+
+function groupMatchedByTeam(matched){
+  const byTeam = new Map();
+  matched.forEach(a => {
+    const key = String(a.rosterId);
+    if (!byTeam.has(key)){
+      byTeam.set(key, {
+        rosterId: key,
+        teamName: a.teamName,
+        assets: []
+      });
+    }
+    byTeam.get(key).assets.push(a);
+  });
+  const groups = [...byTeam.values()];
+  groups.forEach(g => g.assets.sort((a, b) => b.score - a.score));
+  groups.sort((a, b) => {
+    const sa = a.assets.reduce((s, x) => s + x.score, 0);
+    const sb = b.assets.reduce((s, x) => s + x.score, 0);
+    return b.assets.length - a.assets.length || sb - sa;
+  });
+  return groups;
+}
+
+function resolveShotSides(parseResult){
+  const groups = groupMatchedByTeam(parseResult.matched);
+  const detected = parseResult.detectedTeams || [];
+  let sideA = null;
+  let sideB = null;
+
+  if (groups.length >= 2){
+    /* Prefer detected team order when both appear among top groups. */
+    if (detected.length >= 2){
+      const gA = groups.find(g => String(g.rosterId) === String(detected[0].rosterId));
+      const gB = groups.find(g => String(g.rosterId) === String(detected[1].rosterId));
+      if (gA && gB){
+        sideA = gA;
+        sideB = gB;
+      }
+    }
+    if (!sideA || !sideB){
+      sideA = groups[0];
+      sideB = groups[1];
+    }
+  } else if (groups.length === 1 && detected.length >= 2){
+    /* One side's assets OCR'd; other team named but sending nothing matched. */
+    const only = groups[0];
+    const other = detected.find(t => String(t.rosterId) !== String(only.rosterId));
+    if (other){
+      sideA = only;
+      sideB = { rosterId: String(other.rosterId), teamName: other.displayName, assets: [] };
+    }
+  }
+
+  const leftovers = groups.filter(g =>
+    (!sideA || String(g.rosterId) !== String(sideA.rosterId))
+    && (!sideB || String(g.rosterId) !== String(sideB.rosterId))
+  );
+
+  return { sideA, sideB, leftovers, groups };
+}
+
+function applyShotTrade(sideA, sideB){
+  if (!sideA || !sideB) return false;
+  const selA = document.getElementById('teamA');
+  const selB = document.getElementById('teamB');
+  if (!selA || !selB) return false;
+  selA.value = String(sideA.rosterId);
+  selB.value = String(sideB.rosterId);
+  state.sendA = new Set((sideA.assets || []).map(a => String(a.id)));
+  state.sendB = new Set((sideB.assets || []).map(a => String(a.id)));
+  setMode('analyze');
+  renderLists();
+  analyze();
+  const result = document.getElementById('result');
+  if (result && !result.hidden){
+    result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  return true;
+}
+
+function renderShotMatch(parseResult, sides){
+  const el = document.getElementById('shotMatch');
+  if (!el) return;
+  const { sideA, sideB, leftovers } = sides;
+  if (!sideA || !sideB){
+    const names = (parseResult.matched || []).map(a => escapeHtml(a.name)).join(', ') || 'none';
+    el.innerHTML = '<p class="miss">Could not map a two-team trade. Matched: '
+      + names + '. Try a clearer crop of the two sides, or pick teams manually.</p>'
+      + '<details><summary>OCR text</summary><pre>' + escapeHtml(parseResult.raw || '') + '</pre></details>';
+    return;
+  }
+  function sideHtml(side){
+    const team = teamById(side.rosterId);
+    const color = teamColor(team);
+    const names = (side.assets || []).map(a => a.name).join(', ') || '(nothing matched)';
+    return '<div class="side-line" style="--team-color:' + escapeHtml(color) + '">'
+      + '<strong>' + escapeHtml(side.teamName || (team && team.displayName) || 'Team') + '</strong>'
+      + ' sending'
+      + '<div class="assets">' + escapeHtml(names) + '</div></div>';
+  }
+  let html = sideHtml(sideA) + sideHtml(sideB);
+  if (leftovers && leftovers.length){
+    html += '<p class="miss">Also saw assets on other rosters (ignored): '
+      + leftovers.map(g => escapeHtml(g.teamName) + ' — '
+        + g.assets.map(a => escapeHtml(a.name)).join(', ')).join('; ')
+      + '</p>';
+  }
+  html += '<details><summary>OCR text</summary><pre>' + escapeHtml(parseResult.raw || '') + '</pre></details>';
+  el.innerHTML = html;
+}
+
+async function runOcrOnImage(file){
+  const Tesseract = await loadTesseract();
+  setShotStatus('Preparing image…');
+  const blob = await resizeImageForOcr(file);
+  setShotStatus('Reading screenshot (OCR)… 0%');
+  const worker = await Tesseract.createWorker('eng', 1, {
+    logger: m => {
+      if (!m || m.status !== 'recognizing text') return;
+      const pct = Math.round((Number(m.progress) || 0) * 100);
+      setShotStatus('Reading screenshot (OCR)… ' + pct + '%');
+    }
+  });
+  try {
+    const result = await worker.recognize(blob);
+    return (result && result.data && result.data.text) || '';
+  } finally {
+    try { await worker.terminate(); } catch (e){ /* ignore */ }
+  }
+}
+
+async function handleShotFile(file){
+  if (!file || !String(file.type || '').startsWith('image/')){
+    setShotStatus('Please choose an image file (PNG, JPG, HEIC).', true);
+    return;
+  }
+  if (!state.teams.length){
+    setShotStatus('League data still loading — try again in a moment.', true);
+    return;
+  }
+
+  const uploadLabel = document.getElementById('shotUploadLabel');
+  const pasteBtn = document.getElementById('shotPaste');
+  const clearBtn = document.getElementById('shotClear');
+  const preview = document.getElementById('shotPreview');
+  const thumb = document.getElementById('shotThumb');
+
+  if (shotObjectUrl){
+    try { URL.revokeObjectURL(shotObjectUrl); } catch (e){ /* ignore */ }
+  }
+  shotObjectUrl = URL.createObjectURL(file);
+  if (thumb) thumb.src = shotObjectUrl;
+  if (preview) preview.hidden = false;
+  if (clearBtn) clearBtn.hidden = false;
+  if (uploadLabel) uploadLabel.style.pointerEvents = 'none';
+  if (pasteBtn) pasteBtn.disabled = true;
+
+  try {
+    setShotStatus('Loading OCR engine…');
+    const text = await runOcrOnImage(file);
+    if (!String(text || '').trim()){
+      setShotStatus('No text found in that image. Try a sharper crop of the trade.', true);
+      document.getElementById('shotMatch').innerHTML = '';
+      return;
+    }
+    setShotStatus('Matching players & picks to this league…');
+    const parseResult = matchAssetsFromOcr(text);
+    const sides = resolveShotSides(parseResult);
+    renderShotMatch(parseResult, sides);
+    if (sides.sideA && sides.sideB && (sides.sideA.assets.length || sides.sideB.assets.length)){
+      applyShotTrade(sides.sideA, sides.sideB);
+      const n = (sides.sideA.assets.length || 0) + (sides.sideB.assets.length || 0);
+      setShotStatus('Matched ' + n + ' asset' + (n === 1 ? '' : 's')
+        + '. Boards updated — tweak checkboxes if OCR missed someone.');
+    } else {
+      setShotStatus('Could not resolve both sides from the screenshot.', true);
+    }
+  } catch (err){
+    console.error(err);
+    setShotStatus((err && err.message) || 'Screenshot analysis failed.', true);
+  } finally {
+    if (uploadLabel) uploadLabel.style.pointerEvents = '';
+    if (pasteBtn) pasteBtn.disabled = false;
+  }
+}
+
+async function pasteShotFromClipboard(){
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.read){
+      setShotStatus('Clipboard paste needs a secure browser context. Use Upload instead.', true);
+      return;
+    }
+    const items = await navigator.clipboard.read();
+    for (const item of items){
+      const type = (item.types || []).find(t => t.startsWith('image/'));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      const file = new File([blob], 'sleeper-paste.png', { type: blob.type || 'image/png' });
+      await handleShotFile(file);
+      return;
+    }
+    setShotStatus('No image on the clipboard. Copy a screenshot first, or use Upload.', true);
+  } catch (err){
+    setShotStatus('Paste blocked by the browser. Use Upload instead.', true);
+  }
+}
+
+function bindShotUi(){
+  const file = document.getElementById('shotFile');
+  const pasteBtn = document.getElementById('shotPaste');
+  const clearBtn = document.getElementById('shotClear');
+  if (file){
+    file.addEventListener('change', () => {
+      const f = file.files && file.files[0];
+      if (f) handleShotFile(f);
+    });
+  }
+  if (pasteBtn) pasteBtn.addEventListener('click', () => pasteShotFromClipboard());
+  if (clearBtn) clearBtn.addEventListener('click', () => clearShotUi());
+}
+
 function applyOfferToAnalyze(offer){
   const mine = finderTeam();
   if (!mine || !offer) return;
@@ -2705,6 +3247,7 @@ async function load(){
     selA.addEventListener('change', onTeamChange);
     selB.addEventListener('change', onTeamChange);
     bindFinderUi();
+    bindShotUi();
 
     /* First paint with players only — keep HQ tabs responsive. */
     document.getElementById('app').hidden = false;
