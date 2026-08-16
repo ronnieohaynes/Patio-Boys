@@ -172,6 +172,53 @@
   }
   .decision .body p{margin:0;font-size:14px;color:#C9CDD8;line-height:1.45}
 
+  .fair-fix{
+    border:1px solid var(--hairline);border-radius:8px;background:var(--surface);
+    margin:0 0 14px;overflow:hidden;
+  }
+  .fair-fix .ff-head{
+    display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;
+    padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--hairline);
+  }
+  .fair-fix .ff-head h3{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:16px;margin:0 0 4px;
+    letter-spacing:.02em;
+  }
+  .fair-fix .ff-head p{margin:0;font-size:12px;color:var(--ink-dim);max-width:560px;line-height:1.45}
+  .fair-fix .ff-body{padding:12px 14px}
+  .fair-fix .ff-sides{
+    display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;
+  }
+  @media(max-width:760px){.fair-fix .ff-sides{grid-template-columns:1fr}}
+  .fair-fix .ff-side{
+    padding:8px 10px;border-left:3px solid var(--team-color, var(--gold));
+    background:color-mix(in srgb, var(--surface-2) 70%, transparent);border-radius:0 6px 6px 0;
+  }
+  .fair-fix .ff-side strong{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:13px;
+    letter-spacing:.02em;font-weight:400;color:var(--ink);
+  }
+  .fair-fix .ff-side .assets{font-size:12px;color:#C9CDD8;margin-top:3px;line-height:1.4}
+  .fair-fix .ff-meta{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;margin:0 0 10px;line-height:1.5;
+  }
+  .fair-fix .ff-meta .hi{color:var(--gold)}
+  .fair-fix .ff-changes{margin:0 0 12px;font-size:13px;color:#C9CDD8;line-height:1.45}
+  .fair-fix .ff-changes .add{color:var(--green)}
+  .fair-fix .ff-changes .drop{color:var(--coral)}
+  .fair-fix .ff-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .fair-fix .ff-btn{
+    background:color-mix(in srgb, var(--gold) 18%, var(--surface));
+    border:1px solid var(--gold);border-radius:6px;color:var(--ink);
+    font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;
+    letter-spacing:.05em;text-transform:uppercase;padding:9px 12px;cursor:pointer;
+  }
+  .fair-fix .ff-btn.ghost{
+    background:var(--surface);border-color:var(--hairline);color:var(--ink-dim);
+  }
+  .fair-fix.none .ff-body{color:var(--ink-dim);font-size:13px}
+
   .sides{
     display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;
   }
@@ -416,7 +463,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260815-pickage';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260816-fairfix';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -824,7 +871,9 @@ const state = {
   mode: 'analyze',
   finderDir: 'shop', /* shop = available on your roster; want = acquire from others */
   finderPlayerIds: new Set(),
-  finderOffers: []
+  finderOffers: [],
+  fairProposal: null,
+  fairAlternates: []
 };
 
 const FINDER_MAX_SELECT = 4;
@@ -1476,6 +1525,381 @@ function maxPointsForIds(ids){
   };
 }
 
+/* ---------- Fair-trade proposal (keep as many original pieces as possible) ---------- */
+
+function tradeBalance(fromA, fromB){
+  const packToA = packageValueParts(fromB);
+  const packToB = packageValueParts(fromA);
+  const ageToA = packageAgeParts(fromB);
+  const ageToB = packageAgeParts(fromA);
+  const ageGap = ageGapVerdict(ageToA, ageToB);
+  const fairToA = packToA.effective * (ageGap.multA || 1);
+  const fairToB = packToB.effective * (ageGap.multB || 1);
+  const high = Math.max(fairToA, fairToB, 0.01);
+  const low = Math.min(fairToA, fairToB);
+  const ratio = low / high;
+  const delta = high - low;
+  const primaryGap = primaryGapVerdict(packToA, packToB);
+  const unfair = ratio < FINDER_FAIR_HARD || delta >= 12;
+  const softEdge = !unfair && !primaryGap.hard
+    && (ratio < FINDER_FAIR_SOFT || delta >= 8);
+  let tier = 'allow';
+  if (unfair || primaryGap.hard) tier = 'block';
+  else if (softEdge || primaryGap.soft || ageGap.soft) tier = 'caution';
+  return {
+    packToA, packToB, ageGap,
+    fairToA, fairToB, ratio, delta,
+    grade: fairnessGrade(ratio),
+    primaryGap, unfair, softEdge, tier
+  };
+}
+
+function teamSendPool(team, excludeIds){
+  const skip = new Set((excludeIds || []).map(String));
+  const players = (team.playerIds || []).map(id => state.playersById.get(String(id)))
+    .filter(p => p && !skip.has(String(p.id)) && assetTradeValue(p) > 0);
+  const picks = (team.picks || []).filter(p =>
+    p && !skip.has(String(p.id)) && assetTradeValue(p) > 0
+  );
+  return players.concat(picks).sort((a, b) => assetTradeValue(b) - assetTradeValue(a));
+}
+
+function assetIdSet(assets){
+  return new Set((assets || []).map(p => String(p.id)));
+}
+
+function assetsEqualSets(a, b){
+  const sa = assetIdSet(a);
+  const sb = assetIdSet(b);
+  if (sa.size !== sb.size) return false;
+  for (const id of sa) if (!sb.has(id)) return false;
+  return true;
+}
+
+function proposalOverlap(origA, origB, nextA, nextB){
+  const orig = new Set([...assetIdSet(origA), ...assetIdSet(origB)]);
+  const next = new Set([...assetIdSet(nextA), ...assetIdSet(nextB)]);
+  let preserved = 0;
+  orig.forEach(id => { if (next.has(id)) preserved++; });
+  const removed = [];
+  const added = [];
+  orig.forEach(id => { if (!next.has(id)) removed.push(id); });
+  next.forEach(id => { if (!orig.has(id)) added.push(id); });
+  return {
+    preserved,
+    origCount: orig.size,
+    nextCount: next.size,
+    removed,
+    added,
+    changeCount: removed.length + added.length,
+    keepRatio: orig.size ? preserved / orig.size : 0
+  };
+}
+
+function removableChips(assets){
+  const scored = (assets || []).slice().sort((a, b) => assetTradeValue(a) - assetTradeValue(b));
+  if (scored.length <= 1) return scored.slice();
+  /* Prefer dropping the cheapest pieces; keep the primary unless it is the only option. */
+  const primaryId = String(scored[scored.length - 1].id);
+  const chips = scored.filter(p => String(p.id) !== primaryId);
+  return chips.length ? chips : scored.slice(0, 1);
+}
+
+function subsetsOfSize(arr, size){
+  const out = [];
+  if (size <= 0 || !arr.length || size > arr.length) return out;
+  if (size === 1){
+    arr.forEach(x => out.push([x]));
+    return out;
+  }
+  if (size === 2){
+    for (let i = 0; i < arr.length; i++){
+      for (let j = i + 1; j < arr.length; j++) out.push([arr[i], arr[j]]);
+    }
+    return out;
+  }
+  return out;
+}
+
+function scoreFairProposal(cand){
+  const bal = cand.balance;
+  const ov = cand.overlap;
+  let score = ov.preserved * 40 - ov.changeCount * 12 + ov.keepRatio * 25;
+  if (bal.tier === 'allow') score += 35;
+  else if (bal.tier === 'caution') score += 12;
+  else score -= 40;
+  score += bal.ratio * 20;
+  score -= Math.min(20, bal.delta * 0.4);
+  if (bal.primaryGap && bal.primaryGap.hard) score -= 30;
+  /* Prefer add-only (no removals) when keep-ratio is high. */
+  if (!ov.removed.length && ov.added.length) score += 8;
+  return score;
+}
+
+function proposeFairTrade(teamA, teamB, fromA, fromB){
+  const origBal = tradeBalance(fromA, fromB);
+  if (origBal.tier === 'allow') return null;
+
+  const aOver = origBal.fairToA > origBal.fairToB + 0.05;
+  const bOver = origBal.fairToB > origBal.fairToA + 0.05;
+  /* Overpaid side receives too much → either they send more, or the other side sends less. */
+  const candidates = [];
+
+  function consider(nextA, nextB, note){
+    if (!nextA.length && !nextB.length) return;
+    if (assetsEqualSets(nextA, fromA) && assetsEqualSets(nextB, fromB)) return;
+    const balance = tradeBalance(nextA, nextB);
+    const overlap = proposalOverlap(fromA, fromB, nextA, nextB);
+    const cand = {
+      fromA: nextA.slice(),
+      fromB: nextB.slice(),
+      balance,
+      overlap,
+      note: note || ''
+    };
+    cand.score = scoreFairProposal(cand);
+    candidates.push(cand);
+  }
+
+  function tryAdds(sendSide /* 'A' | 'B' */){
+    const baseSend = sendSide === 'A' ? fromA : fromB;
+    const otherSend = sendSide === 'A' ? fromB : fromA;
+    const team = sendSide === 'A' ? teamA : teamB;
+    const pool = teamSendPool(team, baseSend.map(p => p.id)).slice(0, 12);
+    subsetsOfSize(pool, 1).forEach(add => {
+      const next = baseSend.concat(add);
+      if (sendSide === 'A') consider(next, otherSend, 'Add sweetener from ' + team.displayName);
+      else consider(otherSend, next, 'Add sweetener from ' + team.displayName);
+    });
+    subsetsOfSize(pool.slice(0, 8), 2).forEach(add => {
+      const next = baseSend.concat(add);
+      if (sendSide === 'A') consider(next, otherSend, 'Add two pieces from ' + team.displayName);
+      else consider(otherSend, next, 'Add two pieces from ' + team.displayName);
+    });
+  }
+
+  function tryRemoves(sendSide){
+    const baseSend = sendSide === 'A' ? fromA : fromB;
+    const otherSend = sendSide === 'A' ? fromB : fromA;
+    const chips = removableChips(baseSend);
+    subsetsOfSize(chips, 1).forEach(drop => {
+      const dropIds = new Set(drop.map(p => String(p.id)));
+      const next = baseSend.filter(p => !dropIds.has(String(p.id)));
+      if (!next.length && !otherSend.length) return;
+      if (sendSide === 'A') consider(next, otherSend, 'Drop from ' + teamA.displayName + ' send');
+      else consider(otherSend, next, 'Drop from ' + teamB.displayName + ' send');
+    });
+    subsetsOfSize(chips.slice(0, 6), 2).forEach(drop => {
+      const dropIds = new Set(drop.map(p => String(p.id)));
+      const next = baseSend.filter(p => !dropIds.has(String(p.id)));
+      if (!next.length && !otherSend.length) return;
+      if (sendSide === 'A') consider(next, otherSend, 'Trim two from ' + teamA.displayName);
+      else consider(otherSend, next, 'Trim two from ' + teamB.displayName);
+    });
+  }
+
+  function tryRemoveAndAdd(overSendSide /* side whose haul is too rich */){
+    /* Remove chip from over-send; add to under-send (other team). */
+    const overSend = overSendSide === 'A' ? fromA : fromB;
+    const underSend = overSendSide === 'A' ? fromB : fromA;
+    const underTeam = overSendSide === 'A' ? teamB : teamA;
+    const chips = removableChips(overSend).slice(0, 5);
+    const pool = teamSendPool(underTeam, underSend.map(p => p.id)).slice(0, 10);
+    chips.forEach(drop => {
+      const nextOver = overSend.filter(p => String(p.id) !== String(drop.id));
+      pool.forEach(add => {
+        const nextUnder = underSend.concat([add]);
+        if (overSendSide === 'A'){
+          consider(nextOver, nextUnder, 'Swap chip: drop '
+            + assetDisplayName(drop) + ', add ' + assetDisplayName(add));
+        } else {
+          consider(nextUnder, nextOver, 'Swap chip: drop '
+            + assetDisplayName(drop) + ', add ' + assetDisplayName(add));
+        }
+      });
+    });
+  }
+
+  function tryReplaceOnUnder(underSendSide){
+    /* Replace one low piece on the underpaid haul with a better available piece. */
+    const underSend = underSendSide === 'A' ? fromA : fromB;
+    const otherSend = underSendSide === 'A' ? fromB : fromA;
+    const team = underSendSide === 'A' ? teamA : teamB;
+    if (underSend.length < 1) return;
+    const low = underSend.slice().sort((a, b) => assetTradeValue(a) - assetTradeValue(b))[0];
+    const pool = teamSendPool(team, underSend.map(p => p.id)).slice(0, 10)
+      .filter(p => assetTradeValue(p) > assetTradeValue(low) + 0.5);
+    pool.forEach(add => {
+      const next = underSend.filter(p => String(p.id) !== String(low.id)).concat([add]);
+      if (underSendSide === 'A'){
+        consider(next, otherSend, 'Upgrade '
+          + assetDisplayName(low) + ' → ' + assetDisplayName(add));
+      } else {
+        consider(otherSend, next, 'Upgrade '
+          + assetDisplayName(low) + ' → ' + assetDisplayName(add));
+      }
+    });
+  }
+
+  if (aOver){
+    tryAdds('A'); /* A sends more so B receives more */
+    tryRemoves('B'); /* B sends less so A receives less */
+    tryRemoveAndAdd('B');
+    tryReplaceOnUnder('A');
+  } else if (bOver){
+    tryAdds('B');
+    tryRemoves('A');
+    tryRemoveAndAdd('A');
+    tryReplaceOnUnder('B');
+  } else {
+    /* Near even on value but blocked on primary gap / soft — try both add directions. */
+    tryAdds('A');
+    tryAdds('B');
+    tryRemoves('A');
+    tryRemoves('B');
+    tryReplaceOnUnder('A');
+    tryReplaceOnUnder('B');
+  }
+
+  /* Prefer non-block; among those, best score. */
+  const viable = candidates.filter(c => c.balance.tier !== 'block');
+  const pool = viable.length ? viable : candidates;
+  if (!pool.length) return null;
+  pool.sort((a, b) => b.score - a.score
+    || b.overlap.preserved - a.overlap.preserved
+    || a.overlap.changeCount - b.overlap.changeCount
+    || b.balance.ratio - a.balance.ratio);
+
+  const best = pool[0];
+  if (best.balance.tier === 'block' && best.balance.ratio <= origBal.ratio + 0.02){
+    /* No meaningful improvement */
+    return null;
+  }
+
+  const alts = [];
+  const seen = new Set([
+    best.fromA.map(p => p.id).sort().join('+') + '|' + best.fromB.map(p => p.id).sort().join('+')
+  ]);
+  for (const c of pool){
+    if (c === best) continue;
+    if (c.balance.tier === 'block') continue;
+    const key = c.fromA.map(p => p.id).sort().join('+') + '|' + c.fromB.map(p => p.id).sort().join('+');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    alts.push(c);
+    if (alts.length >= 2) break;
+  }
+
+  return { best, alts, original: origBal };
+}
+
+function fairProposalChangeLines(proposal, teamA, teamB){
+  const ov = proposal.overlap;
+  const lines = [];
+  const nameOf = id => {
+    const p = assetById(id);
+    return p ? assetDisplayName(p) : String(id);
+  };
+  if (ov.added.length){
+    lines.push({
+      cls: 'add',
+      text: 'Add ' + ov.added.map(id => {
+        const p = assetById(id);
+        const onA = proposal.fromA.some(x => String(x.id) === String(id));
+        const team = onA ? teamA.displayName : teamB.displayName;
+        return (p ? assetDisplayName(p) : id) + ' (' + team + ' sends)';
+      }).join(', ')
+    });
+  }
+  if (ov.removed.length){
+    lines.push({
+      cls: 'drop',
+      text: 'Remove ' + ov.removed.map(nameOf).join(', ')
+    });
+  }
+  if (!ov.added.length && !ov.removed.length){
+    lines.push({ cls: '', text: 'Same pieces, rebalanced package weighting' });
+  }
+  return lines;
+}
+
+function renderFairProposalHtml(pack, teamA, teamB){
+  if (!pack || !pack.best){
+    return '<div class="fair-fix none"><div class="ff-head"><div><h3>Fairer deal</h3>'
+      + '<p>Could not find a non-blocking tweak that keeps enough of this package.</p>'
+      + '</div></div></div>';
+  }
+  const best = pack.best;
+  const bal = best.balance;
+  const ov = best.overlap;
+  const aColor = teamColor(teamA);
+  const bColor = teamColor(teamB);
+  const changes = fairProposalChangeLines(best, teamA, teamB);
+  const tierLabel = bal.tier === 'allow' ? 'Allow' : (bal.tier === 'caution' ? 'Caution' : 'Still blocked');
+  function sideBlock(team, color, assets){
+    const names = (assets || []).map(assetDisplayName).join(', ') || '(nothing)';
+    return '<div class="ff-side" style="--team-color:' + escapeHtml(color) + '">'
+      + '<strong>' + escapeHtml(team.displayName) + '</strong> sends'
+      + '<div class="assets">' + escapeHtml(names) + '</div></div>';
+  }
+  let altsHtml = '';
+  if (pack.alts && pack.alts.length){
+    altsHtml = '<div class="ff-actions" style="margin-top:8px">'
+      + pack.alts.map((alt, i) =>
+        '<button type="button" class="ff-btn ghost" data-fair-alt="' + i + '">Alt '
+          + (i + 1) + ': keep ' + alt.overlap.preserved + '/' + alt.overlap.origCount
+          + ' · ' + alt.balance.grade + '</button>'
+      ).join('')
+      + '</div>';
+  }
+  return '<div class="fair-fix" id="fairFix">'
+    + '<div class="ff-head"><div><h3>Fairer deal</h3>'
+    + '<p>Keeps <strong>' + ov.preserved + ' of ' + ov.origCount
+    + '</strong> original pieces'
+    + (best.note ? (' · ' + escapeHtml(best.note)) : '')
+    + '. Target: balanced package value without a Block.</p></div>'
+    + '<button type="button" class="ff-btn" id="applyFairProposal">Apply to boards</button>'
+    + '</div><div class="ff-body">'
+    + '<p class="ff-meta">Proposed fairness <span class="hi">' + escapeHtml(bal.grade)
+    + '</span> · ratio ' + (bal.ratio * 100).toFixed(0) + '% · ruling '
+    + escapeHtml(tierLabel)
+    + ' · ' + teamA.displayName + ' pkg ' + bal.fairToA.toFixed(1)
+    + ' / ' + teamB.displayName + ' pkg ' + bal.fairToB.toFixed(1) + '</p>'
+    + '<div class="ff-sides">'
+    + sideBlock(teamA, aColor, best.fromA)
+    + sideBlock(teamB, bColor, best.fromB)
+    + '</div>'
+    + '<div class="ff-changes">' + changes.map(c =>
+      '<div class="' + escapeHtml(c.cls) + '">' + escapeHtml(c.text) + '</div>'
+    ).join('') + '</div>'
+    + altsHtml
+    + '</div></div>';
+}
+
+function applyFairProposal(proposal){
+  if (!proposal) return;
+  state.sendA = new Set(proposal.fromA.map(p => String(p.id)));
+  state.sendB = new Set(proposal.fromB.map(p => String(p.id)));
+  renderLists();
+  analyze();
+  const result = document.getElementById('result');
+  if (result) result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function bindFairProposalUi(pack){
+  const apply = document.getElementById('applyFairProposal');
+  if (apply && pack && pack.best){
+    apply.addEventListener('click', () => applyFairProposal(pack.best));
+  }
+  document.querySelectorAll('[data-fair-alt]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = Number(btn.getAttribute('data-fair-alt'));
+      const alt = pack && pack.alts && pack.alts[i];
+      if (alt) applyFairProposal(alt);
+    });
+  });
+}
+
 function analyze(){
   const aId = document.getElementById('teamA').value;
   const bId = document.getElementById('teamB').value;
@@ -1484,6 +1908,8 @@ function analyze(){
   const result = document.getElementById('result');
   if (!teamA || !teamB || aId === bId){
     result.hidden = true;
+    state.fairProposal = null;
+    state.fairAlternates = [];
     return;
   }
 
@@ -1494,6 +1920,8 @@ function analyze(){
   const fromB = assetsFromSet(state.sendB);
   if (!fromA.length && !fromB.length){
     result.hidden = true;
+    state.fairProposal = null;
+    state.fairAlternates = [];
     return;
   }
 
@@ -1844,10 +2272,24 @@ function analyze(){
   }
 
   result.hidden = false;
+  let fairFixHtml = '';
+  state.fairProposal = null;
+  state.fairAlternates = [];
+  if (ruling === 'block' || (ruling === 'review' && softEdge)){
+    const pack = proposeFairTrade(teamA, teamB, fromA, fromB);
+    if (pack && pack.best){
+      state.fairProposal = pack.best;
+      state.fairAlternates = pack.alts || [];
+      fairFixHtml = renderFairProposalHtml(pack, teamA, teamB);
+    } else if (ruling === 'block'){
+      fairFixHtml = renderFairProposalHtml(null, teamA, teamB);
+    }
+  }
   result.innerHTML = '<div class="decision ' + ruling + '">'
     + '<div class="stamp">' + (ruling === 'block' ? 'Block' : (ruling === 'review' ? 'Caution' : 'Allow')) + '</div>'
     + '<div class="body"><h3>' + escapeHtml(rulingTitle) + '</h3>'
     + '<p>' + escapeHtml(rulingWhy) + '</p></div></div>'
+    + fairFixHtml
     + '<div class="verdict ' + verdictCls + '">'
     + '<div class="letter">' + grade + '</div>'
     + '<div><h3>' + escapeHtml(headline) + '</h3>'
@@ -1888,6 +2330,12 @@ function analyze(){
         + '</tr>';
     }).join('')
     + '</tbody></table></div>';
+  if (state.fairProposal){
+    bindFairProposalUi({
+      best: state.fairProposal,
+      alts: state.fairAlternates
+    });
+  }
 }
 
 function renderLists(){
