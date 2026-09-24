@@ -452,7 +452,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending — or <strong>upload a Sleeper trade screenshot</strong> and we&rsquo;ll fill the boards. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; clear step-downs as capped chips). Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless a co-core closes the gap. Player ages more than <strong>3 years</strong> apart nudge fairness toward youth (picks excluded). Late-round picks use steep round decay so they stay chips. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending — or <strong>upload a Sleeper trade screenshot</strong> and we&rsquo;ll fill the boards. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; other keepers diminish by rank; fringe capped). Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless the trailing side&rsquo;s co-cores match the other side&rsquo;s core package. Player ages more than <strong>3 years</strong> apart nudge fairness toward youth (picks excluded). Late-round picks use steep round decay so they stay chips. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -1006,21 +1006,31 @@ function assetsFromSet(sendSet){
   return [...sendSet].map(id => assetById(id)).filter(Boolean);
 }
 
+function keeperWeightAt(i){
+  if (i < PKG_KEEPER_WEIGHTS.length) return PKG_KEEPER_WEIGHTS[i];
+  const last = PKG_KEEPER_WEIGHTS[PKG_KEEPER_WEIGHTS.length - 1];
+  return last * Math.pow(0.75, i - (PKG_KEEPER_WEIGHTS.length - 1));
+}
+
 function assetTradeValue(p){
   if (!p) return 0;
   const v = Number(p.dynasty != null ? p.dynasty : p.tradeScore);
   return Number.isFinite(v) ? v : 0;
 }
 
-/* Package grading: co-cores vs chips.
+/* Package grading: co-cores vs keepers vs fringe.
    Assets within PKG_CORE_RATIO of the primary AND at/above PKG_CORE_FLOOR
-   count as cores (near-full value). Clear step-downs / fringe are chips —
-   diminishing weights + hard cap so piles cannot manufacture a star. */
+   are co-cores (near-full value — primary-gap veto only). Every keeper-tier
+   asset (≥ PKG_CORE_FLOOR) scores on one rank schedule, so a star cannot
+   erase the pieces under it: adding a piece never lowers the package, and
+   subtracting one never raises it. Only true fringe (below the floor) is a
+   chip — diminishing weights + hard cap so scrub piles cannot manufacture a star. */
 const PKG_CORE_RATIO = 0.82; /* ≥82% of primary → co-core candidate */
-const PKG_CORE_FLOOR = 70; /* co-cores must also clear this Trade ★ */
-const PKG_CORE_WEIGHTS = [1.00, 0.85, 0.70]; /* 1st / 2nd / 3rd+ core */
-const PKG_CHIP_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* chips only */
-const PKG_CHIPS_CAP = 0.25; /* chips ≤ 25% of primary */
+const PKG_CORE_FLOOR = 70; /* keeper tier / co-core floor */
+const PKG_CORE_WEIGHTS = [1.00, 0.85, 0.70]; /* veto cores: 1st / 2nd / 3rd+ */
+const PKG_KEEPER_WEIGHTS = [1.00, 0.85, 0.70, 0.55, 0.42, 0.32, 0.24, 0.18];
+const PKG_CHIP_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* fringe only */
+const PKG_CHIPS_CAP = 0.25; /* fringe chips ≤ 25% of primary */
 const PKG_EXTRAS_CAP = PKG_CHIPS_CAP; /* alias for older call sites */
 const PKG_PRIMARY_SOFT = 0.78; /* best-vs-best below this → caution when piles differ */
 const PKG_PRIMARY_GAP = 10; /* |#1 − #1| above this → caution; block unless co-cores close it */
@@ -1030,8 +1040,8 @@ const PKG_AGE_ADJ_PER_YR = 0.03; /* fairness mult per year past (SOFT−1) */
 const PKG_AGE_ADJ_CAP = 0.12; /* max ±12% fairness shift from age gap */
 
 /* Primary-gap veto: best-vs-best jump > PKG_PRIMARY_GAP is at least Caution.
-   Block unless the trailing-primary side has a co-core whose coresEff reaches
-   within PKG_PRIMARY_GAP of the leading primary (real multi-talent exception). */
+   Block unless the trailing side's co-cores reach within PKG_PRIMARY_GAP of
+   the leading side's core package (a second star on the heavy side counts). */
 /* Draft picks have unknown ages — excluded from package-age fairness. */
 function assetAgeYears(p){
   if (!p || p.kind === 'pick') return null;
@@ -1122,8 +1132,11 @@ function primaryGapVerdict(packA, packB){
   const lead = pA <= pB ? packB : packA;
   const trailCores = Number(trail && trail.coresEff != null ? trail.coresEff : trail && trail.primary) || 0;
   const leadPrimary = Number(lead && lead.primary) || 0;
+  const leadCores = Number(lead && lead.coresEff != null ? lead.coresEff : leadPrimary) || 0;
   const hasCoCore = (Number(trail && trail.coreCount) || 0) >= 2;
-  const closedByCore = hasCoCore && (leadPrimary - trailCores) <= PKG_PRIMARY_GAP + 1e-9;
+  /* Close against the lead's core package, not its #1 alone — a second
+     star on the heavy side has to be matched too. */
+  const closedByCore = hasCoCore && (leadCores - trailCores) <= PKG_PRIMARY_GAP + 1e-9;
   return {
     gap: Math.round(gap * 100) / 100,
     soft: true,
@@ -1150,17 +1163,26 @@ function packageValueParts(assets){
   }
   const primary = scored[0].value;
   const cores = [];
+  const keepers = [];
   const chips = [];
   scored.forEach((x, i) => {
     const isCore = i === 0
       || (x.value + 1e-9 >= primary * PKG_CORE_RATIO && x.value + 1e-9 >= PKG_CORE_FLOOR);
     if (isCore) cores.push(x);
+    else if (x.value + 1e-9 >= PKG_CORE_FLOOR) keepers.push(x);
     else chips.push(x);
   });
   let coresEff = 0;
   cores.forEach((x, i) => {
     const w = PKG_CORE_WEIGHTS[i] != null ? PKG_CORE_WEIGHTS[i] : 0.70;
     coresEff += x.value * w;
+  });
+  /* One non-increasing schedule for every keeper-tier asset. Weights only
+     slide down a slot when a better piece is added, so the total cannot fall. */
+  const keeperTier = cores.concat(keepers);
+  let keeperEff = 0;
+  keeperTier.forEach((x, i) => {
+    keeperEff += x.value * keeperWeightAt(i);
   });
   let chipsWeighted = 0;
   chips.forEach((x, i) => {
@@ -1170,10 +1192,10 @@ function packageValueParts(assets){
   const cap = primary * PKG_CHIPS_CAP;
   const chipsCapped = chipsWeighted > cap + 1e-9;
   const chipsEff = Math.min(chipsWeighted, cap);
-  const extrasEff = (coresEff - primary) + chipsEff;
+  const extrasEff = (keeperEff - primary) + chipsEff;
   return {
     raw: Math.round(raw * 100) / 100,
-    effective: Math.round((coresEff + chipsEff) * 100) / 100,
+    effective: Math.round((keeperEff + chipsEff) * 100) / 100,
     primary: Math.round(primary * 100) / 100,
     coresEff: Math.round(coresEff * 100) / 100,
     chipsEff: Math.round(chipsEff * 100) / 100,
@@ -2026,12 +2048,12 @@ function analyze(){
   const high = Math.max(fairToA, fairToB, 0.01);
   const low = Math.min(fairToA, fairToB);
   const ratio = low / high;
-  const grade = fairnessGrade(ratio);
+  const primaryGap = primaryGapVerdict(packToA, packToB);
+  const grade = primaryGap.hard ? 'F' : fairnessGrade(ratio);
   const winner = fairToA === fairToB ? null
     : (fairToA > fairToB ? aName : bName);
   const loser = winner == null ? null : (winner === aName ? bName : aName);
   const unfair = ratio < FINDER_FAIR_HARD || (high - low) >= 12;
-  const primaryGap = primaryGapVerdict(packToA, packToB);
   const primaryRatio = finderRatio(packToA.primary, packToB.primary);
   const softPrimary = !unfair && !primaryGap.hard
     && Math.max(fromA.length, fromB.length) >= 2
@@ -2118,8 +2140,8 @@ function analyze(){
         + primaryGap.gap.toFixed(1) + ' Trade ★ ('
         + primaryGap.leadPrimary.toFixed(0) + ' vs '
         + primaryGap.trailPrimary.toFixed(0)
-        + '), but co-cores bring package cores within '
-        + PKG_PRIMARY_GAP + ' of the top piece — Caution, not Block.'
+        + '), but the trailing side\'s co-cores bring its core package within '
+        + PKG_PRIMARY_GAP + ' of the other side\'s cores — Caution, not Block.'
     });
   }
   if (ageGap.soft){
@@ -2196,11 +2218,11 @@ function analyze(){
     flags.push({
       cls: 'ok',
       title: 'Chips capped',
-      text: 'True step-down chips (below '
-        + Math.round(PKG_CORE_RATIO * 100)
-        + '% of the top asset) are capped at '
+      text: 'Fringe pieces (below Trade ★ '
+        + PKG_CORE_FLOOR
+        + ') are capped at '
         + Math.round(PKG_CHIPS_CAP * 100)
-        + '% of that primary so fringe piles cannot manufacture star value.'
+        + '% of the primary so scrub piles cannot manufacture star value. Keeper-tier pieces still add value.'
     });
   }
   if (!unfair){
@@ -2519,7 +2541,7 @@ function setMode(mode){
   const lede = document.getElementById('ledeText');
   if (state.mode === 'finder'){
     lede.innerHTML = 'Trade Finder scans for <strong>1–3 asset</strong> packages (players + picks), including mismatched counts. '
-      + 'Fairness uses <strong>quality-weighted</strong> package value (co-cores near full; clear step-downs as capped chips). '
+      + 'Fairness uses <strong>quality-weighted</strong> package value (co-cores near full; other keepers diminish by rank; fringe capped). '
       + 'It also grades fringe seats, starter-lineup <strong>need</strong>, and <strong>max-for-min</strong> contracts. '
       + '<strong>Shop</strong> = offers for one or more of your players; <strong>Find</strong> = what you can send for players on one other team (up to 4). Click to open in Analyze.';
     renderFinder();
@@ -2528,12 +2550,14 @@ function setMode(mode){
       + 'Fairness is <strong>quality-weighted package value</strong>: assets within '
       + Math.round(PKG_CORE_RATIO * 100)
       + '% of the top piece and ≥ Trade ★ ' + PKG_CORE_FLOOR
-      + ' are <strong>co-cores</strong> (near-full Trade ★); clear step-downs are chips (diminishing + capped) so fringe piles cannot manufacture a star. '
+      + ' are <strong>co-cores</strong> (near-full Trade ★). Other keepers still add value on a diminishing rank schedule. Only fringe below '
+      + PKG_CORE_FLOOR
+      + ' is capped, so a scrub pile cannot manufacture a star. '
       + 'Player Trade ★ = Lock OVR × age × injury × contract × situation × <strong>potential</strong>; picks use fringe bases × <strong>round decay</strong> × slot/quality (late rounds are chips). '
       + 'Keeper-seat, starter-lineup need, and max-for-min contracts can nudge Allow → Caution. '
       + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>. '
       + 'Primary assets more than ' + PKG_PRIMARY_GAP
-      + ' Trade ★ apart Block unless a co-core closes the gap. '
+      + ' Trade ★ apart Block unless the trailing side\'s co-cores match the other side\'s core package. '
       + 'Player ages more than ' + PKG_AGE_SOFT
       + ' years apart tilt fairness toward the younger haul (picks excluded from age).';
   }
