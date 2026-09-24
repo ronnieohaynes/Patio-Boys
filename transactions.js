@@ -87,19 +87,29 @@
 
   /* Package grading (same model as Trade Analyzer): assets within
      PKG_CORE_RATIO of the primary and ≥ PKG_CORE_FLOOR are co-cores
-     (near-full value). Clear step-downs are chips — diminishing weights
-     + hard cap so fringe piles cannot manufacture a star. */
+     (near-full value, used by the primary-gap veto). Every keeper-tier
+     asset (≥ PKG_CORE_FLOOR) still scores on one rank schedule so a star
+     cannot erase the pieces under it — adding a piece never lowers the
+     package, and subtracting one never raises it. Only true fringe
+     (below the floor) is a chip, diminishing + hard-capped. */
   const PKG_CORE_RATIO = 0.82; /* ≥82% of primary → co-core candidate */
-  const PKG_CORE_FLOOR = 70; /* co-cores must also clear this Trade ★ */
-  const PKG_CORE_WEIGHTS = [1.00, 0.85, 0.70]; /* 1st / 2nd / 3rd+ core */
-  const PKG_CHIP_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* chips only */
-  const PKG_CHIPS_CAP = 0.25; /* chips ≤ 25% of primary */
+  const PKG_CORE_FLOOR = 70; /* keeper tier / co-core floor */
+  const PKG_CORE_WEIGHTS = [1.00, 0.85, 0.70]; /* veto cores: 1st / 2nd / 3rd+ */
+  const PKG_KEEPER_WEIGHTS = [1.00, 0.85, 0.70, 0.55, 0.42, 0.32, 0.24, 0.18];
+  const PKG_CHIP_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* fringe only */
+  const PKG_CHIPS_CAP = 0.25; /* fringe chips ≤ 25% of primary */
   const PKG_EXTRAS_CAP = PKG_CHIPS_CAP; /* alias */
   const PKG_PRIMARY_SOFT = 0.78; /* best-vs-best below this → caution */
   const PKG_PRIMARY_GAP = 10; /* |#1 − #1| → caution; block unless co-cores close */
   const PKG_AGE_SOFT = 3; /* value-weighted mean age gap → fairness nudge + caution */
   const PKG_AGE_ADJ_PER_YR = 0.03;
   const PKG_AGE_ADJ_CAP = 0.12;
+
+  function keeperWeightAt(i){
+    if (i < PKG_KEEPER_WEIGHTS.length) return PKG_KEEPER_WEIGHTS[i];
+    const last = PKG_KEEPER_WEIGHTS[PKG_KEEPER_WEIGHTS.length - 1];
+    return last * Math.pow(0.75, i - (PKG_KEEPER_WEIGHTS.length - 1));
+  }
 
   function assetPackageScore(a){
     if (!a || a.graded === false) return 0;
@@ -134,17 +144,26 @@
     }
     const primary = scored[0].value;
     const cores = [];
+    const keepers = [];
     const chips = [];
     scored.forEach((x, i) => {
       const isCore = i === 0
         || (x.value + 1e-9 >= primary * PKG_CORE_RATIO && x.value + 1e-9 >= PKG_CORE_FLOOR);
       if (isCore) cores.push(x);
+      else if (x.value + 1e-9 >= PKG_CORE_FLOOR) keepers.push(x);
       else chips.push(x);
     });
     let coresEff = 0;
     cores.forEach((x, i) => {
       const w = PKG_CORE_WEIGHTS[i] != null ? PKG_CORE_WEIGHTS[i] : 0.70;
       coresEff += x.value * w;
+    });
+    /* One non-increasing schedule for every keeper-tier asset. Weights only
+       slide down a slot when a better piece is added, so the total cannot fall. */
+    const keeperTier = cores.concat(keepers);
+    let keeperEff = 0;
+    keeperTier.forEach((x, i) => {
+      keeperEff += x.value * keeperWeightAt(i);
     });
     let chipsWeighted = 0;
     chips.forEach((x, i) => {
@@ -154,10 +173,10 @@
     const cap = primary * PKG_CHIPS_CAP;
     const chipsCapped = chipsWeighted > cap + 1e-9;
     const chipsEff = Math.min(chipsWeighted, cap);
-    const extrasEff = (coresEff - primary) + chipsEff;
+    const extrasEff = (keeperEff - primary) + chipsEff;
     return {
       raw: Math.round(raw * 100) / 100,
-      effective: Math.round((coresEff + chipsEff) * 100) / 100,
+      effective: Math.round((keeperEff + chipsEff) * 100) / 100,
       primary: Math.round(primary * 100) / 100,
       coresEff: Math.round(coresEff * 100) / 100,
       chipsEff: Math.round(chipsEff * 100) / 100,
@@ -256,8 +275,11 @@
     const lead = pA <= pB ? packB : packA;
     const trailCores = Number(trail && trail.coresEff != null ? trail.coresEff : trail && trail.primary) || 0;
     const leadPrimary = Number(lead && lead.primary) || 0;
+    const leadCores = Number(lead && lead.coresEff != null ? lead.coresEff : leadPrimary) || 0;
     const hasCoCore = (Number(trail && trail.coreCount) || 0) >= 2;
-    const closedByCore = hasCoCore && (leadPrimary - trailCores) <= PKG_PRIMARY_GAP + 1e-9;
+    /* Close against the lead's core package, not its #1 alone — a second
+       star on the heavy side has to be matched too. */
+    const closedByCore = hasCoCore && (leadCores - trailCores) <= PKG_PRIMARY_GAP + 1e-9;
     return {
       gap: Math.round(gap * 100) / 100,
       soft: true,
