@@ -452,7 +452,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending — or <strong>upload a Sleeper trade screenshot</strong> and we&rsquo;ll fill the boards. Fairness uses <strong>quality-weighted package value</strong> (co-cores near full; other keepers diminish by rank; fringe capped). Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless the trailing side&rsquo;s co-cores match the other side&rsquo;s core package. Player ages more than <strong>3 years</strong> apart nudge fairness toward youth (picks excluded). Late-round picks use steep round decay so they stay chips. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending — or <strong>upload a Sleeper trade screenshot</strong> and we&rsquo;ll fill the boards. Fairness blends <strong>quality-weighted package value</strong> (co-cores near full; other keepers diminish by rank; fringe capped) with each side&rsquo;s <strong>Max Points</strong> roster-ceiling change so win-now consolidations are not auto-punished. Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless the trailing side&rsquo;s co-cores match the other side&rsquo;s core package. Player ages more than <strong>3 years</strong> apart nudge fairness toward youth (picks excluded). Late-round picks use steep round decay so they stay chips. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -944,6 +944,12 @@ const FINDER_FAIR_HARD = 0.70; /* below C- → block */
 const KEEPER_COUNT = 16;
 /* Starter-lineup FP/G swing that counts as a real need hit/help (FA uses 0.5 to crack). */
 const NEED_SOFT = 1.0;
+/* Roster Max Points (top-N ceiling) change → Trade ★ units in the letter grade.
+   Consolidations that lift a contender's ceiling (e.g. 2-for-1 star) were grading F on
+   package sum alone; Max Pts is the win-now lens and needs real weight. */
+const MAXPTS_GRADE_WEIGHT = 2.85;
+/* Flag a meaningful Max Pts swing for a trading team even without a league runaway. */
+const MAXPTS_UPGRADE_FLAG = 6;
 
 const state = {
   teams: [],
@@ -1634,6 +1640,30 @@ function maxPointsForIds(ids){
   };
 }
 
+/* Blend age-adjusted package value with each side's roster Max Pts delta.
+   Positive ceiling gains credit the receiving contender; losses debit the seller.
+   Returns blended fair totals + ratio/grade used for the letter and block bar. */
+function blendFairnessWithMaxPts(fairToA, fairToB, aDelta, bDelta){
+  const dA = Number(aDelta) || 0;
+  const dB = Number(bDelta) || 0;
+  const w = MAXPTS_GRADE_WEIGHT;
+  const blendA = Math.max(0.01, (Number(fairToA) || 0) + w * dA);
+  const blendB = Math.max(0.01, (Number(fairToB) || 0) + w * dB);
+  const high = Math.max(blendA, blendB, 0.01);
+  const low = Math.min(blendA, blendB);
+  const ratio = low / high;
+  const packageHigh = Math.max(fairToA, fairToB, 0.01);
+  const packageLow = Math.min(fairToA, fairToB);
+  const packageRatio = packageLow / packageHigh;
+  return {
+    blendA, blendB, ratio, grade: fairnessGrade(ratio),
+    packageRatio, delta: high - low,
+    maxPtsCreditA: w * dA, maxPtsCreditB: w * dB,
+    swung: Math.abs(ratio - packageRatio) >= 0.08
+      || Math.abs(dA - dB) >= MAXPTS_UPGRADE_FLAG
+  };
+}
+
 /* ---------- Fair-trade proposal (keep as many original pieces as possible) ---------- */
 
 function tradeBalance(fromA, fromB){
@@ -2045,20 +2075,11 @@ function analyze(){
   const fairToB = valueToB * (ageGap.multB || 1);
   const rawToA = packToA.raw;
   const rawToB = packToB.raw;
-  const high = Math.max(fairToA, fairToB, 0.01);
-  const low = Math.min(fairToA, fairToB);
-  const ratio = low / high;
+  const packageHigh = Math.max(fairToA, fairToB, 0.01);
+  const packageLow = Math.min(fairToA, fairToB);
+  const packageRatio = packageLow / packageHigh;
   const primaryGap = primaryGapVerdict(packToA, packToB);
-  const grade = primaryGap.hard ? 'F' : fairnessGrade(ratio);
-  const winner = fairToA === fairToB ? null
-    : (fairToA > fairToB ? aName : bName);
-  const loser = winner == null ? null : (winner === aName ? bName : aName);
-  const unfair = ratio < FINDER_FAIR_HARD || (high - low) >= 12;
   const primaryRatio = finderRatio(packToA.primary, packToB.primary);
-  const softPrimary = !unfair && !primaryGap.hard
-    && Math.max(fromA.length, fromB.length) >= 2
-    && primaryRatio < PKG_PRIMARY_SOFT
-    && Math.abs(packToA.primary - packToB.primary) >= 8;
 
   const afterA = new Set(teamA.playerIds);
   const afterB = new Set(teamB.playerIds);
@@ -2098,6 +2119,30 @@ function analyze(){
     };
   }).sort((a, b) => b.after - a.after || b.before - a.before);
 
+  const aDelta = afterMap[teamA.rosterId].total
+    - (beforeStandings.find(r => String(r.rosterId) === String(aId)) || {before:0}).before;
+  const bDelta = afterMap[teamB.rosterId].total
+    - (beforeStandings.find(r => String(r.rosterId) === String(bId)) || {before:0}).before;
+  const blend = blendFairnessWithMaxPts(fairToA, fairToB, aDelta, bDelta);
+  const ratio = blend.ratio;
+  const grade = primaryGap.hard ? 'F' : blend.grade;
+  const fairBlendA = blend.blendA;
+  const fairBlendB = blend.blendB;
+  const winner = fairBlendA === fairBlendB ? null
+    : (fairBlendA > fairBlendB ? aName : bName);
+  const loser = winner == null ? null : (winner === aName ? bName : aName);
+  const packageWinner = fairToA === fairToB ? null
+    : (fairToA > fairToB ? aName : bName);
+  const packageLoser = packageWinner == null ? null
+    : (packageWinner === aName ? bName : aName);
+  const unfair = ratio < FINDER_FAIR_HARD
+    || (blend.delta >= 16 && ratio < FINDER_FAIR_SOFT);
+  const packageUnfair = packageRatio < FINDER_FAIR_HARD || (packageHigh - packageLow) >= 12;
+  const softPrimary = !unfair && !primaryGap.hard
+    && Math.max(fromA.length, fromB.length) >= 2
+    && primaryRatio < PKG_PRIMARY_SOFT
+    && Math.abs(packToA.primary - packToB.primary) >= 8;
+
   const leader = standings[0];
   const second = standings[1];
   const gap = leader && second ? leader.after - second.after : 0;
@@ -2113,7 +2158,7 @@ function analyze(){
   const aColor = teamColor(teamA);
   const bColor = teamColor(teamB);
   const verdictCls = (unfair || primaryGap.hard) ? 'unfair' : (runaway ? 'runaway' : '');
-  let headline = 'Balanced enough on package value';
+  let headline = 'Balanced enough on package value + Max Pts';
   if (primaryGap.hard){
     headline = 'Blocked — primary assets too far apart';
   } else if (unfair && winner) headline = 'Lopsided — favors ' + winner;
@@ -2161,14 +2206,27 @@ function analyze(){
         + '.'
     });
   }
-  if (unfair && loser){
+  if (packageUnfair && packageLoser && blend.swung && !unfair){
+    flags.push({
+      cls: 'ok',
+      title: 'Max Pts offsets package',
+      text: 'Package value alone looks lopsided against ' + packageLoser
+        + ' (ratio ' + (packageRatio * 100).toFixed(0)
+        + '%), but roster Max Pts change ('
+        + aName + ' ' + (aDelta >= 0 ? '+' : '') + aDelta.toFixed(1)
+        + ', ' + bName + ' ' + (bDelta >= 0 ? '+' : '') + bDelta.toFixed(1)
+        + ') pulls the blended fairness to '
+        + (ratio * 100).toFixed(0) + '% · grade ' + grade + '.'
+    });
+  } else if (unfair && loser){
     flags.push({
       cls: 'warn',
       title: 'Super unfair',
-      text: loser + ' is giving up far more package value ('
-        + (winner === aName ? valueToA : valueToB).toFixed(1) + ' received vs '
-        + (loser === aName ? valueToA : valueToB).toFixed(1)
-        + ' quality-weighted). Ratio ' + (ratio * 100).toFixed(0) + '%.'
+      text: loser + ' is giving up far more blended value (package ★ + Max Pts × '
+        + MAXPTS_GRADE_WEIGHT + ') — '
+        + (winner === aName ? fairBlendA : fairBlendB).toFixed(1) + ' received vs '
+        + (loser === aName ? fairBlendA : fairBlendB).toFixed(1)
+        + '. Ratio ' + (ratio * 100).toFixed(0) + '%.'
     });
   }
   if (Math.abs(rawToA - rawToB) <= 6 && Math.abs(valueToA - valueToB) >= 8){
@@ -2225,11 +2283,11 @@ function analyze(){
         + '% of the primary so scrub piles cannot manufacture star value. Keeper-tier pieces still add value.'
     });
   }
-  if (!unfair){
+  if (!unfair && !packageUnfair){
     flags.push({
       cls: 'ok',
       title: 'Value check',
-      text: 'Quality-weighted package value is within a reasonable band (ratio '
+      text: 'Blended fairness (package ★ + Max Pts) is within a reasonable band (ratio '
         + (ratio * 100).toFixed(0) + '%). Grade ' + grade
         + ' · raw sums ' + rawToA.toFixed(0) + ' vs ' + rawToB.toFixed(0) + '.'
     });
@@ -2242,6 +2300,25 @@ function analyze(){
         + leader.after.toFixed(1) + ' Max Points, '
         + gap.toFixed(1) + ' ahead of ' + second.team
         + ' (was ' + beforeGap.toFixed(1) + ' before). That pulls them too far from the pack.'
+    });
+  } else if (Math.abs(aDelta) >= MAXPTS_UPGRADE_FLAG || Math.abs(bDelta) >= MAXPTS_UPGRADE_FLAG){
+    const bits = [];
+    if (Math.abs(aDelta) >= MAXPTS_UPGRADE_FLAG){
+      bits.push(aName + ' ' + (aDelta >= 0 ? '+' : '') + aDelta.toFixed(1));
+    }
+    if (Math.abs(bDelta) >= MAXPTS_UPGRADE_FLAG){
+      bits.push(bName + ' ' + (bDelta >= 0 ? '+' : '') + bDelta.toFixed(1));
+    }
+    const gainer = aDelta >= bDelta ? aName : bName;
+    const gain = Math.max(aDelta, bDelta);
+    flags.push({
+      cls: gain >= MAXPTS_UPGRADE_FLAG ? 'ok' : 'warn',
+      title: 'Max Points upgrade',
+      text: bits.join(' · ')
+        + '. Ceiling change is weighted into the letter grade (×'
+        + MAXPTS_GRADE_WEIGHT + ' Trade ★ per Max Pts)'
+        + (gain >= MAXPTS_UPGRADE_FLAG ? (' — edge to ' + gainer) : '')
+        + '.'
     });
   } else if (leader && (String(leader.rosterId) === String(aId) || String(leader.rosterId) === String(bId)) && gap > beforeGap + 2){
     flags.push({
@@ -2294,10 +2371,7 @@ function analyze(){
       + items + '</div>';
   }
 
-  const aDelta = afterMap[teamA.rosterId].total - (beforeStandings.find(r => String(r.rosterId) === String(aId)) || {before:0}).before;
-  const bDelta = afterMap[teamB.rosterId].total - (beforeStandings.find(r => String(r.rosterId) === String(bId)) || {before:0}).before;
-
-  /* League ruling: block lopsided value, primary-gap jumps without co-cores,
+  /* League ruling: block lopsided blended value, primary-gap jumps without co-cores,
      or Max Points runaways; soft imbalances → review.
      Fake-depth / need / max-for-min contract nudge Allow → Caution; they do not hard-block alone. */
   let ruling = 'allow';
@@ -2335,7 +2409,7 @@ function analyze(){
   } else if (unfair){
     ruling = 'block';
     rulingTitle = 'Do not allow';
-    rulingWhy = 'Blocked — too one-sided on quality-weighted package value'
+    rulingWhy = 'Blocked — too one-sided on blended fairness (package ★ + Max Pts)'
       + (loser ? ' against ' + loser : '')
       + ' (fairness ' + grade + ', ratio ' + (ratio * 100).toFixed(0) + '%).';
   } else if (runaway){
@@ -2412,6 +2486,12 @@ function analyze(){
     + (Math.abs(rawToB - valueToB) >= 0.5 ? (' <span style="color:var(--ink-dim)">(raw ' + rawToB.toFixed(1) + ')</span>') : '')
     + (ageGap.soft && Math.abs(fairToB - valueToB) >= 0.3
       ? (' <span style="color:var(--ink-dim)">· age-adj ' + fairToB.toFixed(1) + '</span>') : '')
+    + '</p>'
+    + '<p style="margin:6px 0 0;color:var(--ink-dim);font-size:13px">Grade blends package ★ with Max Pts change (×'
+    + MAXPTS_GRADE_WEIGHT + ') · blended '
+    + fairBlendA.toFixed(1) + ' vs ' + fairBlendB.toFixed(1)
+    + ' · ratio ' + (ratio * 100).toFixed(0) + '%'
+    + (blend.swung ? (' · package-only was ' + (packageRatio * 100).toFixed(0) + '%') : '')
     + '</p></div></div>'
     + '<div class="flags">' + flags.map(f =>
       '<div class="flag ' + f.cls + '"><strong>' + escapeHtml(f.title)
@@ -4019,7 +4099,7 @@ async function load(){
                 .map(r => r + '=' + Number(state.draftPickRoundBases[r]).toFixed(0)).join('/'))
             : '';
           status.textContent = 'Analyze a deal or use Trade Finder (2K-style packages). '
-            + 'Package grade = top asset full + capped extras · players = Lock OVR × age × injury × potential · picks = fringe × round decay'
+            + 'Letter grade = package ★ blended with Max Pts change · package = top asset full + capped extras · players = Lock OVR × age × injury × potential · picks = fringe × round decay'
             + baseBits + ' · ' + (lockPack.scored || 0)
             + ' players from ' + lockPack.statsSeason + ' (' + lockPack.weeksFound + ' game samples).';
         }
