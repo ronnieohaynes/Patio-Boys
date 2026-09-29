@@ -452,7 +452,7 @@
     <span id="progressTag">Loading&hellip;</span>
   </div>
   <p class="status" id="status">Pulling rosters, Lock OVR, and Trade stars&hellip;</p>
-  <p class="lede" id="ledeText">Pick two teams and the players each side is sending — or <strong>upload a Sleeper trade screenshot</strong> and we&rsquo;ll fill the boards. Fairness blends <strong>quality-weighted package value</strong> (co-cores near full; other keepers diminish by rank; fringe capped) with each side&rsquo;s <strong>Max Points</strong> roster-ceiling change so win-now consolidations are not auto-punished. Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless the trailing side&rsquo;s co-cores match the other side&rsquo;s core package. Player ages more than <strong>3 years</strong> apart nudge fairness toward youth (picks excluded). Late-round picks use steep round decay so they stay chips. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>. Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
+  <p class="lede" id="ledeText">Pick two teams and the players each side is sending — or <strong>upload a Sleeper trade screenshot</strong> and we&rsquo;ll fill the boards. Fairness blends <strong>quality-weighted package value</strong> (co-cores near full; other keepers diminish by rank; fringe capped) with each side&rsquo;s <strong>Max Points</strong> roster-ceiling change so win-now consolidations are not auto-punished. Best assets more than <strong>10 Trade ★</strong> apart <strong>Block</strong> unless the trailing side&rsquo;s co-cores match the other side&rsquo;s core package. Player ages more than <strong>3 years</strong> apart nudge fairness toward youth (picks excluded). Late-round picks use steep round decay so they stay chips. Asset Trade ★ is Lock OVR × age × injury × <strong>potential</strong>, then <strong>half-up to an integer</strong> (69.5→70, 79.5→80). Lineup <strong>need</strong> and <strong>max-for-min contracts</strong> can nudge Allow → Caution.</p>
 
   <div id="app" hidden>
     <div class="mode-tabs" role="tablist">
@@ -550,7 +550,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260816-shot2';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260929-starround';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','draft-pick-value.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -811,11 +811,11 @@ function dynastyValue(p){
   const inj = injuryMult(p);
   const boost = ceilingBoost(p);
   if (base == null){
-    return Math.max(0, boost * inj);
+    return roundTradeStar(Math.max(0, boost * inj));
   }
   let v = base * age + boost;
   if (ageBand(p) === 'young') v += 1;
-  return Math.max(0, v * inj);
+  return roundTradeStar(Math.max(0, v * inj));
 }
 
 function scoreStatLine(stats, scoring){
@@ -987,8 +987,8 @@ function starsHtml(n){
 }
 
 function tradeValHtml(p){
-  const score = Number(p.dynasty != null ? p.dynasty : p.tradeScore);
-  const scoreTxt = Number.isFinite(score) ? score.toFixed(1) : '—';
+  const score = assetTradeValue(p);
+  const scoreTxt = score > 0 ? String(score) : '—';
   const ovrTxt = p.lockOvr != null ? ('OVR ' + p.lockOvr) : '';
   const pot = Number(p.tradePotentialMult);
   const potTxt = Number.isFinite(pot) && pot !== 1
@@ -1018,10 +1018,17 @@ function keeperWeightAt(i){
   return last * Math.pow(0.75, i - (PKG_KEEPER_WEIGHTS.length - 1));
 }
 
+/* Half-up Trade ★ integer (69.5→70, 79.5→80). Matches LockInDist.roundTradeScore. */
+function roundTradeStar(v){
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n);
+}
+
 function assetTradeValue(p){
   if (!p) return 0;
   const v = Number(p.dynasty != null ? p.dynasty : p.tradeScore);
-  return Number.isFinite(v) ? v : 0;
+  return Number.isFinite(v) ? roundTradeStar(v) : 0;
 }
 
 /* Package grading: co-cores vs keepers vs fringe.
@@ -1030,9 +1037,10 @@ function assetTradeValue(p){
    asset (≥ PKG_CORE_FLOOR) scores on one rank schedule, so a star cannot
    erase the pieces under it: adding a piece never lowers the package, and
    subtracting one never raises it. Only true fringe (below the floor) is a
-   chip — diminishing weights + hard cap so scrub piles cannot manufacture a star. */
+   chip — diminishing weights + hard cap so scrub piles cannot manufacture a star.
+   Trade ★ is half-up rounded before these cuts, so 69.5 clears the Solid floor. */
 const PKG_CORE_RATIO = 0.82; /* ≥82% of primary → co-core candidate */
-const PKG_CORE_FLOOR = 70; /* keeper tier / co-core floor */
+const PKG_CORE_FLOOR = 70; /* keeper tier / co-core floor (Solid starter, after half-up) */
 const PKG_CORE_WEIGHTS = [1.00, 0.85, 0.70]; /* veto cores: 1st / 2nd / 3rd+ */
 const PKG_KEEPER_WEIGHTS = [1.00, 0.85, 0.70, 0.55, 0.42, 0.32, 0.24, 0.18];
 const PKG_CHIP_WEIGHTS = [0.40, 0.20, 0.10, 0.08]; /* fringe only */
@@ -2670,7 +2678,7 @@ function setMode(mode){
       + ' are <strong>co-cores</strong> (near-full Trade ★). Other keepers still add value on a diminishing rank schedule. Only fringe below '
       + PKG_CORE_FLOOR
       + ' is capped, so a scrub pile cannot manufacture a star. '
-      + 'Player Trade ★ = Lock OVR × age × injury × contract × situation × <strong>potential</strong>; picks use fringe bases × <strong>round decay</strong> × slot/quality (late rounds are chips). '
+      + 'Player Trade ★ = Lock OVR × age × injury × contract × situation × <strong>potential</strong>, half-up to an integer (69.5→70); picks use fringe bases × <strong>round decay</strong> × slot/quality (late rounds are chips). '
       + 'Keeper-seat, starter-lineup need, and max-for-min contracts can nudge Allow → Caution. '
       + 'Ends with <strong>Allow</strong>, <strong>Caution</strong>, or <strong>Block</strong>. '
       + 'Primary assets more than ' + PKG_PRIMARY_GAP

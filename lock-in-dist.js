@@ -1010,7 +1010,9 @@
     return html;
   }
 
-  /* Absolute tradeScore → stars (2K trade-finder style, half-star steps). */
+  /* Absolute tradeScore → stars (2K trade-finder style, half-star steps).
+     Scores are half-up integers first (69.5→70, 79.5→80) so tier cuts
+     match the Solid / Strong / All-Star ladder without .1 cliffs. */
   const TRADE_STAR_BANDS = [
     {min: 95, stars: 5},
     {min: 90, stars: 4.5},
@@ -1023,9 +1025,16 @@
     {min: 0, stars: 1}
   ];
 
-  function tradeStarsFromScore(score){
+  /* Half-up to nearest Trade ★ integer (positive scores; JS Math.round). */
+  function roundTradeScore(score){
     const s = Number(score);
     if (!Number.isFinite(s)) return null;
+    return Math.round(s);
+  }
+
+  function tradeStarsFromScore(score){
+    const s = roundTradeScore(score);
+    if (s == null) return null;
     for (let i = 0; i < TRADE_STAR_BANDS.length; i++){
       if (s >= TRADE_STAR_BANDS[i].min) return TRADE_STAR_BANDS[i].stars;
     }
@@ -1202,7 +1211,8 @@
     return {mult: mult, why: why, kind: kind, signal: Math.round(signal * 1000) / 1000};
   }
 
-  /* tradeScore = LockOVR × age × injury × contract × situation × potential (+1 young bump).
+  /* tradeScore = LockOVR × age × injury × contract × situation × potential (+1 young bump),
+     then half-up to an integer (69.5→70, 79.5→80) so keeper/star tiers don't cliff on tenths.
      Injury = chronic INJURY_PRONE × live Sleeper tag (tag ignored offseason). */
   function tradeScoreFromOvr(ovr, meta){
     const o = Number(ovr);
@@ -1228,7 +1238,7 @@
       : potentialTradeAdjust(Object.assign({}, info, {ageBand: band})).mult;
     let score = o * am * im * cm * sm * pm;
     if (band === 'young') score += 1;
-    return score;
+    return roundTradeScore(score);
   }
 
   /* ---- Franchise situation / offseason competition ----
@@ -2428,6 +2438,7 @@
     formatStars,
     formatStarsHtml,
     tradeStarsFromScore,
+    roundTradeScore,
     tradeScoreFromOvr,
     potentialFlashSignal,
     potentialDurabilitySignal,
