@@ -313,7 +313,8 @@
       }
     }
 
-    const tradeScore = Math.round(base * rs * ym * sm * qm * 100) / 100;
+    /* Half-up to integer Trade ★ — same ladder as player scores (69.5→70). */
+    const tradeScore = Math.round(base * rs * ym * sm * qm);
     const tradeStars = tradeStarsFromScore(tradeScore);
     const noteParts = [
       'base ' + base.toFixed(1) + ' (r' + round + ' fringe)',
