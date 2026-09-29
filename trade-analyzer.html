@@ -1666,20 +1666,49 @@ function blendFairnessWithMaxPts(fairToA, fairToB, aDelta, bDelta){
 
 /* ---------- Fair-trade proposal (keep as many original pieces as possible) ---------- */
 
-function tradeBalance(fromA, fromB){
+/* Roster Max Pts delta for a team after a two-sided player swap (picks ignored). */
+function maxPtsDeltaForTrade(team, sendAssets, recvAssets){
+  if (!team) return 0;
+  const before = maxPointsForIds(team.playerIds || []).total;
+  const afterIds = new Set((team.playerIds || []).map(String));
+  (sendAssets || []).forEach(p => {
+    if (!p || p.kind === 'pick') return;
+    afterIds.delete(String(p.id));
+  });
+  (recvAssets || []).forEach(p => {
+    if (!p || p.kind === 'pick') return;
+    afterIds.add(String(p.id));
+  });
+  return maxPointsForIds([...afterIds]).total - before;
+}
+
+/* Package ★ balance, optionally blended with Max Pts when both teams are provided
+   (same lens as the analyzer letter grade). */
+function tradeBalance(fromA, fromB, teamA, teamB){
   const packToA = packageValueParts(fromB);
   const packToB = packageValueParts(fromA);
   const ageToA = packageAgeParts(fromB);
   const ageToB = packageAgeParts(fromA);
   const ageGap = ageGapVerdict(ageToA, ageToB);
-  const fairToA = packToA.effective * (ageGap.multA || 1);
-  const fairToB = packToB.effective * (ageGap.multB || 1);
-  const high = Math.max(fairToA, fairToB, 0.01);
-  const low = Math.min(fairToA, fairToB);
-  const ratio = low / high;
-  const delta = high - low;
+  const packageFairA = packToA.effective * (ageGap.multA || 1);
+  const packageFairB = packToB.effective * (ageGap.multB || 1);
+  let aDelta = 0;
+  let bDelta = 0;
+  let blend = null;
+  if (teamA && teamB){
+    aDelta = maxPtsDeltaForTrade(teamA, fromA, fromB);
+    bDelta = maxPtsDeltaForTrade(teamB, fromB, fromA);
+    blend = blendFairnessWithMaxPts(packageFairA, packageFairB, aDelta, bDelta);
+  }
+  const fairToA = blend ? blend.blendA : packageFairA;
+  const fairToB = blend ? blend.blendB : packageFairB;
+  const ratio = blend ? blend.ratio
+    : (Math.min(fairToA, fairToB) / Math.max(fairToA, fairToB, 0.01));
+  const delta = Math.abs(fairToA - fairToB);
   const primaryGap = primaryGapVerdict(packToA, packToB);
-  const unfair = ratio < FINDER_FAIR_HARD || delta >= 12;
+  /* Match analyze(): absolute delta alone does not Block a healthy ratio. */
+  const unfair = ratio < FINDER_FAIR_HARD
+    || (delta >= 16 && ratio < FINDER_FAIR_SOFT);
   const softEdge = !unfair && !primaryGap.hard
     && (ratio < FINDER_FAIR_SOFT || delta >= 8);
   let tier = 'allow';
@@ -1687,9 +1716,11 @@ function tradeBalance(fromA, fromB){
   else if (softEdge || primaryGap.soft || ageGap.soft) tier = 'caution';
   return {
     packToA, packToB, ageGap,
+    packageFairA, packageFairB,
     fairToA, fairToB, ratio, delta,
     grade: fairnessGrade(ratio),
-    primaryGap, unfair, softEdge, tier
+    primaryGap, unfair, softEdge, tier,
+    aDelta, bDelta, blended: !!blend
   };
 }
 
@@ -1776,7 +1807,7 @@ function scoreFairProposal(cand){
 }
 
 function proposeFairTrade(teamA, teamB, fromA, fromB){
-  const origBal = tradeBalance(fromA, fromB);
+  const origBal = tradeBalance(fromA, fromB, teamA, teamB);
   if (origBal.tier === 'allow') return null;
 
   const aOver = origBal.fairToA > origBal.fairToB + 0.05;
@@ -1787,8 +1818,10 @@ function proposeFairTrade(teamA, teamB, fromA, fromB){
   function consider(nextA, nextB, note){
     if (!nextA.length && !nextB.length) return;
     if (assetsEqualSets(nextA, fromA) && assetsEqualSets(nextB, fromB)) return;
-    const balance = tradeBalance(nextA, nextB);
+    const balance = tradeBalance(nextA, nextB, teamA, teamB);
     const overlap = proposalOverlap(fromA, fromB, nextA, nextB);
+    /* Never prefer a worse blended grade than the original deal. */
+    if (balance.ratio + 0.005 < origBal.ratio && balance.tier !== 'allow') return;
     const cand = {
       fromA: nextA.slice(),
       fromB: nextB.slice(),
@@ -1900,9 +1933,8 @@ function proposeFairTrade(teamA, teamB, fromA, fromB){
     tryReplaceOnUnder('B');
   }
 
-  /* Prefer non-block; among those, best score. */
-  const viable = candidates.filter(c => c.balance.tier !== 'block');
-  const pool = viable.length ? viable : candidates;
+  /* Only non-blocking tweaks count as a "fairer deal". Never surface an F/Block fix. */
+  const pool = candidates.filter(c => c.balance.tier !== 'block');
   if (!pool.length) return null;
   pool.sort((a, b) => b.score - a.score
     || b.overlap.preserved - a.overlap.preserved
@@ -1910,8 +1942,8 @@ function proposeFairTrade(teamA, teamB, fromA, fromB){
     || b.balance.ratio - a.balance.ratio);
 
   const best = pool[0];
-  if (best.balance.tier === 'block' && best.balance.ratio <= origBal.ratio + 0.02){
-    /* No meaningful improvement */
+  if (best.balance.ratio + 0.01 < origBal.ratio){
+    /* No meaningful improvement on the same blended lens as the letter grade */
     return null;
   }
 
@@ -1921,7 +1953,6 @@ function proposeFairTrade(teamA, teamB, fromA, fromB){
   ]);
   for (const c of pool){
     if (c === best) continue;
-    if (c.balance.tier === 'block') continue;
     const key = c.fromA.map(p => p.id).sort().join('+') + '|' + c.fromB.map(p => p.id).sort().join('+');
     if (seen.has(key)) continue;
     seen.add(key);
@@ -1996,14 +2027,20 @@ function renderFairProposalHtml(pack, teamA, teamB){
     + '<p>Keeps <strong>' + ov.preserved + ' of ' + ov.origCount
     + '</strong> original pieces'
     + (best.note ? (' · ' + escapeHtml(best.note)) : '')
-    + '. Target: balanced package value without a Block.</p></div>'
+    + '. Target: non-blocking fairness on the same package ★ + Max Pts lens as the letter grade.</p></div>'
     + '<button type="button" class="ff-btn" id="applyFairProposal">Apply to boards</button>'
     + '</div><div class="ff-body">'
     + '<p class="ff-meta">Proposed fairness <span class="hi">' + escapeHtml(bal.grade)
     + '</span> · ratio ' + (bal.ratio * 100).toFixed(0) + '% · ruling '
     + escapeHtml(tierLabel)
-    + ' · ' + teamA.displayName + ' pkg ' + bal.fairToA.toFixed(1)
-    + ' / ' + teamB.displayName + ' pkg ' + bal.fairToB.toFixed(1) + '</p>'
+    + ' · blended ' + bal.fairToA.toFixed(1)
+    + ' / ' + bal.fairToB.toFixed(1)
+    + (bal.blended
+      ? (' · Max Pts '
+        + teamA.displayName + ' ' + (bal.aDelta >= 0 ? '+' : '') + bal.aDelta.toFixed(1)
+        + ', ' + teamB.displayName + ' ' + (bal.bDelta >= 0 ? '+' : '') + bal.bDelta.toFixed(1))
+      : '')
+    + '</p>'
     + '<div class="ff-sides">'
     + sideBlock(teamA, aColor, best.fromA)
     + sideBlock(teamB, bColor, best.fromB)
