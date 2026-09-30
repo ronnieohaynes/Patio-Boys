@@ -604,7 +604,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260929-starround';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260930-movesneed';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -2898,8 +2898,10 @@ function seriousInjuryStatus(status){
     || s.indexOf('OUT') === 0 || s === 'INJURY_RESERVE';
 }
 
-/* Off-chart players (not 1st/2nd/taxi) → ranked drop candidates (#1 = drop first). */
-/* ≥30 FP less than 20% of weeks → can't stream them; prime drop signal. */
+/* Drop candidates (#1 = drop first). Off-chart is the usual pool; when over
+   the active cap we also score on-chart Top-8 bloat so Lock alone can't hide
+   a blocked / surplus piece (e.g. Ayton behind Sarr). */
+/* ≥30 FP less than 20% of weeks → soft stream signal (not the whole story). */
 const DROP_HIT30_MARK = 30;
 const DROP_HIT30_FLOOR = 0.20;
 const DROP_HIT30_MIN_N = 5;
@@ -2907,6 +2909,45 @@ const DROP_FPM_POOR = (window.LockInDist && LockInDist.FPM_POOR) || 0.75;
 const DROP_FPM_DEAD = (window.LockInDist && LockInDist.FPM_DEAD) || 0.55;
 const DROP_FPM_SOLID = (window.LockInDist && LockInDist.FPM_SOLID) || 0.85;
 const DROP_FPM_ELITE = (window.LockInDist && LockInDist.FPM_ELITE) || 1.00;
+const DROP_PROJ_FLOOR = 22; /* below this, starter-ish FP/G is missing */
+
+function movesPosBuckets(positions){
+  const set = new Set((positions || []).map(String));
+  const out = [];
+  if (set.has('PG') || set.has('SG') || set.has('G')) out.push('G');
+  if (set.has('SF') || set.has('PF') || set.has('F')) out.push('F');
+  if (set.has('C')) out.push('C');
+  return out;
+}
+
+function movesSlotDemand(slots){
+  const d = {G: 0, F: 0, C: 0, UTIL: 0};
+  (slots || []).forEach(s => {
+    if (s === 'PG' || s === 'SG' || s === 'G') d.G += 1;
+    else if (s === 'SF' || s === 'PF' || s === 'F') d.F += 1;
+    else if (s === 'C') d.C += 1;
+    else if (s === 'UTIL') d.UTIL += 1;
+  });
+  return d;
+}
+
+function movesRoleSurplus(player, rosterRecs, slots){
+  const buckets = movesPosBuckets(player && player.positions);
+  if (!buckets.length) return 0;
+  const demand = movesSlotDemand(slots);
+  const counts = {G: 0, F: 0, C: 0};
+  (rosterRecs || []).forEach(p => {
+    movesPosBuckets(p && p.positions).forEach(b => { counts[b] += 1; });
+  });
+  const n = Math.max(1, (rosterRecs || []).length);
+  let best = 0;
+  buckets.forEach(b => {
+    const utilShare = demand.UTIL * (counts[b] / n);
+    const need = demand[b] + utilShare + 1;
+    best = Math.max(best, counts[b] - need);
+  });
+  return Math.max(0, best);
+}
 
 function readPlayerFpPerMin(distOrPid){
   const d = (distOrPid && typeof distOrPid === 'object')
@@ -2939,6 +2980,10 @@ function scoreCutsForTeam(t, slots, opt){
   const depth = buildDepthChart(t) || {};
   const chartIds = depth.chartIds || new Set();
   const offChart = (depth.offChart || []).slice();
+  const rosterRecs = regularIds.map(pid => {
+    const rec = needsPlayerRecord(pid);
+    return Object.assign({}, rec, {id: String(pid)});
+  });
 
   /* Protect lineup with Lock OVR — season proj benches injured stars (e.g. Tatum DTD). */
   let starterOpt = opt;
@@ -2990,6 +3035,13 @@ function scoreCutsForTeam(t, slots, opt){
     const fpmDead = fpm != null && fpm < DROP_FPM_DEAD;
     const fpmSolid = fpm != null && fpm >= DROP_FPM_SOLID;
     const fpmElite = fpm != null && fpm >= DROP_FPM_ELITE;
+    const proj = Number(rec.metric);
+    const projLag = Number.isFinite(proj) ? Math.max(0, DROP_PROJ_FLOOR - proj) : 0;
+    const roleSurplus = movesRoleSurplus(
+      {positions: rec.positions || []},
+      rosterRecs,
+      slots
+    );
     let cutScore = Math.max(0, 95 - tradeValue);
     if (!isStarter) cutScore += 45;
     else cutScore -= 55;
@@ -2999,21 +3051,31 @@ function scoreCutsForTeam(t, slots, opt){
     if (starKeep) cutScore -= 120;
     /* Blocked paths are not taxi stashes — don't protect them. */
     if (dev.stashWorthy && !pathBlocked) cutScore -= 25;
-    if (nbaDeal) cutScore -= 60;
-    /* Off the depth chart is the drop pool — bump vs anyone still charted. */
-    if (!chartIds.has(id)) cutScore += 30;
-    /* Soft floor: if they rarely clear 30 FP, you can't start them most weeks. */
-    if (hit30Soft && !starKeep) cutScore += 55;
+    /* Soft payday keep — not a hard shield when the role is dead on this roster. */
+    if (nbaDeal) cutScore -= 16;
+    /* Off-chart bump — smaller so Top-8 Lock bloat can still lose. */
+    if (!chartIds.has(id)) cutScore += 12;
+    /* Soft floor / efficiency — signals, not the whole ranking. */
+    if (hit30Soft && !starKeep) cutScore += 22;
     else if (hit30 != null && hitN >= DROP_HIT30_MIN_N && hit30 >= DROP_HIT30_FLOOR){
-      cutScore -= Math.min(18, (hit30 - DROP_HIT30_FLOOR) * 35);
+      cutScore -= Math.min(12, (hit30 - DROP_HIT30_FLOOR) * 25);
     }
-    /* Empty minutes — low FP/min means the role isn't producing.
-       Soft floor 0.75: only bites once they're already drop fodder (off chart, etc.). */
-    if (fpmDead && !starKeep) cutScore += 42;
-    else if (fpmPoor && !starKeep) cutScore += 28;
-    else if (fpmElite) cutScore -= 22;
-    else if (fpmSolid) cutScore -= 10;
-    /* No NBA path to value ⇒ why roster them? */
+    if (fpmDead && !starKeep) cutScore += 24;
+    else if (fpmPoor && !starKeep) cutScore += 14;
+    else if (fpmElite) cutScore -= 18;
+    else if (fpmSolid) cutScore -= 8;
+    /* Dynasty lens: your need for the role + their NBA path + live proj. */
+    if (!starKeep){
+      cutScore += Math.min(32, roleSurplus * 8);
+      cutScore += projLag * 6;
+      if (Number.isFinite(sitMult) && sitMult < 1){
+        cutScore += (1 - sitMult) * 90;
+      }
+      /* Crowded NBA role while you're already deep there = cut bait. */
+      if (Number.isFinite(sitMult) && sitMult < 0.98 && roleSurplus >= 2){
+        cutScore += 34;
+      }
+    }
     if (pathBlocked && !starKeep) cutScore += 48;
     if (pathDead && !starKeep) cutScore += 18;
     return {
@@ -3045,48 +3107,53 @@ function scoreCutsForTeam(t, slots, opt){
       situationNote: sitNote,
       pathBlocked,
       pathDead,
+      roleSurplus,
+      projLag,
       cutScore,
       onChart: chartIds.has(id)
     };
   }
 
-  const dropPool = (offChart.length ? offChart : []).map(scoreDropCandidate);
-  /* If chart somehow covered everyone but we're over, fall back to non-star regulars. */
-  let pool = dropPool;
-  if (!pool.length && over > 0){
-    pool = regularIds
-      .filter(id => !starterIds.has(String(id)))
-      .map(id => {
-        const rec = needsPlayerRecord(id);
-        const d = lockRow(id);
-        return scoreDropCandidate(Object.assign({}, rec, {
-          lockOvr: d && d.lockOvr,
-          tradeStars: d && d.tradeStars,
-          canTaxi: false,
-          taxiDev: null
-        }));
-      });
+  function scoreRegularId(id){
+    const rec = needsPlayerRecord(id);
+    const d = lockRow(id);
+    const fromDepth = (depth.records || []).find(r => String(r.id) === String(id));
+    return scoreDropCandidate(Object.assign({}, rec, fromDepth || {}, {
+      id: String(id),
+      lockOvr: (fromDepth && fromDepth.lockOvr != null) ? fromDepth.lockOvr
+        : (d && d.lockOvr),
+      tradeStars: (fromDepth && fromDepth.tradeStars != null) ? fromDepth.tradeStars
+        : (d && d.tradeStars),
+      canTaxi: fromDepth ? !!fromDepth.canTaxi : false,
+      taxiDev: fromDepth ? fromDepth.taxiDev : null
+    }));
   }
 
+  let pool = (offChart.length ? offChart : []).map(scoreDropCandidate);
+  /* Over active cap: also score non-starter Top-8 / charted pieces so Lock
+     can't park a surplus/blocked player safely above the cut line. */
+  if (over > 0){
+    const seen = new Set(pool.map(c => String(c.id)));
+    regularIds.forEach(id => {
+      if (seen.has(String(id))) return;
+      if (starterIds.has(String(id))) return;
+      const c = scoreRegularId(id);
+      if (c && !c.starKeep){
+        pool.push(c);
+        seen.add(String(id));
+      }
+    });
+  } else if (!pool.length){
+    pool = regularIds
+      .filter(id => !starterIds.has(String(id)))
+      .map(scoreRegularId);
+  }
+
+  /* Rank by cutScore (need + situation + talent). Stars always last. */
   pool.sort((a, b) => {
-    const ap = a.nbaDeal ? 1 : 0;
-    const bp = b.nbaDeal ? 1 : 0;
-    if (ap !== bp) return ap - bp;
     const as = a.starKeep ? 1 : 0;
     const bs = b.starKeep ? 1 : 0;
     if (as !== bs) return as - bs;
-    /* No path to value ahead of ordinary fodder. */
-    const ab = a.pathBlocked ? 0 : 1;
-    const bb = b.pathBlocked ? 0 : 1;
-    if (ab !== bb) return ab - bb;
-    /* Soft ≥30 rate first among unprotected fodder. */
-    const ah = a.hit30Soft ? 0 : 1;
-    const bh = b.hit30Soft ? 0 : 1;
-    if (ah !== bh) return ah - bh;
-    /* Empty FP/min next — poor rate is hard to start. */
-    const af = a.fpmDead ? 0 : (a.fpmPoor ? 1 : 2);
-    const bf = b.fpmDead ? 0 : (b.fpmPoor ? 1 : 2);
-    if (af !== bf) return af - bf;
     return b.cutScore - a.cutScore
       || a.tradeValue - b.tradeValue
       || String(a.name).localeCompare(String(b.name));
@@ -3102,11 +3169,19 @@ function scoreCutsForTeam(t, slots, opt){
     action: 'Drop',
     detail: (over > 0 && i < over
       ? ('Need ' + over + ' cut' + (over === 1 ? '' : 's') + ' · drop #' + (i + 1) + ' first')
-      : ('Off depth chart · drop #' + (i + 1)))
+      : (c.onChart
+        ? ('Charted but surplus · drop #' + (i + 1))
+        : ('Off depth chart · drop #' + (i + 1))))
       + (c.pathBlocked
         ? (' · no clear path to value'
           + (c.situationNote ? (' (' + c.situationNote + ')') : ''))
+        : (c.situationNote && Number(c.situationMult) < 0.98
+          ? (' · ' + c.situationNote)
+          : ''))
+      + (c.projLag >= 2
+        ? (' · proj ' + (c.metric != null ? Number(c.metric).toFixed(1) : '—') + ' lags role')
         : '')
+      + (c.roleSurplus >= 2 ? (' · deep at ' + (c.pos || 'role')) : '')
       + (c.hit30Soft
         ? (' · hits ≥' + DROP_HIT30_MARK + ' only '
           + Math.round((c.hit30 || 0) * 100) + '% of weeks — soft floor')
