@@ -221,7 +221,7 @@
 
     <div class="report-head">
       <h1 id="teamTitle">Targets</h1>
-      <p id="teamSub">Top 3 by Lock · drop by need + NBA situation · depth fit</p>
+      <p id="teamSub">Top 3 by Lock · taxi stash / drop · depth fit</p>
     </div>
     <div class="fit-grid" id="fitGrid"></div>
 
@@ -248,7 +248,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260930-dropneed';
+  var v = new URLSearchParams(location.search).get('nocache') || '20260930-falock';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -459,104 +459,15 @@ function isFaStarKeep(player){
   return !!(player && player.lockOvr != null && Number(player.lockOvr) >= FA_STAR_LOCK);
 }
 
-/* Dynasty drop lens: own need for the role + NBA situation + talent.
-   Lock OVR alone is not enough (e.g. Ayton OVR 70 behind Sarr vs Vassell 67). */
-function faPosBuckets(positions){
-  const set = new Set((positions || []).map(String));
-  const out = [];
-  if (set.has('PG') || set.has('SG') || set.has('G')) out.push('G');
-  if (set.has('SF') || set.has('PF') || set.has('F')) out.push('F');
-  if (set.has('C')) out.push('C');
-  return out;
-}
-
-function faSlotDemand(slots){
-  const d = {G: 0, F: 0, C: 0, UTIL: 0};
-  (slots || []).forEach(s => {
-    if (s === 'PG' || s === 'SG' || s === 'G') d.G += 1;
-    else if (s === 'SF' || s === 'PF' || s === 'F') d.F += 1;
-    else if (s === 'C') d.C += 1;
-    else if (s === 'UTIL') d.UTIL += 1;
-  });
-  return d;
-}
-
-function faBucketCounts(roster){
-  const counts = {G: 0, F: 0, C: 0};
-  (roster || []).forEach(p => {
-    faPosBuckets(p && p.positions).forEach(b => { counts[b] += 1; });
-  });
-  return counts;
-}
-
-/* How oversupplied the roster is at this player's buckets (0 = needed). */
-function faRoleSurplus(player, roster, slots){
-  const buckets = faPosBuckets(player && player.positions);
-  if (!buckets.length) return 0;
-  const demand = faSlotDemand(slots);
-  const counts = faBucketCounts(roster);
-  const n = Math.max(1, (roster || []).length);
-  let best = 0;
-  buckets.forEach(b => {
-    const utilShare = demand.UTIL * (counts[b] / n);
-    const need = demand[b] + utilShare + 1; /* starter(s) + flex share + one backup */
-    best = Math.max(best, counts[b] - need);
-  });
-  return Math.max(0, best);
-}
-
-function faSituationDropPenalty(player){
-  if (!player) return 0;
-  const team = String(player.nbaTeam || '').toUpperCase();
-  if (!team || team === 'FA' || team === 'NONE') return 14;
-  const sm = Number(player.situationMult);
-  if (!Number.isFinite(sm)) return 0;
-  /* 1.00 → 0 · 0.95 → 5 · 0.90 → 10 · 0.80 → 20 */
-  return Math.max(0, (1 - sm) * 100);
-}
-
-/* Talent to keep: Lock + Trade ★, haircut when proj lags (blocked role). */
-function faTalentKeep(player){
-  const lock = depthRankValue(player);
-  const trade = Number(player && player.tradeScore);
-  const proj = Number(player && player.metric);
-  let keep = Number.isFinite(lock) ? lock : 0;
-  if (Number.isFinite(trade)) keep = 0.55 * keep + 0.45 * trade;
-  if (Number.isFinite(proj)){
-    /* Starter-ish floor ~22 FP/G in this scoring; soft pull below that. */
-    const lag = Math.max(0, 22 - proj);
-    keep -= lag * 0.85;
-  }
-  return keep;
-}
-
-/* Higher = more droppable for THIS roster / optional FA being added. */
-function faDropPriority(player, roster, opts){
-  const options = opts || {};
-  if (!player) return -Infinity;
-  let prio = 100 - faTalentKeep(player);
-  prio += faSituationDropPenalty(player);
-  const surplus = faRoleSurplus(player, roster, options.slots);
-  prio += Math.min(18, surplus * 4.5);
-  const cand = options.candidate;
-  if (cand){
-    const mine = new Set(faPosBuckets(player.positions));
-    const theirs = faPosBuckets(cand.positions);
-    const overlap = theirs.some(b => mine.has(b));
-    if (overlap && surplus >= 1) prio += 6 + Math.min(8, surplus * 2);
-  }
-  if (recentNbaDeal(player)) prio -= 6; /* soft — payday ≠ automatic keep */
-  return prio;
-}
-
-function weakestRostered(roster, opts){
+function weakestRostered(roster){
   if (!roster || !roster.length) return null;
-  const options = opts || {};
+  /* Prefer dropping low-value players who were not just paid by an NBA team. */
   const ranked = roster.slice().sort((a, b) => {
-    const dp = faDropPriority(b, roster, options) - faDropPriority(a, roster, options);
-    if (Math.abs(dp) > 1e-9) return dp;
+    const ap = recentNbaDeal(a) ? 1 : 0;
+    const bp = recentNbaDeal(b) ? 1 : 0;
+    if (ap !== bp) return ap - bp;
     return depthRankValue(a) - depthRankValue(b)
-      || String(a.name || '').localeCompare(String(b.name || ''));
+      || String(a.name).localeCompare(String(b.name));
   });
   const fodder = ranked.filter(p => !isFaStarKeep(p));
   return (fodder.length ? fodder : ranked)[0];
@@ -696,11 +607,9 @@ function scoreAgentsForTeam(team){
   const devCap = teamDevCapacity(team);
   const targetOvr = (window.TeamNeedsModel && TeamNeedsModel.TAXI_ROSTER_OVR) || 75;
 
-  const dropOptsBase = {slots: state.slots};
-
   if (!window.TeamNeedsModel || !state.slots.length){
     return state.agents.map(a => {
-      const weak = weakestRostered(regularPlayers, Object.assign({}, dropOptsBase, {candidate: a}));
+      const weak = weakestRostered(regularPlayers);
       const edge = depthRankValue(a) - (weak ? depthRankValue(weak) : 0);
       const gate = faTaxiStashGate(a, taxiYears, taxiOpen, devCap);
       const faFpm = faFpPerMin(a);
@@ -761,10 +670,10 @@ function scoreAgentsForTeam(team){
   }
 
   const opt = TeamNeedsModel.optimize(roster, state.slots);
+  const weak = weakestRostered(regularPlayers);
+  const weakVal = weak ? depthRankValue(weak) : 0;
 
   return state.agents.map(a => {
-    const weak = weakestRostered(regularPlayers, Object.assign({}, dropOptsBase, {candidate: a}));
-    const weakVal = weak ? depthRankValue(weak) : 0;
     const fit = TeamNeedsModel.candidateGain(a, opt);
     const depthChart = buildFaDepthChart(roster.concat([a]), state.slots);
     const depthFit = findDepthFit(depthChart, a.id);
@@ -806,11 +715,8 @@ function scoreAgentsForTeam(team){
     }
 
     const dropDeal = drop ? recentNbaDeal(drop) : null;
-    const dropSitBad = !!(drop && faSituationDropPenalty(drop) >= 5);
-    const dropSurplus = drop ? faRoleSurplus(drop, regularPlayers, state.slots) : 0;
-    if (shouldAdd && dropDeal && !cracksStarters && !fpmUpgrade && !dropSitBad && dropSurplus < 2){
-      /* Skip dumping a fresh NBA payday for fringe FA — unless NBA role is
-         crowded / roster is already deep at that spot. */
+    if (shouldAdd && dropDeal && !cracksStarters && !fpmUpgrade){
+      /* Don't recommend dumping a recently paid NBA deal for a fringe FA. */
       shouldAdd = false;
       drop = null;
     }
@@ -1016,7 +922,7 @@ function render(){
   const color = TEAM_COLORS[team.team] || 'var(--gold)';
   document.getElementById('teamTitle').textContent = team.team + (team.team === MY_TEAM ? ' (you)' : '');
   document.getElementById('teamSub').textContent =
-    'Top 3 by Lock · drop by need + NBA situation · depth-chart fit';
+    'Top 3 by Lock · who to drop · depth-chart fit';
 
   document.querySelectorAll('.team-chip').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.team === team.team);
@@ -1324,8 +1230,7 @@ async function load(){
     status.classList.remove('error');
     status.textContent = 'Add / pass with taxi stash (players with <'
       + ((state.taxiYears != null ? state.taxiYears : 2) + 1)
-      + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots). Drop targets weigh '
-      + 'your roster need at their role, their NBA situation, and talent (not Lock alone). '
+      + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots) or Lock-ranked drop target (off depth chart). '
       + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR / Trade \u2605'
       + (state.lockStatsSeason ? ' (' + state.lockStatsSeason + ' smash)' : '')
       + '.';
