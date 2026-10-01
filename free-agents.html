@@ -248,7 +248,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260930-falock';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261001-bench10';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -334,8 +334,8 @@ const ADD_PROJ_EDGE = 0.5;
 const FA_FPM_ELITE = (window.LockInDist && LockInDist.FPM_ELITE) || 1.00;
 const FA_FPM_SOLID = (window.LockInDist && LockInDist.FPM_SOLID) || 0.85;
 const FA_FPM_EDGE = (window.LockInDist && LockInDist.FPM_EDGE) || 0.08;
-const STRING_LABELS = ['1st string', 'Top 8'];
-const FA_DEPTH_TOP8 = 8;
+const STRING_LABELS = ['1st string', 'Bench'];
+const FA_DEPTH_BENCH = 10;
 
 function faFpPerMin(rec){
   if (!rec) return null;
@@ -362,7 +362,7 @@ function depthRankValue(rec){
   return -1;
 }
 
-/* Align with Team Intel: 1st string starters + next Top 8 overall. */
+/* Align with Team Intel: 1st string starters + next Bench by projected FP/G. */
 function buildFaDepthChart(players, slots){
   if (!window.TeamNeedsModel || !slots || !slots.length) return null;
   const seenPid = new Set();
@@ -409,13 +409,18 @@ function buildFaDepthChart(players, slots){
     row.starter = pick;
     claimed.add(String(pick.id));
   });
-  const top8 = records
+  function benchProjRank(rec){
+    if (rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
+    if (rec.rankVal != null && Number.isFinite(Number(rec.rankVal))) return Number(rec.rankVal) * 0.25;
+    return -1;
+  }
+  const bench = records
     .filter(r => !claimed.has(String(r.id)))
-    .sort((a, b) => b.rankVal - a.rankVal
+    .sort((a, b) => benchProjRank(b) - benchProjRank(a)
       || String(a.name).localeCompare(String(b.name)))
-    .slice(0, FA_DEPTH_TOP8);
-  top8.forEach(p => claimed.add(String(p.id)));
-  return {rows, top8, slots, chartIds: claimed};
+    .slice(0, FA_DEPTH_BENCH);
+  bench.forEach(p => claimed.add(String(p.id)));
+  return {rows, bench, top8: bench, slots, chartIds: claimed};
 }
 
 function findDepthFit(chart, playerId){
@@ -432,15 +437,15 @@ function findDepthFit(chart, playerId){
       };
     }
   }
-  const top8 = chart.top8 || [];
-  for (let i = 0; i < top8.length; i++){
-    const p = top8[i];
+  const bench = chart.bench || chart.top8 || [];
+  for (let i = 0; i < bench.length; i++){
+    const p = bench[i];
     if (p && String(p.id) === pid){
       return {
         stringIdx: 1,
-        stringLabel: 'Top 8',
-        slot: 'TOP8',
-        label: 'Top 8 #' + (i + 1)
+        stringLabel: 'Bench',
+        slot: 'BENCH',
+        label: 'Bench #' + (i + 1)
       };
     }
   }
@@ -770,7 +775,7 @@ function scoreAgentsForTeam(team){
     } else if (depthFit && depthFit.stringIdx === 1 && projEdge > 0 && !shouldAdd){
       detail = weak
         ? ('Only if cutting ' + weak.name)
-        : 'Fringe Top 8 depth';
+        : 'Fringe Bench depth';
     } else if (fit.slot && fit.gain > 0.05){
       detail = 'Slight ' + fit.slot + ' edge — not enough to add';
     } else if (fpmElite){

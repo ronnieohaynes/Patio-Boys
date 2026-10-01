@@ -484,8 +484,15 @@
   table.depth td.slot-taxi{
     background:color-mix(in srgb, var(--green) 8%, transparent);
   }
-  table.depth td.slot-top8{
-    background:color-mix(in srgb, var(--gold) 6%, transparent);
+  table.depth td.slot-bench{
+    background:color-mix(in srgb, var(--ink-dim) 8%, transparent);
+  }
+  /* Bottom 3 bench (lowest proj) — light cut cue */
+  table.depth td.slot-bench.slot-bench-cut{
+    background:color-mix(in srgb, var(--coral) 14%, transparent);
+  }
+  table.depth td.slot-bench.slot-bench-cut .slot-name{
+    color:color-mix(in srgb, var(--coral) 55%, var(--ink));
   }
 
   /* trade intel */
@@ -604,7 +611,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20260930-movesneed';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261001-bench10';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -2117,7 +2124,8 @@ function contractCellHtml(pid){
     + escapeHtml(c.label) + '</td>';
 }
 
-const DEPTH_TOP8 = 8;
+const DEPTH_BENCH = 10; /* active bench column — sorted by projected FP/G */
+const DEPTH_BENCH_CUT = 3; /* lowest-proj bench slots get a light cut cue */
 const DEPTH_TAXI_SPOTS = 2;
 /* Situation below this ⇒ no clear path — demote off chart / don't stash. */
 const SIT_PATH_BLOCKED = 0.90;
@@ -2157,7 +2165,7 @@ function depthRankValue(rec){
   const sit = Number(rec.situationMult);
   if (!Number.isFinite(sit) || sit >= 0.98) return base;
   /* Lock already blends ~45% of situation; apply the rest so blocked paths
-     don't keep Top 8 / taxi spots when there's no route to value. */
+     don't keep bench / taxi spots when there's no route to value. */
   let hold = base * (0.50 + 0.50 * Math.max(0.55, sit));
   if (isPathDead(rec)) hold = Math.min(hold, 54);
   else if (isPathBlocked(rec)) hold = Math.min(hold, 62);
@@ -2166,9 +2174,13 @@ function depthRankValue(rec){
 
 function depthCellHtml(player, opts){
   const options = opts || {};
-  const extra = options.taxi ? ' slot-taxi' : (options.top8 ? ' slot-top8' : '');
+  const clsParts = [];
+  if (options.taxi) clsParts.push('slot-taxi');
+  if (options.bench) clsParts.push('slot-bench');
+  if (options.benchCut) clsParts.push('slot-bench-cut');
+  const cls = clsParts.join(' ');
   if (!player){
-    return '<td class="slot-empty' + extra + '">—</td>';
+    return '<td class="slot-empty' + (cls ? ' ' + cls : '') + '">—</td>';
   }
   const stars = (window.LockInDist && LockInDist.formatStarsHtml && player.tradeStars != null)
     ? LockInDist.formatStarsHtml(player.tradeStars, {className: 'trade-stars'})
@@ -2180,7 +2192,6 @@ function depthCellHtml(player, opts){
     ? '<span>' + Number(player.metric).toFixed(1) + ' proj</span>'
     : '';
   const meta = [ovr, proj].filter(Boolean).join('<span style="opacity:.35"> · </span>');
-  const cls = options.taxi ? 'slot-taxi' : (options.top8 ? 'slot-top8' : '');
   return '<td' + (cls ? ' class="' + cls + '"' : '') + '>'
     + '<span class="slot-name">' + escapeHtml(player.name) + '</span>'
     + (meta ? '<span class="slot-meta">' + meta + '</span>' : '')
@@ -2337,24 +2348,24 @@ function buildDepthChart(team){
       row.manual = true;
       used.add(String(rec.id));
     });
-    /* Rebuild claimed for Top 8 / taxi from draft starters. */
+    /* Rebuild claimed for bench / taxi from draft starters. */
     claimed.clear();
     rows.forEach(row => {
       if (row.starter) claimed.add(String(row.starter.id));
     });
   }
-  /* Top 8: next best remaining by Lock OVR only (overall, not position-tied). */
-  function top8Rank(rec){
-    if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr);
+  /* Bench: next DEPTH_BENCH remaining, sorted by projected FP/G (high → low). */
+  function benchProjRank(rec){
     if (rec.metric != null && Number.isFinite(Number(rec.metric))) return Number(rec.metric);
+    if (rec.lockOvr != null && Number.isFinite(Number(rec.lockOvr))) return Number(rec.lockOvr) * 0.25;
     return -1;
   }
-  const top8 = records
+  const bench = records
     .filter(r => !claimed.has(String(r.id)))
-    .sort((a, b) => top8Rank(b) - top8Rank(a)
+    .sort((a, b) => benchProjRank(b) - benchProjRank(a)
       || String(a.name).localeCompare(String(b.name)))
-    .slice(0, DEPTH_TOP8);
-  top8.forEach(p => claimed.add(String(p.id)));
+    .slice(0, DEPTH_BENCH);
+  bench.forEach(p => claimed.add(String(p.id)));
 
   /* Taxi column: 2 league spots — developmental stashes with a real path. */
   const remaining = records.filter(r => !claimed.has(String(r.id)));
@@ -2394,8 +2405,11 @@ function buildDepthChart(team){
 
   return {
     rows,
-    top8,
-    top8Spots: DEPTH_TOP8,
+    bench,
+    benchSpots: DEPTH_BENCH,
+    /* Aliases — older call sites / Moves copy */
+    top8: bench,
+    top8Spots: DEPTH_BENCH,
     taxi,
     taxiSpots: taxiSpotCap,
     chartIds: claimed,
@@ -2518,27 +2532,32 @@ function renderDepthChart(t){
 
   const editing = !!state.lineupEdit
     && String(state.lineupEditRosterId) === String(t.rosterId);
-  const top8N = (pack.top8 || []).length;
+  const benchList = pack.bench || pack.top8 || [];
+  const benchSpots = pack.benchSpots != null ? pack.benchSpots
+    : (pack.top8Spots != null ? pack.top8Spots : DEPTH_BENCH);
+  const benchN = benchList.length;
   const taxiFilled = (pack.taxi || []).length;
-  tag.textContent = pack.slots.length + ' starters · Top '
-    + top8N + '/' + (pack.top8Spots || DEPTH_TOP8)
+  const benchCutFrom = Math.max(0, benchN - DEPTH_BENCH_CUT);
+  tag.textContent = pack.slots.length + ' starters · Bench '
+    + benchN + '/' + benchSpots
     + ' · Taxi ' + taxiFilled + '/' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
     + (pack.hasSaved && !editing ? ' · saved' : '')
     + (editing ? ' · editing' : '')
-    + ' · Lock OVR';
-  const head = '<tr><th>Pos</th><th>1st string</th><th>Top 8</th><th>Taxi</th></tr>';
+    + ' · proj sort';
+  const head = '<tr><th>Pos</th><th>1st string</th><th>Bench</th><th>Taxi</th></tr>';
   const rowHtml = pack.rows.map((row, i) => {
-    const top8Player = (pack.top8 || [])[i] || null;
+    const benchPlayer = benchList[i] || null;
     const taxiPlayer = (pack.taxi || [])[i] || null;
-    const top8Cell = i < (pack.top8Spots || DEPTH_TOP8)
-      ? depthCellHtml(top8Player, {top8: true})
-      : '<td class="slot-empty slot-top8">—</td>';
+    const benchCut = !!(benchPlayer && i >= benchCutFrom && i < benchN);
+    const benchCell = i < benchSpots
+      ? depthCellHtml(benchPlayer, {bench: true, benchCut: benchCut})
+      : '<td class="slot-empty slot-bench">—</td>';
     const taxiCell = i < (pack.taxiSpots || DEPTH_TAXI_SPOTS)
       ? depthCellHtml(taxiPlayer, {taxi: true})
       : '<td class="slot-empty slot-taxi">—</td>';
     return '<tr><td class="pos">' + escapeHtml(row.label) + '</td>'
       + depthStarterCellHtml(row, pack, editing)
-      + top8Cell
+      + benchCell
       + taxiCell
       + '</tr>';
   }).join('');
@@ -2550,8 +2569,9 @@ function renderDepthChart(t){
     + '). <strong>1st string</strong> = legal starters by hold value (Lock OVR × situation path)'
     + (pack.hasSaved ? ', or your saved lineup' : '')
     + '. Use <strong>Edit lineup</strong> to place players yourself — changes save in this browser. '
-    + '<strong>Top 8</strong> = the next ' + (pack.top8Spots || DEPTH_TOP8)
-    + ' best remaining by <strong>Lock OVR</strong> (overall, not tied to Pos). '
+    + '<strong>Bench</strong> = the next ' + benchSpots
+    + ' by <strong>projected FP/G</strong> (not tied to Pos). The bottom '
+    + DEPTH_BENCH_CUT + ' are tinted as the softest holds. '
     + '<strong>Taxi</strong> holds up to ' + (pack.taxiSpots || DEPTH_TAXI_SPOTS)
     + ' developmental stashes with a real path to rosterable Lock — blocked NBA situations are not stashes. '
     + (offN
@@ -3130,7 +3150,7 @@ function scoreCutsForTeam(t, slots, opt){
   }
 
   let pool = (offChart.length ? offChart : []).map(scoreDropCandidate);
-  /* Over active cap: also score non-starter Top-8 / charted pieces so Lock
+  /* Over active cap: also score non-starter charted bench pieces so Lock
      can't park a surplus/blocked player safely above the cut line. */
   if (over > 0){
     const seen = new Set(pool.map(c => String(c.id)));
@@ -3447,7 +3467,7 @@ function renderRosterMoves(t){
 
   const dropsHtml = drops.length
     ? '<ul class="moves">' + drops.map(c => moveLi(c, 'drop')).join('') + '</ul>'
-    : '<p class="pending" style="margin:0">Everyone fits on the depth chart (1st / Top 8 / taxi) — no drop fodder.</p>';
+    : '<p class="pending" style="margin:0">Everyone fits on the depth chart (1st / Bench / taxi) — no drop fodder.</p>';
 
   const faHtml = pack.fa.length
     ? '<ul class="moves">' + pack.fa.map(a => moveLi(a, a.taxiStash ? 'taxi' : 'fa')).join('') + '</ul>'
@@ -3463,7 +3483,7 @@ function renderRosterMoves(t){
     + '<div class="moves-col"><h3>Free agents to add</h3>' + faHtml + '</div>'
     + '</div>'
     + '<p class="moves-foot">Drop candidates are everyone <strong>off the depth chart</strong> '
-    + '(not 1st string, Top 8, or the ' + DEPTH_TAXI_SPOTS + ' taxi spots), ranked by dynasty value — '
+    + '(not 1st string, Bench, or the ' + DEPTH_TAXI_SPOTS + ' taxi spots), ranked by dynasty value — '
     + '<strong>#1</strong> should be dropped first. '
     + 'Players with a <strong>blocked NBA path</strong> (crowded role / free agent — no route to minutes or rising value) '
     + 'rise toward the top: if they can\'t get better, don\'t roster them. '
