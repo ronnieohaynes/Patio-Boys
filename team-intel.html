@@ -611,7 +611,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261001-bench10';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261028-lockbank';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -1731,6 +1731,17 @@ function renderLockIn(t){
       + '<div class="lf-sub">Simulated top-' + slots + ' nights<br>Roster hit sum ' + expTxt + '</div></div>';
   }).join('') + '</div>');
 
+  const leagueSettings = (state.league && state.league.settings) || {};
+  const lockWeek = Number(leagueSettings.leg) || Number(leagueSettings.last_scored_leg) || null;
+  const lockSeasonWeeks = Number(leagueSettings.playoff_week_start) > 1
+    ? Number(leagueSettings.playoff_week_start) - 1
+    : 21;
+  const bankOpts = {week: lockWeek, seasonWeeks: lockSeasonWeeks};
+  function bankPlanFor(d){
+    if (!d || d.missing || !window.LockInDist || typeof LockInDist.lockBankPlan !== 'function') return null;
+    return LockInDist.lockBankPlan(d, bankOpts);
+  }
+
   /* If user was sorting an Adv-only column, fall back for Basic. */
   const advOnly = {stdev:1, ceiling:1, n:1, avgPer30:1, avgPer36:1, avgMpg:1, avgFpPerMin:1};
   marks.forEach(m => { advOnly['hit:' + m] = 1; });
@@ -1775,6 +1786,10 @@ function renderLockIn(t){
           ? Number(LockInDist.SMASH_BOOM_SIGMA) : 0.5;
         if (Number.isFinite(mean) && Number.isFinite(stdev) && stdev > 0) return mean + sig * stdev;
         return null;
+      }
+      if (key === 'bankMark'){
+        const plan = bankPlanFor(d);
+        return plan && plan.mark != null ? Number(plan.mark) : null;
       }
       if (key === 'avgPer30') return d.avgPer30;
       if (key === 'avgPer36') return d.avgPer36;
@@ -1823,6 +1838,7 @@ function renderLockIn(t){
       + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
       + (TS ? TS.thHtml('Smash', 'smashBoomRate', sortState, 'num') : '<th class="num">Smash</th>')
       + (TS ? TS.thHtml('GG', 'smashGg', sortState, 'num') : '<th class="num">GG</th>')
+      + (TS ? TS.thHtml('Bank \u2265', 'bankMark', sortState, 'num') : '<th class="num">Bank \u2265</th>')
       + (TS ? TS.thHtml('Contract', 'contract', sortState, 'num') : '<th class="num">Contract</th>')
       + (TS ? TS.thHtml('Role', 'role', sortState, 'role') : '<th class="role">Role</th>')
       + '</tr>')
@@ -1835,6 +1851,7 @@ function renderLockIn(t){
       + (TS ? TS.thHtml('Avg', 'mean', sortState, 'num') : '<th class="num">Avg</th>')
       + (TS ? TS.thHtml('Smash', 'smashBoomRate', sortState, 'num') : '<th class="num">Smash</th>')
       + (TS ? TS.thHtml('GG', 'smashGg', sortState, 'num') : '<th class="num">GG</th>')
+      + (TS ? TS.thHtml('Bank \u2265', 'bankMark', sortState, 'num') : '<th class="num">Bank \u2265</th>')
       + (TS ? TS.thHtml('Min', 'avgMpg', sortState, 'num') : '<th class="num">Min</th>')
       + (TS ? TS.thHtml('FP/m', 'avgFpPerMin', sortState, 'num') : '<th class="num">FP/m</th>')
       + (TS ? TS.thHtml('/30', 'avgPer30', sortState, 'num') : '<th class="num">/30</th>')
@@ -1856,14 +1873,14 @@ function renderLockIn(t){
       if (basic){
         return '<tr>' + posCell + nameCell
           + '<td class="num">—</td>' + ageCell
-          + '<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>'
+          + '<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>'
           + contractCellHtml(d.pid)
           + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d, effOrder)) + '</td></tr>';
       }
       return '<tr>' + posCell + nameCell
         + '<td class="num">—</td>' + ageCell
         + '<td class="num">—</td>'
-        + '<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>'
+        + '<td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>'
         + marks.map(() => '<td class="num">—</td>').join('')
         + '<td class="num">0</td></tr>';
     }
@@ -1997,6 +2014,13 @@ function renderLockIn(t){
       ? ('<td class="num" title="GG (good game) = Avg+0.5σ · personal quality lock line">'
         + ggVal.toFixed(1) + '</td>')
       : '<td class="num">—</td>';
+    const bankPlan = bankPlanFor(d);
+    const bankCell = bankPlan && bankPlan.mark != null
+      ? ('<td class="num" title="' + escapeHtml('Bank this night into lock-in if FP ≥ '
+        + bankPlan.mark + ' · ' + (bankPlan.why || '')) + '">'
+        + bankPlan.mark
+        + '<span class="tier-sub">' + Math.round((bankPlan.rate || 0) * 100) + '%</span></td>')
+      : '<td class="num">—</td>';
     const per30Txt = d.avgPer30 != null && Number.isFinite(d.avgPer30) ? d.avgPer30.toFixed(1) : '—';
     const per30Cell = '<td class="num" title="Fantasy points per 30 minutes (box-score FP ÷ minutes × 30)">'
       + per30Txt + '</td>';
@@ -2031,6 +2055,7 @@ function renderLockIn(t){
 
     if (basic){
       return '<tr>' + posCell + nameCell + lockCell + ageCell + tradeCell + avgCell + smashCell + ggCell
+        + bankCell
         + contractCellHtml(d.pid)
         + '<td class="role">' + escapeHtml(nbaRoleSentence(d.pid, d, effOrder)) + '</td></tr>';
     }
@@ -2044,6 +2069,7 @@ function renderLockIn(t){
       + avgCell
       + smashCell
       + ggCell
+      + bankCell
       + mpgCell
       + fpmCell
       + per30Cell
@@ -2054,10 +2080,29 @@ function renderLockIn(t){
       + '<td class="num" title="Box-score games used for σ and hit rates">' + d.n + '</td></tr>';
   }).join('');
 
+  const bankPlans = scored.map(bankPlanFor).filter(Boolean);
+  const bankPhase = bankPlans.length
+    ? (bankPlans.filter(p => p.phase === 'early').length > bankPlans.length / 2 ? 'early'
+      : (bankPlans.filter(p => p.phase === 'late').length > bankPlans.length / 2 ? 'late' : 'mid'))
+    : 'mid';
+  const bankBlurb = bankPlans.length
+    ? ('<p class="lineup-foot"><strong>Lock plan</strong> — bank a night into your lock-in week when that player clears '
+      + '<strong>Bank ≥</strong> (hit rate shown under the number). '
+      + 'Stars bank near Avg so top-' + slots + ' slots fill; fringe waits for a smash. '
+      + (bankPhase === 'early'
+        ? 'Early season: bars run a hair higher — more games left to hunt quality. '
+        : (bankPhase === 'late'
+          ? 'Late season: bars ease so you finish locks before the window closes. '
+          : 'Mid season: bank GG-quality nights, don’t sit on empty slots. '))
+      + (lockWeek != null ? ('Week ' + lockWeek + '. ') : '')
+      + '</p>')
+    : '';
+
   const note = basic
     ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Age, Trade ★, season Avg, '
       + '<strong>Smash</strong> = % of games at/above <strong>GG</strong>, '
-      + '<strong>GG</strong> = good game line (Avg+0.5σ), NBA '
+      + '<strong>GG</strong> = good game line (Avg+0.5σ), '
+      + '<strong>Bank ≥</strong> = FP floor to lock this player tonight, NBA '
       + '<strong>Contract</strong> (years left / remaining total, nearest $0.1M), and an NBA '
       + '<strong>Role</strong> line from Sleeper depth chart + production tier. '
       + 'Lock blends smash bases — vets <strong>60% '
@@ -2087,7 +2132,8 @@ function renderLockIn(t){
       + ' (young 1.10 +1 · prime 1.00 · decline 0.95 · unknown 1.00; still-producing Potential restores most of the age cut when Lock stays solid; chronic injury-prone list ×0.82–0.95; live tags ignored in offseason; FA ~0.80; same-slot crowding can fall to ~0.70), then '
       + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
       + 'Lock OVR applies ~45% of the same situation gap so offseason adds move dynasty value, not only Trade. '
-      + '<strong>Avg · Smash · GG · Min · FP/m · /30 · /36 · σ · Ceil · hits</strong> still describe '
+      + '<strong>Bank ≥</strong> is the FP floor to bank this night into lock-in (season-timing aware). '
+      + '<strong>Avg · Smash · GG · Bank · Min · FP/m · /30 · /36 · σ · Ceil · hits</strong> still describe '
       + escapeHtml(String(state.statsSeason))
       + ' box scores only (Min = minutes/game; FP/m = FP ÷ minutes with letter grade; /30 = realistic starter rate; /36 = star-minute upside) — hover OVR / Smash for the math. '
       + 'Showing all ' + show.length + ' rostered players'
@@ -2095,6 +2141,7 @@ function renderLockIn(t){
       + '.</p>');
 
   body.innerHTML = fillHtml
+    + bankBlurb
     + '<table class="lockin"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table>'
     + note;
   if (window.TableSort){

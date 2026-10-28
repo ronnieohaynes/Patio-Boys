@@ -812,6 +812,94 @@
     d.smashHitPart = null;
   }
 
+  /* Per-player lock plan: FP floor to bank this night into a lock-in week.
+     Stars bank near Avg (don't hunt unicorns). Fringe waits for a real smash.
+     Early season → pickier; late season → bank sooner so top-10 slots fill. */
+  function lockBankPlan(dist, opts){
+    const options = opts || {};
+    if (!dist || dist.projOnly) return null;
+    const n = Number(dist.n) || 0;
+    if (n < MIN_SAMPLES_FOR_SMASH) return null;
+    const mean = Number(dist.mean);
+    const stdev = Number(dist.stdev);
+    if (!Number.isFinite(mean) || !(mean > 0)) return null;
+    const sd = Number.isFinite(stdev) && stdev > 0 ? stdev : 0;
+    const quality = smashBoomMark(dist);
+    const ceiling = Number(dist.ceiling);
+    const cv = mean > 0 && sd > 0 ? sd / mean : 0;
+
+    const week = Number(options.week);
+    const seasonWeeks = Number(options.seasonWeeks) > 0 ? Number(options.seasonWeeks) : 21;
+    let phase = 'mid';
+    let phaseAdj = 0;
+    if (Number.isFinite(week)){
+      if (week <= 7){ phase = 'early'; phaseAdj = 0.15; }
+      else if (week >= Math.max(15, seasonWeeks - 4)){ phase = 'late'; phaseAdj = -0.2; }
+    }
+
+    let sigmaMult;
+    let style;
+    if (mean >= 36){
+      sigmaMult = (cv > 0.38 ? 0.35 : 0.12) + phaseAdj;
+      style = 'star';
+    } else if (mean >= 28){
+      sigmaMult = 0.5 + phaseAdj;
+      style = 'starter';
+    } else if (mean >= 22){
+      sigmaMult = 0.65 + phaseAdj;
+      style = 'fringe';
+    } else {
+      sigmaMult = 0.85 + phaseAdj;
+      style = 'stream';
+    }
+    sigmaMult = Math.max(0, Math.min(1.1, sigmaMult));
+
+    let mark = mean + sigmaMult * sd;
+    if (style === 'fringe' || style === 'stream'){
+      const floor = quality != null && Number.isFinite(quality) ? quality : mark;
+      mark = Math.max(mark, Math.min(32, floor));
+    }
+    mark = Math.round(mark);
+
+    function rateAt(m){
+      if (dist.samples && dist.samples.length) return empiricalHitRate(dist.samples, m);
+      return normalHitRate(mean, sd > 0 ? sd : 1e-6, m);
+    }
+    let rate = rateAt(mark);
+    let guard = 0;
+    while (rate + 1e-9 < 0.18 && mark > Math.ceil(mean) && guard < 24){
+      mark -= 1;
+      rate = rateAt(mark);
+      guard += 1;
+    }
+    const ceilCap = Number.isFinite(ceiling) ? Math.floor(ceiling) : Math.floor(mean + sd);
+    guard = 0;
+    while (rate - 1e-9 > 0.48 && mark < ceilCap && guard < 24){
+      mark += 1;
+      rate = rateAt(mark);
+      guard += 1;
+    }
+
+    const whyBits = [];
+    if (style === 'star') whyBits.push('Star — bank near Avg, don’t hunt unicorns');
+    else if (style === 'starter') whyBits.push('Starter — bank a GG-quality night');
+    else if (style === 'fringe') whyBits.push('Fringe — only bank a real smash');
+    else whyBits.push('Stream — wait for a spike');
+    if (phase === 'early') whyBits.push('early season · pickier');
+    if (phase === 'late') whyBits.push('late season · bank sooner');
+    whyBits.push('hits ~' + Math.round(rate * 100) + '%');
+
+    return {
+      mark,
+      rate: Math.round(rate * 1000) / 1000,
+      style,
+      phase,
+      quality: quality != null && Number.isFinite(quality) ? Math.round(quality * 10) / 10 : null,
+      mean: Math.round(mean * 10) / 10,
+      why: whyBits.join(' · ')
+    };
+  }
+
   /* Smash input for one season — prefer full smash; fall back to season mean. */
   function seasonLockInput(dist){
     if (!dist || dist.projOnly) return null;
@@ -2403,6 +2491,7 @@
     smashGradeFromBase,
     smashGradeClass,
     attachSmashGrade,
+    lockBankPlan,
     SMASH_BOOM_SIGMA,
     SMASH_GRADE_BANDS,
     seasonLockInput,
