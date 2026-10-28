@@ -812,9 +812,43 @@
     d.smashHitPart = null;
   }
 
+  /* FP that typically fills the last lock slot on this roster (Nth-best GG).
+     A night below this rarely sticks in top-`slots` once stars play out. */
+  function rosterBankFloor(dists, slots){
+    const nSlots = Number(slots) > 0 ? Number(slots) : LOCK_SLOTS;
+    const ggs = (dists || []).map(d => {
+      if (!d || d.projOnly || d.missing) return null;
+      if (!(Number(d.n) >= MIN_SAMPLES_FOR_SMASH)) return null;
+      const gg = smashBoomMark(d);
+      if (gg != null && Number.isFinite(gg)) return gg;
+      const mean = Number(d.mean);
+      return Number.isFinite(mean) && mean > 0 ? mean : null;
+    }).filter(v => v != null && Number.isFinite(v)).sort((a, b) => b - a);
+    if (!ggs.length) return null;
+    const idx = Math.min(nSlots, ggs.length) - 1;
+    return Math.round(ggs[idx] * 10) / 10;
+  }
+
+  /* Mon–Sun pickiness for banking mid-lock-week (0=Sun … 6=Sat).
+     Early week → hold fringe; weekend → bank sooner so slots fill. */
+  function bankDayAdj(style, dow){
+    const d = Number(dow);
+    if (!Number.isFinite(d)) return 0;
+    const fringe = style === 'fringe' || style === 'stream';
+    const starter = style === 'starter';
+    if (d === 1 || d === 2) return fringe ? 3 : (starter ? 2 : 0); // Mon/Tue
+    if (d === 3 || d === 4) return fringe ? 2 : (starter ? 1 : 0); // Wed/Thu
+    if (d === 5) return fringe ? 1 : 0; // Fri
+    if (d === 0 || d === 6) return fringe ? -1 : 0; // Sat/Sun
+    return 0;
+  }
+
   /* Per-player lock plan: FP floor to bank this night into a lock-in week.
      Stars bank near Avg (don't hunt unicorns). Fringe waits for a real smash.
-     Early season → pickier; late season → bank sooner so top-10 slots fill. */
+     Early season → pickier; late season → bank sooner so top-10 slots fill.
+     When rosterDists are passed, raise the bar to the roster's Nth GG so a
+     mediocre fringe night doesn't steal a slot stars still need — and midweek
+     (dow) makes fringe pickier while games remain. */
   function lockBankPlan(dist, opts){
     const options = opts || {};
     if (!dist || dist.projOnly) return null;
@@ -880,6 +914,36 @@
       guard += 1;
     }
 
+    const personalMark = mark;
+    const slots = Number(options.slots) > 0 ? Number(options.slots) : LOCK_SLOTS;
+    let rosterFloor = Number(options.rosterFloor);
+    if (!Number.isFinite(rosterFloor) && options.rosterDists){
+      rosterFloor = rosterBankFloor(options.rosterDists, slots);
+    }
+    if (!Number.isFinite(rosterFloor)) rosterFloor = null;
+
+    /* Team quality: fringe/stream must clear the roster's last lock slot;
+       starters need to be close; stars keep their personal bar. */
+    let teamLift = 0;
+    if (rosterFloor != null){
+      const floorMark = Math.round(rosterFloor);
+      let teamMark = personalMark;
+      if (style === 'fringe' || style === 'stream'){
+        teamMark = Math.max(personalMark, floorMark);
+      } else if (style === 'starter'){
+        teamMark = Math.max(personalMark, floorMark - 1);
+      }
+      teamLift = teamMark - personalMark;
+      mark = teamMark;
+    }
+
+    const dayAdj = bankDayAdj(style, options.dow);
+    mark = mark + dayAdj;
+    /* Do not re-cap at personal ceiling after roster/day lifts — fringe often
+       must clear a bar above their typical Ceil to deserve a lock on a deep team. */
+    if (mark < Math.ceil(mean)) mark = Math.ceil(mean);
+    rate = rateAt(mark);
+
     const whyBits = [];
     if (style === 'star') whyBits.push('Star — bank near Avg, don’t hunt unicorns');
     else if (style === 'starter') whyBits.push('Starter — bank a GG-quality night');
@@ -887,6 +951,13 @@
     else whyBits.push('Stream — wait for a spike');
     if (phase === 'early') whyBits.push('early season · pickier');
     if (phase === 'late') whyBits.push('late season · bank sooner');
+    if (rosterFloor != null && teamLift > 0){
+      whyBits.push('roster top-' + slots + ' ~' + Math.round(rosterFloor));
+    } else if (rosterFloor != null && (style === 'fringe' || style === 'stream' || style === 'starter')){
+      whyBits.push('roster top-' + slots + ' ~' + Math.round(rosterFloor));
+    }
+    if (dayAdj > 0) whyBits.push('midweek · hold for better nights');
+    if (dayAdj < 0) whyBits.push('weekend · bank sooner');
     whyBits.push('hits ~' + Math.round(rate * 100) + '%');
 
     return {
@@ -894,6 +965,9 @@
       rate: Math.round(rate * 1000) / 1000,
       style,
       phase,
+      personalMark,
+      rosterFloor: rosterFloor != null ? Math.round(rosterFloor * 10) / 10 : null,
+      dayAdj,
       quality: quality != null && Number.isFinite(quality) ? Math.round(quality * 10) / 10 : null,
       mean: Math.round(mean * 10) / 10,
       why: whyBits.join(' · ')
@@ -2491,6 +2565,8 @@
     smashGradeFromBase,
     smashGradeClass,
     attachSmashGrade,
+    rosterBankFloor,
+    bankDayAdj,
     lockBankPlan,
     SMASH_BOOM_SIGMA,
     SMASH_GRADE_BANDS,

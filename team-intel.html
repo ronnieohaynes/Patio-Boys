@@ -611,7 +611,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261028-lockbank';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261028-bankteam';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -1736,7 +1736,17 @@ function renderLockIn(t){
   const lockSeasonWeeks = Number(leagueSettings.playoff_week_start) > 1
     ? Number(leagueSettings.playoff_week_start) - 1
     : 21;
-  const bankOpts = {week: lockWeek, seasonWeeks: lockSeasonWeeks};
+  const rosterFloor = window.LockInDist && typeof LockInDist.rosterBankFloor === 'function'
+    ? LockInDist.rosterBankFloor(scored, slots)
+    : null;
+  const bankOpts = {
+    week: lockWeek,
+    seasonWeeks: lockSeasonWeeks,
+    slots,
+    rosterDists: scored,
+    rosterFloor,
+    dow: (new Date()).getDay()
+  };
   function bankPlanFor(d){
     if (!d || d.missing || !window.LockInDist || typeof LockInDist.lockBankPlan !== 'function') return null;
     return LockInDist.lockBankPlan(d, bankOpts);
@@ -2089,6 +2099,11 @@ function renderLockIn(t){
     ? ('<p class="lineup-foot"><strong>Lock plan</strong> — bank a night into your lock-in week when that player clears '
       + '<strong>Bank ≥</strong> (hit rate shown under the number). '
       + 'Stars bank near Avg so top-' + slots + ' slots fill; fringe waits for a smash. '
+      + (rosterFloor != null
+        ? ('Bars also clear this roster’s top-' + slots + ' line (~'
+          + Math.round(rosterFloor)
+          + ' GG) so a mediocre fringe night doesn’t steal a slot from better games still coming. Midweek raises fringe bars; weekend eases them. ')
+        : '')
       + (bankPhase === 'early'
         ? 'Early season: bars run a hair higher — more games left to hunt quality. '
         : (bankPhase === 'late'
@@ -2102,7 +2117,8 @@ function renderLockIn(t){
     ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Age, Trade ★, season Avg, '
       + '<strong>Smash</strong> = % of games at/above <strong>GG</strong>, '
       + '<strong>GG</strong> = good game line (Avg+0.5σ), '
-      + '<strong>Bank ≥</strong> = FP floor to lock this player tonight, NBA '
+      + '<strong>Bank ≥</strong> = FP floor to lock this player tonight (roster top-' + slots
+      + ' + midweek pickiness), NBA '
       + '<strong>Contract</strong> (years left / remaining total, nearest $0.1M), and an NBA '
       + '<strong>Role</strong> line from Sleeper depth chart + production tier. '
       + 'Lock blends smash bases — vets <strong>60% '
@@ -2132,7 +2148,8 @@ function renderLockIn(t){
       + ' (young 1.10 +1 · prime 1.00 · decline 0.95 · unknown 1.00; still-producing Potential restores most of the age cut when Lock stays solid; chronic injury-prone list ×0.82–0.95; live tags ignored in offseason; FA ~0.80; same-slot crowding can fall to ~0.70), then '
       + '★★★★★ ≥95 · ★★★★½ ≥90 · ★★★★ ≥85 · ★★★½ ≥80 · ★★★ ≥75 · ★★½ ≥70 · ★★ ≥65 · ★½ ≥60 · ★ below. '
       + 'Lock OVR applies ~45% of the same situation gap so offseason adds move dynasty value, not only Trade. '
-      + '<strong>Bank ≥</strong> is the FP floor to bank this night into lock-in (season-timing aware). '
+      + '<strong>Bank ≥</strong> is the FP floor to bank this night into lock-in '
+      + '(roster top-' + slots + ' opportunity cost + midweek pickiness + season timing). '
       + '<strong>Avg · Smash · GG · Bank · Min · FP/m · /30 · /36 · σ · Ceil · hits</strong> still describe '
       + escapeHtml(String(state.statsSeason))
       + ' box scores only (Min = minutes/game; FP/m = FP ÷ minutes with letter grade; /30 = realistic starter rate; /36 = star-minute upside) — hover OVR / Smash for the math. '
