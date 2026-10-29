@@ -147,6 +147,20 @@
   .lock-pill.open{color:#6ec8ff; border-color:#3A8FC9; background:color-mix(in srgb, #3A8FC9 14%, transparent)}
   .lock-pill.none{color:var(--ink-dim); border-color:var(--hairline)}
   .lock-pill:hover{filter:brightness(1.15)}
+  td.slot{white-space:nowrap}
+  .slot-sel{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;
+    color:var(--ink);background:var(--surface-2);border:1px solid var(--hairline);
+    border-radius:4px;padding:2px 4px;max-width:5.5rem;
+  }
+  .slot-sel:focus{outline:1px solid var(--gold);border-color:var(--gold)}
+  tr.bench td.player{font-weight:500;color:var(--ink-dim)}
+  .slot-tag{
+    display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
+    letter-spacing:.04em;padding:1px 5px;border-radius:3px;border:1px solid var(--hairline);
+    color:var(--ink-dim);
+  }
+  .slot-tag.bn{opacity:.75}
   .foot{
     font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);
     margin:14px 0 0;line-height:1.55;
@@ -185,7 +199,7 @@
         <button type="button" class="btn" id="shotPaste">Paste</button>
         <button type="button" class="btn" id="shotClear" hidden>Clear OCR</button>
       </div>
-      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot — we look for <strong>green closed-lock</strong> badges only (cyan/blue open-lock “LOCK-IN” = still unlocked). Or tap a lock pill on any row.</p>
+      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot — green closed-lock badges only, matched to <strong>this matchup’s two rosters</strong> (never guessed from the whole league). Cyan “LOCK-IN” = still unlocked. Or tap a lock pill.</p>
       <img class="shot-preview" id="shotPreview" alt="" hidden>
     </div>
 
@@ -201,7 +215,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-green-lock';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-roster-slots';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -246,9 +260,34 @@ const state = {
   statsSeason: null,
   nbaWeek: null, /* { byTeam, oppg, avgOppg } from ESPN slate */
   /* Only green LOCKED nights — never inferred from “starter with points”. */
-  lockMarks: {}, /* pid -> {pts, source:'ocr'|'manual', name} */
+  lockMarks: {}, /* pid -> {pts, source:'ocr'|'manual', name, slot} */
   tesseractLoading: null
 };
+
+/* Starter lock-in slots in lineup order (bench is BN until changed). */
+function lockSlotLabels(){
+  const pos = (state.league && state.league.roster_positions) || [
+    'PG', 'SG', 'G', 'SF', 'PF', 'F', 'C', 'UTIL', 'UTIL', 'UTIL', 'BN'
+  ];
+  const out = [];
+  for (let i = 0; i < pos.length; i++){
+    if (pos[i] === 'BN' || pos[i] === 'IR' || pos[i] === 'TAXI') break;
+    out.push(pos[i]);
+  }
+  return out.length ? out : ['PG', 'SG', 'G', 'SF', 'PF', 'F', 'C', 'UTIL', 'UTIL', 'UTIL'];
+}
+
+function slotDisplayLabel(slotKey){
+  if (slotKey == null || slotKey === 'BN') return 'BN';
+  const labels = lockSlotLabels();
+  const i = Number(slotKey);
+  if (!Number.isFinite(i) || i < 0 || i >= labels.length) return 'BN';
+  const lab = labels[i];
+  if (lab !== 'UTIL') return lab;
+  let utilN = 0;
+  for (let j = 0; j <= i; j++) if (labels[j] === 'UTIL') utilN++;
+  return 'UTIL ' + utilN;
+}
 
 function lockStorageKey(){
   return 'pb-matchup-locks:' + LEAGUE_ID + ':w' + String(state.week || '');
@@ -479,14 +518,59 @@ function isLocked(pid){
   return lockedPtsFor(pid) != null;
 }
 
-function toggleLockMark(pid, weekPts, name){
+function slotKeyForPidOnSide(side, pid){
+  const id = String(pid);
+  const mark = state.lockMarks && state.lockMarks[id];
+  if (mark && mark.slot != null && mark.slot !== '') return mark.slot;
+  const starters = (side && side.matchup && side.matchup.starters)
+    || (side && side.franchise && side.franchise.starters)
+    || [];
+  const idx = starters.map(String).indexOf(id);
+  if (idx >= 0 && idx < lockSlotLabels().length) return idx;
+  return 'BN';
+}
+
+function sideForPid(pid){
+  const pair = state.selectedPair || state.pairs[0];
+  if (!pair) return null;
+  return pair.sides.find(s => (s.franchise.players || []).map(String).includes(String(pid))) || null;
+}
+
+function toggleLockMark(pid, weekPts, name, slotKey){
   const id = String(pid);
   const marks = state.lockMarks || (state.lockMarks = {});
   if (marks[id]){
     delete marks[id];
   } else {
     const pts = weekPts != null && Number.isFinite(Number(weekPts)) ? Number(weekPts) : 0;
-    marks[id] = {pts, source: 'manual', name: name || id};
+    const side = sideForPid(id);
+    const slot = slotKey != null ? slotKey : slotKeyForPidOnSide(side, id);
+    marks[id] = {pts, source: 'manual', name: name || id, slot};
+  }
+  saveLockMarks();
+  render();
+}
+
+function setPlayerSlot(pid, slotKey){
+  const id = String(pid);
+  const marks = state.lockMarks || (state.lockMarks = {});
+  const side = sideForPid(id);
+  const pts = weekPtsFor(id, side && side.matchup);
+  if (!marks[id]){
+    /* Changing BN → a lock slot banks them into that position. */
+    if (slotKey === 'BN') return;
+    marks[id] = {
+      pts: pts != null && Number.isFinite(Number(pts)) ? Number(pts) : 0,
+      source: 'manual',
+      name: playerName(state.players[id]),
+      slot: slotKey
+    };
+  } else {
+    marks[id].slot = slotKey;
+    if (slotKey === 'BN'){
+      /* BN means unlocked / not filling a lock slot. */
+      delete marks[id];
+    }
   }
   saveLockMarks();
   render();
@@ -546,19 +630,24 @@ function bankOptsForSide(sideDists, lockedScores){
 function sidePlayerRows(side){
   const fr = side.franchise;
   const mrow = side.matchup;
-  const starterSet = new Set((mrow && mrow.starters || fr.starters || []).map(String));
-  const pids = (fr.players || []).slice();
-  /* Prefer starters first, then rest by lock/mean */
-  pids.sort((a, b) => {
-    const as = starterSet.has(String(a)) ? 0 : 1;
-    const bs = starterSet.has(String(b)) ? 0 : 1;
-    if (as !== bs) return as - bs;
+  const starters = (mrow && mrow.starters || fr.starters || []).map(String);
+  const starterSet = new Set(starters);
+  const labels = lockSlotLabels();
+  /* Lineup order: starter slots first (by index), then bench alphabetically / by lock. */
+  const starterRows = [];
+  for (let i = 0; i < labels.length; i++){
+    const id = starters[i];
+    if (id && id !== '0' && id !== '') starterRows.push(id);
+  }
+  const benchIds = (fr.players || []).map(String).filter(id => !starterSet.has(id));
+  benchIds.sort((a, b) => {
     const da = state.lockByPid[a] || state.lockByPid[String(a)];
     const db = state.lockByPid[b] || state.lockByPid[String(b)];
     const la = da && (da.lockOvr != null ? da.lockOvr : da.mean);
     const lb = db && (db.lockOvr != null ? db.lockOvr : db.mean);
     return (lb || 0) - (la || 0);
   });
+  const pids = starterRows.concat(benchIds);
 
   const lockedScores = [];
   const distList = [];
@@ -569,13 +658,18 @@ function sidePlayerRows(side){
     const pts = weekPtsFor(id, mrow);
     const lockPts = lockedPtsFor(id);
     const locked = lockPts != null;
+    const slot = slotKeyForPidOnSide(side, id);
+    const starter = starterSet.has(id);
     if (locked) lockedScores.push(lockPts);
     if (dist){
       dist._locked = locked;
       distList.push(dist);
     }
     const scout = scoutPlayer(id, dist);
-    return {pid: id, p, dist, pts, lockPts, locked, scout, starter: starterSet.has(id)};
+    return {
+      pid: id, p, dist, pts, lockPts, locked, scout,
+      starter, slot, slotLabel: slotDisplayLabel(slot)
+    };
   });
 
   const opts = bankOptsForSide(distList, lockedScores);
@@ -588,7 +682,7 @@ function sidePlayerRows(side){
       r.bank = {
         mark: Math.round(r.lockPts != null ? r.lockPts : r.pts),
         rate: 1,
-        why: 'Green LOCKED into lock-in week',
+        why: 'Green LOCKED into ' + (r.slotLabel || 'slot'),
         style: 'locked'
       };
       return;
@@ -596,7 +690,13 @@ function sidePlayerRows(side){
     r.bank = LockInDist.lockBankPlan(r.dist, opts);
   });
 
-  return {rows, lockedScores, opts, starters: rows.filter(r => r.starter).slice(0, 12)};
+  return {
+    rows,
+    lockedScores,
+    opts,
+    starters: rows.filter(r => r.starter),
+    bench: rows.filter(r => !r.starter)
+  };
 }
 
 function renderAdvice(pair, leftPack, rightPack){
@@ -618,7 +718,7 @@ function renderAdvice(pair, leftPack, rightPack){
     + (focusPack.lockedScores.length
       ? (' (' + focusPack.lockedScores.map(x => Math.round(x)).join(', ') + ')')
       : '')
-    + '. Scored but blue <strong>UNLOCKED</strong> starters are still movable. <strong>'
+    + '. Blue/cyan <strong>UNLOCKED</strong> can still move. Bench stays <strong>BN</strong> until you set Pos. <strong>'
     + leftSlots + '</strong> slots left'
     + (focusPack.opts.rosterFloor != null
       ? (' · remaining top-' + leftSlots + ' bar ~' + Math.round(focusPack.opts.rosterFloor))
@@ -685,9 +785,26 @@ function renderAdvice(pair, leftPack, rightPack){
   el.innerHTML = '<h2>Advice · ' + escapeHtml(focusSide.franchise.team) + '</h2><ul>' + tips.join('') + '</ul>';
 }
 
+function slotSelectHtml(pid, slotKey){
+  const labels = lockSlotLabels();
+  let utilN = 0;
+  const opts = labels.map((lab, i) => {
+    let shown = lab;
+    if (lab === 'UTIL'){ utilN++; shown = 'UTIL ' + utilN; }
+    const sel = String(slotKey) === String(i) ? ' selected' : '';
+    return '<option value="' + i + '"' + sel + '>' + escapeHtml(shown) + '</option>';
+  }).join('');
+  const bnSel = (slotKey == null || slotKey === 'BN') ? ' selected' : '';
+  return '<select class="slot-sel" data-slot-pid="' + escapeHtml(String(pid)) + '" title="Lineup lock slot (BN until changed)">'
+    + opts
+    + '<option value="BN"' + bnSel + '>BN</option>'
+    + '</select>';
+}
+
 function renderSide(side, pack){
   const fr = side.franchise;
-  const show = pack.starters.length ? pack.starters : pack.rows.slice(0, 10);
+  /* Full roster: starters in slot order, then bench (BN). */
+  const show = pack.rows;
   const rows = show.map(r => {
     const leanCls = r.scout.lean === 'smash' ? 'smash' : (r.scout.lean === 'bust' ? 'bust' : '');
     const leanTxt = r.scout.lean === 'neutral' ? '—' : r.scout.lean;
@@ -700,20 +817,23 @@ function renderSide(side, pack){
     const pillCls = r.locked ? 'locked' : (scored ? 'open' : 'none');
     const pillTxt = r.locked ? 'Locked' : (scored ? 'Unlocked' : 'Not lock');
     const pillTitle = r.locked
-      ? 'Green LOCKED — counts toward lock-in. Click to unmark.'
+      ? ('Green LOCKED at ' + (r.slotLabel || 'slot') + ' — counts toward lock-in. Click to unmark.')
       : (scored
         ? 'Scored but still UNLOCKED (can sub/move). Click to mark as green LOCKED.'
         : 'No scored night yet. Click to mark locked if needed.');
-    return '<tr class="' + (r.locked ? 'locked' : '') + '">'
+    const trCls = (r.locked ? 'locked' : '') + (!r.starter ? ' bench' : '');
+    return '<tr class="' + trCls.trim() + '">'
       + '<td class="player">' + escapeHtml(playerName(r.p))
       + '<button type="button" class="lock-pill ' + pillCls + '" data-lock-pid="' + escapeHtml(r.pid)
-      + '" data-lock-pts="' + (r.pts != null ? r.pts : '') + '" title="' + escapeHtml(pillTitle) + '">'
+      + '" data-lock-pts="' + (r.pts != null ? r.pts : '') + '" data-lock-slot="'
+      + escapeHtml(String(r.slot == null ? 'BN' : r.slot)) + '" title="' + escapeHtml(pillTitle) + '">'
       + pillTxt + '</button>'
       + '<span class="sub">' + escapeHtml((r.p.position || r.p.fantasy_positions && r.p.fantasy_positions[0] || '')
         + (r.p.team ? (' · ' + r.p.team) : '')
         + (r.scout.opps && r.scout.opps.length ? (' vs ' + r.scout.opps.join('/')) : '')
         + (r.scout.injury ? (' · ' + r.scout.injury) : ''))
       + '</span></td>'
+      + '<td class="slot">' + slotSelectHtml(r.pid, r.slot) + '</td>'
       + '<td class="num">' + ovr + '</td>'
       + '<td class="num">' + avg + '</td>'
       + '<td class="num">' + smash + '</td>'
@@ -723,11 +843,14 @@ function renderSide(side, pack){
       + '</tr>';
   }).join('');
 
+  const lockedN = pack.lockedScores.length;
+  const slots = lockSlotLabels().length;
   return '<div class="side" style="--team-color:' + escapeHtml(fr.color) + '">'
     + '<div class="side-head"><h3>' + escapeHtml(fr.team) + '</h3>'
-    + '<span class="pts">' + Math.round(side.points) + ' FP</span></div>'
+    + '<span class="pts">' + Math.round(side.points) + ' FP · '
+    + lockedN + '/' + slots + ' locked</span></div>'
     + '<table><thead><tr>'
-    + '<th>Player</th><th class="num">Lock</th><th class="num">Avg</th><th class="num">Smash</th>'
+    + '<th>Player</th><th>Pos</th><th class="num">Lock</th><th class="num">Avg</th><th class="num">Smash</th>'
     + '<th class="num">Bank ≥</th><th class="num">Wk</th><th>Lean</th>'
     + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
@@ -765,15 +888,15 @@ function render(){
   document.getElementById('detailTitle').textContent =
     pair.sides[0].franchise.team + ' vs ' + pair.sides[1].franchise.team;
   document.getElementById('detailSub').textContent =
-    'Week ' + state.week + ' · starters · Bank ≥ uses remaining slots after green LOCK-IN only';
+    'Week ' + state.week + ' · lineup slots PG–UTIL + BN bench · Bank ≥ after green locks only';
   document.getElementById('sides').innerHTML =
     renderSide(pair.sides[0], leftPack) + renderSide(pair.sides[1], rightPack);
   renderAdvice(pair, leftPack, rightPack);
 
   document.getElementById('footNote').textContent =
-    'Green LOCKED = banked into lock-in. Blue/cyan UNLOCKED (open lock / “LOCK-IN” button) = scored but still movable. '
-    + 'Sleeper’s API does not expose lock status, so upload a matchup screenshot (reads green closed-lock badges only) or tap a lock pill. '
-    + 'Smash/bust leans blend smash rate, ESPN slate, B2B, and injury tags. Bank ≥ uses remaining slots after green locks only.';
+    'Green LOCKED = banked into a lineup slot (PG/SG/G/SF/PF/F/C/UTIL). Bench shows BN until you change the Pos menu. '
+    + 'Screenshot OCR only matches the two teams in this matchup — never invents outside players. '
+    + 'Cyan open-lock “LOCK-IN” = still unlocked. Smash/bust leans blend smash rate, ESPN slate, B2B, and injury tags.';
 
   document.querySelectorAll('[data-lock-pid]').forEach(btn => {
     btn.addEventListener('click', (ev) => {
@@ -781,8 +904,19 @@ function render(){
       const pid = btn.getAttribute('data-lock-pid');
       const ptsRaw = btn.getAttribute('data-lock-pts');
       const pts = ptsRaw === '' || ptsRaw == null ? null : Number(ptsRaw);
+      const slotRaw = btn.getAttribute('data-lock-slot');
+      const slot = slotRaw === '' || slotRaw == null ? 'BN'
+        : (slotRaw === 'BN' ? 'BN' : Number(slotRaw));
       const p = state.players[pid] || {};
-      toggleLockMark(pid, pts, playerName(p));
+      toggleLockMark(pid, pts, playerName(p), slot);
+    });
+  });
+  document.querySelectorAll('[data-slot-pid]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const pid = sel.getAttribute('data-slot-pid');
+      const raw = sel.value;
+      const slot = raw === 'BN' ? 'BN' : Number(raw);
+      setPlayerSlot(pid, slot);
     });
   });
 }
@@ -923,18 +1057,33 @@ function loadShotImage(file){
   });
 }
 
-function buildNameIndex(){
+/* Only the two fantasy teams in the selected matchup — never the whole NBA pool. */
+function matchupRosterPids(){
+  const set = new Set();
+  const pair = state.selectedPair || state.pairs[0];
+  if (!pair) return set;
+  pair.sides.forEach(side => {
+    (side.franchise.players || []).forEach(id => set.add(String(id)));
+  });
+  return set;
+}
+
+function buildNameIndex(onlyPids){
+  const allow = onlyPids || null;
   const idx = [];
-  Object.keys(state.players).forEach(pid => {
-    const p = state.players[pid];
-    if (!p || String(pid).indexOf('TEAM_') === 0) return;
+  const pids = allow ? Array.from(allow) : Object.keys(state.players);
+  pids.forEach(pid => {
+    const id = String(pid);
+    if (allow && !allow.has(id)) return;
+    const p = state.players[id];
+    if (!p || id.indexOf('TEAM_') === 0) return;
     const name = playerName(p);
     const key = normalizeName(name);
     if (key.length < 4) return;
     const last = normalizeName(p.last_name || name.split(' ').slice(-1)[0]);
     const first = normalizeName(p.first_name || name.split(' ')[0] || '');
     const abbr = first ? (first.charAt(0) + last) : '';
-    idx.push({pid: String(pid), name, key, last, abbr});
+    idx.push({pid: id, name, key, last, abbr});
   });
   return idx;
 }
@@ -963,21 +1112,18 @@ function softNorm(s){
     .replace(/[.\u2019']/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-function matchPlayerOnLine(lnOrRaw, idx, opts){
-  const options = opts || {};
-  const preferPids = options.preferPids || null;
+function matchPlayerOnLine(lnOrRaw, idx){
   const ln = normalizeName(lnOrRaw);
   const soft = softNorm(lnOrRaw);
   const words = soft.split(/\s+/).filter(w => w.length >= 3);
   let best = null, bestScore = 99;
   idx.forEach(f => {
-    if (preferPids && !preferPids.has(f.pid)) return;
     let score = 99;
     if (ln.indexOf(f.key) >= 0) score = 0;
     else if (f.abbr && f.abbr.length >= 4 && ln.indexOf(f.abbr) >= 0) score = 1;
     else if (f.last.length >= 4 && ln.indexOf(f.last) >= 0) score = 2;
     else if (f.last.length >= 4){
-      /* OCR typos: Wagler→Wagner — scan tokens, not the glued string. */
+      /* OCR typos within the matchup roster only. */
       words.forEach(w => {
         if (Math.abs(w.length - f.last.length) > 2) return;
         const d = editDist(w, f.last);
@@ -990,6 +1136,7 @@ function matchPlayerOnLine(lnOrRaw, idx, opts){
 }
 
 function focusRosterPids(){
+  /* Prefer the focused franchise when both sides are in the pool. */
   const set = new Set();
   const pair = state.selectedPair || state.pairs[0];
   if (!pair) return set;
@@ -1066,8 +1213,11 @@ function findGreenLockBadges(canvas){
 }
 
 function matchGreenBadgesToPlayers(badges, ocrWords){
-  const idx = buildNameIndex();
-  const prefer = focusRosterPids();
+  const rosterPids = matchupRosterPids();
+  const focusPids = focusRosterPids();
+  /* Index ONLY matchup roster players — never guess from the full NBA pool. */
+  const focusIdx = buildNameIndex(focusPids.size ? focusPids : rosterPids);
+  const bothIdx = buildNameIndex(rosterPids);
   const hits = [];
   const seen = {};
   const words = (ocrWords || []).filter(w =>
@@ -1080,18 +1230,19 @@ function matchGreenBadgesToPlayers(badges, ocrWords){
   }));
 
   badges.forEach(b => {
-    /* Color canvas + OCR canvas share left-column crop; OCR may be scaled up. */
     const by = b.y;
     const above = words
       .filter(n => n.y < by && by - n.y < 350 && by - n.y > 10)
       .sort((a, c) => c.y - a.y)
       .slice(0, 12);
-    /* Prefer the nearest name line above the badge. */
     const nearText = above.slice(0, 6).map(n => n.t).join(' ');
-    let match = matchPlayerOnLine(nearText, idx, {preferPids: prefer});
-    if (!match) match = matchPlayerOnLine(nearText, idx, null);
-    if (!match || seen[match.pid]) return;
+    /* Focus team first (left column of the SC), then the opponent roster only. */
+    let match = matchPlayerOnLine(nearText, focusIdx);
+    if (!match) match = matchPlayerOnLine(nearText, bothIdx);
+    if (!match || !rosterPids.has(String(match.pid)) || seen[match.pid]) return;
 
+    const side = sideForPid(match.pid);
+    const slot = slotKeyForPidOnSide(side, match.pid);
     let pts = ptsForMatchedPlayer(match.pid);
     if (pts == null || !Number.isFinite(pts)){
       const nums = nearText.match(/\b(\d{1,3}(?:\.\d{1,2})?)\b/g) || [];
@@ -1100,7 +1251,13 @@ function matchGreenBadgesToPlayers(badges, ocrWords){
     }
     if (pts == null || !Number.isFinite(pts)) return;
     seen[match.pid] = 1;
-    hits.push({pid: match.pid, name: match.name, pts: Number(pts)});
+    hits.push({
+      pid: match.pid,
+      name: match.name,
+      pts: Number(pts),
+      slot,
+      slotLabel: slotDisplayLabel(slot)
+    });
   });
   return hits;
 }
@@ -1157,29 +1314,37 @@ async function runOcrOnImage(file){
       } : null
     }));
 
-    const hits = matchGreenBadgesToPlayers(greenBadges, scaledWords);
-    /* Replace OCR marks for this pass — don't keep stale LOCK-IN false positives. */
+    /* Drop prior OCR marks before slot lookup so positions come from the live lineup. */
     Object.keys(state.lockMarks || {}).forEach(pid => {
       if (state.lockMarks[pid] && state.lockMarks[pid].source === 'ocr'){
         delete state.lockMarks[pid];
       }
     });
+    const hits = matchGreenBadgesToPlayers(greenBadges, scaledWords);
     hits.forEach(h => {
-      state.lockMarks[h.pid] = {pts: h.pts, source: 'ocr', name: h.name};
+      state.lockMarks[h.pid] = {
+        pts: h.pts,
+        source: 'ocr',
+        name: h.name,
+        slot: h.slot == null ? 'BN' : h.slot
+      };
     });
     saveLockMarks();
     document.getElementById('shotClear').hidden = false;
+    const rosterN = matchupRosterPids().size;
     if (!hits.length){
       status.className = 'shot-status';
       status.textContent = greenBadges.length
-        ? ('Found ' + greenBadges.length + ' green badge(s) but couldn’t match roster names. Tap lock pills on green-locked starters.')
-        : 'No green locked badges in that shot (cyan “LOCK-IN” = still unlocked). Tap lock pills if any row is wrong.';
-      console.warn('matchup green badges', greenBadges.length, 'ocr sample', textSample.slice(0, 600));
+        ? ('Found ' + greenBadges.length + ' green badge(s) but none matched the '
+          + rosterN + ' rostered players in this matchup. Tap lock pills on green-locked rows.')
+        : 'No green locked badges in that shot (cyan “LOCK-IN” = still unlocked). Matched only against this matchup’s rosters ('
+          + rosterN + ' players).';
+      console.warn('matchup green badges', greenBadges.length, 'roster pool', rosterN, 'ocr sample', textSample.slice(0, 600));
       render();
     } else {
       status.className = 'shot-status ok';
       status.textContent = 'Green LOCKED from screenshot: '
-        + hits.map(h => h.name + ' ' + h.pts).join(', ');
+        + hits.map(h => h.name + ' @' + (h.slotLabel || slotDisplayLabel(h.slot)) + ' ' + h.pts).join(', ');
       render();
     }
   } catch (e){
