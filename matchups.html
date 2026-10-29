@@ -185,7 +185,7 @@
         <button type="button" class="btn" id="shotPaste">Paste</button>
         <button type="button" class="btn" id="shotClear" hidden>Clear OCR</button>
       </div>
-      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot — only green <strong>LOCKED</strong> nights count (blue UNLOCKED starters can still be subbed). Or tap the lock pill on a row to mark/unmark.</p>
+      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot — we look for green <strong>LOCK-IN</strong> badges (not blue UNLOCKED). Or tap a lock pill on any row. Hard-refresh if the old error still shows.</p>
       <img class="shot-preview" id="shotPreview" alt="" hidden>
     </div>
 
@@ -201,7 +201,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-greenlock';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-lockin-ocr';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -765,7 +765,7 @@ function render(){
   document.getElementById('detailTitle').textContent =
     pair.sides[0].franchise.team + ' vs ' + pair.sides[1].franchise.team;
   document.getElementById('detailSub').textContent =
-    'Week ' + state.week + ' · starters · Bank ≥ uses remaining lock slots after scored nights';
+    'Week ' + state.week + ' · starters · Bank ≥ uses remaining slots after green LOCK-IN only';
   document.getElementById('sides').innerHTML =
     renderSide(pair.sides[0], leftPack) + renderSide(pair.sides[1], rightPack);
   renderAdvice(pair, leftPack, rightPack);
@@ -809,15 +809,80 @@ async function loadMatchups(week){
 function loadTesseract(){
   if (window.Tesseract) return Promise.resolve(window.Tesseract);
   if (state.tesseractLoading) return state.tesseractLoading;
-  state.tesseractLoading = new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
-    s.async = true;
-    s.onload = () => window.Tesseract ? resolve(window.Tesseract) : reject(new Error('Tesseract missing'));
-    s.onerror = () => reject(new Error('Could not load OCR library'));
-    document.head.appendChild(s);
-  }).catch(err => { state.tesseractLoading = null; throw err; });
+  const urls = [
+    'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
+    'https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js'
+  ];
+  state.tesseractLoading = (async () => {
+    let lastErr = null;
+    for (let i = 0; i < urls.length; i++){
+      try {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = urls[i];
+          s.async = true;
+          s.onload = () => window.Tesseract ? resolve() : reject(new Error('Tesseract missing'));
+          s.onerror = () => reject(new Error('CDN fail ' + urls[i]));
+          document.head.appendChild(s);
+        });
+        return window.Tesseract;
+      } catch (e){ lastErr = e; }
+    }
+    state.tesseractLoading = null;
+    throw lastErr || new Error('Could not load OCR library');
+  })();
   return state.tesseractLoading;
+}
+
+/* Soft invert for dark Sleeper UI — keep midtones so LOCK-IN glyphs survive. */
+function prepCanvasForOcr(img, opts){
+  const options = opts || {};
+  const maxSide = options.maxSide || 2400;
+  const leftOnly = !!options.leftOnly;
+  let sw = img.naturalWidth || img.width;
+  let sh = img.naturalHeight || img.height;
+  const srcW = leftOnly ? Math.max(1, Math.floor(sw * 0.58)) : sw;
+  const scale = Math.min(1, maxSide / Math.max(srcW, sh));
+  /* Tall phone shots: never shrink below readable lock labels */
+  const minW = leftOnly ? 900 : 1100;
+  const boost = srcW * scale < minW ? (minW / srcW) : scale;
+  const w = Math.max(1, Math.round(srcW * boost));
+  const h = Math.max(1, Math.round(sh * boost));
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, srcW, sh, 0, 0, w, h);
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const d = imageData.data;
+  let sum = 0, step = 20;
+  for (let i = 0; i < d.length; i += 4 * step) sum += (d[i] + d[i+1] + d[i+2]) / 3;
+  const avg = sum / Math.max(1, Math.floor(d.length / (4 * step)));
+  if (avg < 120){
+    const contrast = 1.35;
+    for (let i = 0; i < d.length; i += 4){
+      let r = 255 - d[i], g = 255 - d[i+1], b = 255 - d[i+2];
+      r = Math.min(255, Math.max(0, (r - 128) * contrast + 128));
+      g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
+      b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
+      const y = 0.299 * r + 0.587 * g + 0.114 * b;
+      /* Soft threshold — hard B/W kills LOCK-IN under badges */
+      const v = y > 155 ? 255 : (y < 75 ? 0 : y);
+      d[i] = d[i+1] = d[i+2] = v;
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }
+  return canvas;
+}
+
+function canvasToBlob(canvas){
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (!blob) reject(new Error('Could not prepare image'));
+      else resolve(blob);
+    }, 'image/png');
+  });
 }
 
 function resizeImageForOcr(file){
@@ -825,43 +890,15 @@ function resizeImageForOcr(file){
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      try {
-        const maxSide = 2000;
-        let w = img.naturalWidth || img.width;
-        let h = img.naturalHeight || img.height;
-        const scale = Math.min(1, maxSide / Math.max(w, h));
-        w = Math.max(1, Math.round(w * scale));
-        h = Math.max(1, Math.round(h * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-        const imageData = ctx.getImageData(0, 0, w, h);
-        const d = imageData.data;
-        let sum = 0, step = 16;
-        for (let i = 0; i < d.length; i += 4 * step) sum += (d[i] + d[i+1] + d[i+2]) / 3;
-        const avg = sum / Math.max(1, Math.floor(d.length / (4 * step)));
-        if (avg < 110){
-          const contrast = 1.55;
-          for (let i = 0; i < d.length; i += 4){
-            let r = 255 - d[i], g = 255 - d[i+1], b = 255 - d[i+2];
-            r = Math.min(255, Math.max(0, (r - 128) * contrast + 128));
-            g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
-            b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
-            const y = 0.299 * r + 0.587 * g + 0.114 * b;
-            const v = y > 140 ? 255 : (y < 90 ? 0 : y);
-            d[i] = d[i+1] = d[i+2] = v;
-          }
-          ctx.putImageData(imageData, 0, 0);
-        }
-        canvas.toBlob(blob => {
+      Promise.resolve()
+        .then(async () => {
+          const full = prepCanvasForOcr(img, {leftOnly: false});
+          const left = prepCanvasForOcr(img, {leftOnly: true});
+          const [fullBlob, leftBlob] = await Promise.all([canvasToBlob(full), canvasToBlob(left)]);
           URL.revokeObjectURL(url);
-          if (!blob) reject(new Error('Could not prepare image'));
-          else resolve(blob);
-        }, 'image/png');
-      } catch (e){ URL.revokeObjectURL(url); reject(e); }
+          resolve({full: fullBlob, left: leftBlob});
+        })
+        .catch(e => { URL.revokeObjectURL(url); reject(e); });
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read image')); };
     img.src = url;
@@ -884,49 +921,111 @@ function buildNameIndex(){
   return idx;
 }
 
-function matchPlayerOnLine(ln, idx){
-  return idx.find(f =>
-    ln.indexOf(f.key) >= 0
-    || (f.last.length >= 4 && ln.indexOf(f.last) >= 0)
-    || (f.abbr && f.abbr.length >= 5 && ln.indexOf(f.abbr) >= 0)
-  ) || null;
+function editDist(a, b){
+  const s = String(a || ''), t = String(b || '');
+  if (s === t) return 0;
+  if (!s.length) return t.length;
+  if (!t.length) return s.length;
+  const row = Array.from({length: t.length + 1}, (_, i) => i);
+  for (let i = 0; i < s.length; i++){
+    let prev = i, next = i + 1;
+    for (let j = 0; j < t.length; j++){
+      const cur = s.charAt(i) === t.charAt(j) ? prev : Math.min(prev, row[j + 1], next) + 1;
+      prev = row[j + 1];
+      row[j + 1] = cur;
+      next = cur;
+    }
+  }
+  return row[t.length];
 }
 
-/* Only green LOCKED rows — ignore UNLOCKED / NOT LOCK and bare scored lines. */
+function softNorm(s){
+  /* Keep spaces so “K Wagler” stays tokenizable after OCR cleanup. */
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.\u2019']/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function matchPlayerOnLine(lnOrRaw, idx, opts){
+  const options = opts || {};
+  const preferPids = options.preferPids || null;
+  const ln = normalizeName(lnOrRaw);
+  const soft = softNorm(lnOrRaw);
+  const words = soft.split(/\s+/).filter(w => w.length >= 3);
+  let best = null, bestScore = 99;
+  idx.forEach(f => {
+    if (preferPids && !preferPids.has(f.pid)) return;
+    let score = 99;
+    if (ln.indexOf(f.key) >= 0) score = 0;
+    else if (f.abbr && f.abbr.length >= 4 && ln.indexOf(f.abbr) >= 0) score = 1;
+    else if (f.last.length >= 4 && ln.indexOf(f.last) >= 0) score = 2;
+    else if (f.last.length >= 4){
+      /* OCR typos: Wagler→Wagner — scan tokens, not the glued string. */
+      words.forEach(w => {
+        if (Math.abs(w.length - f.last.length) > 2) return;
+        const d = editDist(w, f.last);
+        if (d <= 2) score = Math.min(score, 3 + d);
+      });
+    }
+    if (score < bestScore){ bestScore = score; best = f; }
+  });
+  return bestScore <= 5 ? best : null;
+}
+
+function focusRosterPids(){
+  const set = new Set();
+  const pair = state.selectedPair || state.pairs[0];
+  if (!pair) return set;
+  const side = pair.sides.find(s => s.franchise.team === state.focusTeam) || pair.sides[0];
+  (side && side.franchise.players || []).forEach(id => set.add(String(id)));
+  return set;
+}
+
+function ptsForMatchedPlayer(pid){
+  const pair = state.selectedPair || state.pairs[0];
+  const side = pair && pair.sides.find(s => (s.franchise.players || []).map(String).includes(String(pid)));
+  return weekPtsFor(pid, side && side.matchup);
+}
+
+/* Sleeper badges OCR as "LOCK-IN" (green) / "UNLOCKED" / "NOT LOCK" — not always "LOCKED". */
 function matchOcrLockedText(text){
   const idx = buildNameIndex();
+  const prefer = focusRosterPids();
   const lines = String(text || '').split(/\n+/);
   const hits = [];
   const seen = {};
+
+  function isLockInLine(ln){
+    if (!ln) return false;
+    if (ln.indexOf('unlocked') >= 0) return false;
+    if (ln.indexOf('notlock') >= 0 && ln.indexOf('lockin') < 0 && ln.indexOf('locked') < 0){
+      return false;
+    }
+    return ln.indexOf('lockin') >= 0
+      || ln.indexOf('locked') >= 0
+      || /lock[\s\-]?in/.test(ln);
+  }
+
   for (let i = 0; i < lines.length; i++){
     const raw = String(lines[i] || '');
     const ln = normalizeName(raw);
-    /* Require LOCKED, but not UNLOCKED / NOTLOCK */
-    const hasLocked = /\blocked\b/.test(ln) || ln.indexOf('locked') >= 0;
-    const isUnlocked = ln.indexOf('unlocked') >= 0 || ln.indexOf('notlock') >= 0;
-    if (!hasLocked || isUnlocked) continue;
+    if (!isLockInLine(ln)) continue;
+    /* "LOCK-IN NOT LOCK" = left player locked, right not — still a hit for left. */
 
     const windowLines = [
-      lines[i - 2] || '', lines[i - 1] || '', raw,
-      lines[i + 1] || '', lines[i + 2] || ''
+      lines[i - 4] || '', lines[i - 3] || '', lines[i - 2] || '',
+      lines[i - 1] || '', raw
     ].join(' ');
-    const winNorm = normalizeName(windowLines);
-    const match = matchPlayerOnLine(winNorm, idx) || matchPlayerOnLine(ln, idx);
+    let match = matchPlayerOnLine(windowLines, idx, {preferPids: prefer});
+    if (!match) match = matchPlayerOnLine(windowLines, idx, null);
     if (!match || seen[match.pid]) continue;
 
     const nums = windowLines.match(/\b(\d{1,3}(?:\.\d{1,2})?)\b/g) || [];
     const ptsCand = nums.map(Number).filter(n => n >= 5 && n <= 90);
-    /* Prefer values that look like fantasy FP (often xx.00 / xx.50) */
-    let pts = ptsCand.length ? ptsCand[ptsCand.length - 1] : null;
+    let pts = null;
     const halfish = ptsCand.filter(n => Math.abs(n * 2 - Math.round(n * 2)) < 1e-6 && n >= 10);
     if (halfish.length) pts = halfish[halfish.length - 1];
-
-    /* Fall back to live week points from API if OCR score is missing */
-    if (pts == null){
-      const pair = state.selectedPair || state.pairs[0];
-      const side = pair && pair.sides.find(s => (s.franchise.players || []).map(String).includes(match.pid));
-      pts = weekPtsFor(match.pid, side && side.matchup);
-    }
+    else if (ptsCand.length) pts = ptsCand[ptsCand.length - 1];
+    if (pts == null) pts = ptsForMatchedPlayer(match.pid);
     if (pts == null || !Number.isFinite(pts)) continue;
     seen[match.pid] = 1;
     hits.push({pid: match.pid, name: match.name, pts: Number(pts)});
@@ -934,27 +1033,37 @@ function matchOcrLockedText(text){
   return hits;
 }
 
+async function ocrBlob(worker, blob, psm){
+  await worker.setParameters({tessedit_pageseg_mode: String(psm)});
+  const {data: {text}} = await worker.recognize(blob);
+  return text || '';
+}
+
 async function runOcrOnImage(file){
   const status = document.getElementById('shotStatus');
   const preview = document.getElementById('shotPreview');
   status.className = 'shot-status';
-  status.textContent = 'Reading screenshot for green LOCKED…';
+  status.textContent = 'Reading screenshot for LOCK-IN badges…';
   preview.hidden = false;
   preview.src = URL.createObjectURL(file);
   try {
     await loadTesseract();
-    const blob = await resizeImageForOcr(file);
+    const packs = await resizeImageForOcr(file);
     const worker = await Tesseract.createWorker('eng');
-    await worker.setParameters({tessedit_pageseg_mode: '6'});
-    let {data: {text}} = await worker.recognize(blob);
-    if (!text || text.length < 20){
-      await worker.setParameters({tessedit_pageseg_mode: '11'});
-      const retry = await worker.recognize(blob);
-      text = retry.data.text;
+    /* Left column first (your roster), then full frame; PSM 6 + 4. */
+    let text = '';
+    const parts = [];
+    try {
+      parts.push(await ocrBlob(worker, packs.left, 6));
+      status.textContent = 'Reading screenshot… (pass 2)';
+      parts.push(await ocrBlob(worker, packs.left, 4));
+      status.textContent = 'Reading screenshot… (pass 3)';
+      parts.push(await ocrBlob(worker, packs.full, 6));
+    } finally {
+      await worker.terminate();
     }
-    await worker.terminate();
+    text = parts.join('\n');
     const hits = matchOcrLockedText(text);
-    /* Merge OCR locks into marks (keep manual marks for other pids) */
     hits.forEach(h => {
       state.lockMarks[h.pid] = {pts: h.pts, source: 'ocr', name: h.name};
     });
@@ -962,16 +1071,18 @@ async function runOcrOnImage(file){
     document.getElementById('shotClear').hidden = false;
     if (!hits.length){
       status.className = 'shot-status err';
-      status.textContent = 'No green LOCKED labels found. Tap lock pills on scored players, or try a sharper crop of the starters.';
+      status.textContent = 'Couldn’t find LOCK-IN badges. Tap lock pills on green-locked players (or re-upload a tighter crop of Starters).';
+      console.warn('matchup OCR text sample', text.slice(0, 800));
     } else {
       status.className = 'shot-status ok';
-      status.textContent = 'Green LOCKED from screenshot: '
+      status.textContent = 'LOCK-IN from screenshot: '
         + hits.map(h => h.name + ' ' + h.pts).join(', ');
       render();
     }
   } catch (e){
     status.className = 'shot-status err';
-    status.textContent = 'OCR failed: ' + (e.message || e);
+    status.textContent = 'OCR failed: ' + (e.message || e)
+      + '. You can still tap lock pills on each starter.';
   }
 }
 
