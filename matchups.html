@@ -2158,7 +2158,7 @@ async function runOcrOnImage(file){
   } catch (e){
     status.className = 'shot-status err';
     status.textContent = 'OCR failed: ' + (e.message || e)
-      + '. You can still tap lock pills on each starter.';
+      + '. Re-upload the screenshot — locks only come from the shot, not the API.';
   }
 }
 
