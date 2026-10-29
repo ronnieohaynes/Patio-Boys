@@ -313,7 +313,8 @@ const state = {
   focusTeam: MY_TEAM,
   lockByPid: {},
   statsSeason: null,
-  nbaWeek: null, /* { byTeam, oppg, avgOppg, finalEvents } from ESPN slate */
+  nbaWeek: null, /* { byTeam, oppg, avgOppg, finalEvents, weekStart, weekEnd } from ESPN slate */
+  nbaState: null, /* Sleeper /v1/state/nba — season_start_date, week */
   /* pid -> [{eventId, date, opp, fp}] scored box scores for played games. */
   gameFpByPid: {},
   /* Only green LOCKED nights — never inferred from “starter with points”. */
@@ -424,15 +425,53 @@ function ymd(d){
   return '' + y + m + day;
 }
 
-/* Fantasy weeks roughly Mon–Sun UTC; pull ESPN boards for 7 days around “now”
-   plus a few days of history for opp PPG. */
-async function loadNbaContext(){
-  const today = new Date();
+function parseIsoDateUtc(s){
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+}
+
+function addUtcDays(d, n){
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
+}
+
+/* Monday on/before date (UTC). JS Sunday=0 → days since Monday = (day+6)%7. */
+function mondayOnOrBeforeUtc(d){
+  const sinceMon = (d.getUTCDay() + 6) % 7;
+  return addUtcDays(d, -sinceMon);
+}
+
+/* Patio / Sleeper fantasy week = Monday–Sunday. Week 1 Mon = Monday of season_start_date’s week. */
+function fantasyWeekRange(weekNum, seasonStartDate){
+  const week = Math.max(1, Number(weekNum) || 1);
+  const start = parseIsoDateUtc(seasonStartDate)
+    || parseIsoDateUtc((state.nbaState && state.nbaState.season_start_date) || '')
+    || new Date(Date.UTC(new Date().getUTCFullYear(), 9, 20));
+  const week1Mon = mondayOnOrBeforeUtc(start);
+  const mon = addUtcDays(week1Mon, (week - 1) * 7);
+  const sun = addUtcDays(mon, 6);
   const dates = [];
-  for (let i = -10; i <= 6; i++){
-    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + i));
-    dates.push(ymd(d));
-  }
+  for (let i = 0; i < 7; i++) dates.push(ymd(addUtcDays(mon, i)));
+  return {
+    week: week,
+    mon: mon,
+    sun: sun,
+    startYmd: ymd(mon),
+    endYmd: ymd(sun),
+    dates: dates,
+    label: ymd(mon).slice(4, 6) + '/' + ymd(mon).slice(6, 8)
+      + '–' + ymd(sun).slice(4, 6) + '/' + ymd(sun).slice(6, 8)
+  };
+}
+
+/* Fantasy weeks are Mon–Sun. Slate logos under a name = games in that window.
+   Also pull a short lookback for opp PPG only (not counted in week games). */
+async function loadNbaContext(weekNum){
+  const week = weekNum != null ? Number(weekNum) : Number(state.week) || 1;
+  const range = fantasyWeekRange(week, state.nbaState && state.nbaState.season_start_date);
+  const lookback = [];
+  for (let i = 1; i <= 10; i++) lookback.push(ymd(addUtcDays(range.mon, -i)));
+  const dates = lookback.reverse().concat(range.dates);
   const results = await Promise.all(dates.map(ds =>
     fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=' + ds)
       .then(r => r.ok ? r.json() : null).catch(() => null)
@@ -443,10 +482,10 @@ async function loadNbaContext(){
   const gp = {};
   const finalEvents = []; /* {eventId, date, home, away} for boxscore FP */
   const seenFinal = {};
-  const upcomingCutoff = ymd(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 1)));
 
   results.forEach((board, idx) => {
     const ds = dates[idx];
+    const inFantasyWeek = ds >= range.startYmd && ds <= range.endYmd;
     (board && board.events || []).forEach(ev => {
       const comp = (ev.competitions || [])[0];
       if (!comp) return;
@@ -470,21 +509,25 @@ async function loadNbaContext(){
         ptsAgainst[aAbbr] = (ptsAgainst[aAbbr] || 0) + hScore;
         gp[aAbbr] = (gp[aAbbr] || 0) + 1;
       }
-      /* Upcoming / in-window slate for scouting + played-game FP */
-      if (ds >= upcomingCutoff){
-        const tipIso = ev.date || (comp.date) || null;
-        (byTeam[hAbbr] = byTeam[hAbbr] || []).push({
-          opp: aAbbr, home: true, date: ds, final: !!final, eventId, tipIso
-        });
-        (byTeam[aAbbr] = byTeam[aAbbr] || []).push({
-          opp: hAbbr, home: false, date: ds, final: !!final, eventId, tipIso
-        });
-        if (final && eventId && !seenFinal[eventId]){
-          seenFinal[eventId] = true;
-          finalEvents.push({eventId, date: ds, home: hAbbr, away: aAbbr});
-        }
+      /* Player week slate = Mon–Sun logos only (matches Sleeper under-name logos). */
+      if (!inFantasyWeek) return;
+      const tipIso = ev.date || (comp.date) || null;
+      (byTeam[hAbbr] = byTeam[hAbbr] || []).push({
+        opp: aAbbr, home: true, date: ds, final: !!final, eventId, tipIso
+      });
+      (byTeam[aAbbr] = byTeam[aAbbr] || []).push({
+        opp: hAbbr, home: false, date: ds, final: !!final, eventId, tipIso
+      });
+      if (final && eventId && !seenFinal[eventId]){
+        seenFinal[eventId] = true;
+        finalEvents.push({eventId, date: ds, home: hAbbr, away: aAbbr});
       }
     });
+  });
+
+  Object.keys(byTeam).forEach(t => {
+    byTeam[t].sort((a, b) => String(a.date).localeCompare(String(b.date))
+      || String(a.tipIso || '').localeCompare(String(b.tipIso || '')));
   });
 
   const oppg = {};
@@ -493,7 +536,13 @@ async function loadNbaContext(){
   });
   const vals = Object.values(oppg);
   const avgOppg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 112;
-  return {byTeam, oppg, avgOppg, gp, finalEvents};
+  return {
+    byTeam, oppg, avgOppg, gp, finalEvents,
+    week: range.week,
+    weekStart: range.startYmd,
+    weekEnd: range.endYmd,
+    weekLabel: range.label
+  };
 }
 
 function parseMadeAtt(cell){
@@ -710,9 +759,11 @@ function scoutPlayer(pid, dist){
   const espn = espnAbbr(team);
   const nba = state.nbaWeek;
   const games = (espn && nba && nba.byTeam[espn]) || [];
+  /* games[] is already Mon–Sun fantasy-week logos (one logo = one game). */
   const upcoming = games.filter(g => !g.final);
   const opps = upcoming.map(g => g.opp);
   const oppLabels = opps.map(o => ESPN_TO_SLEEPER[o] || o);
+  const gamesThisWeek = games.length;
   const scored = gameFpForPid(pid);
   const scoredByEvent = {};
   scored.forEach(g => { if (g.eventId) scoredByEvent[g.eventId] = g; });
@@ -805,6 +856,7 @@ function scoutPlayer(pid, dist){
     why: why.join(' · ') || '—',
     opps: oppLabels,
     slate,
+    gamesThisWeek: gamesThisWeek,
     gamesLeft: upcoming.length,
     nextGame: upcoming[0]
       ? {
@@ -1508,9 +1560,13 @@ function slateHtml(r){
     );
   }
   const left = r.scout && r.scout.gamesLeft != null ? Number(r.scout.gamesLeft) : 0;
-  if (left > 0){
+  const weekN = r.scout && r.scout.gamesThisWeek != null ? Number(r.scout.gamesThisWeek) : null;
+  if (left > 0 || (weekN != null && weekN > 0)){
+    const title = weekN != null
+      ? (left + ' of ' + weekN + ' games left this fantasy week (Mon–Sun)')
+      : 'Games left this fantasy week';
     chips.push(
-      '<span class="opp-chip" title="Games left this week">'
+      '<span class="opp-chip" title="' + escapeHtml(title) + '">'
       + left + ' left</span>'
     );
   }
@@ -1615,13 +1671,16 @@ function render(){
   document.getElementById('detailTitle').textContent =
     pair.sides[0].franchise.team + ' vs ' + pair.sides[1].franchise.team;
   document.getElementById('detailSub').textContent =
-    'Week ' + state.week + ' · Bank ≥ moves with weekday, games left, and injury · Rec = Lock / Switch / Wait';
+    'Week ' + state.week
+    + (state.nbaWeek && state.nbaWeek.weekLabel ? (' · ' + state.nbaWeek.weekLabel + ' Mon–Sun') : ' · Mon–Sun')
+    + ' · Bank ≥ moves with weekday, games left, and injury · Rec = Lock / Switch / Wait';
   document.getElementById('sides').innerHTML =
     renderSide(pair.sides[0], leftPack) + renderSide(pair.sides[1], rightPack);
   renderAdvice(pair, leftPack, rightPack);
 
   document.getElementById('footNote').textContent =
     'Lineup slots mirror Sleeper (PG/SG/G/SF/PF/F/C/UTIL badge on the right; BN on the bench). '
+    + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Under each name: locked players show only the screenshot chip; unlocked show last score, next tip, and games left. '
     + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points. '
     + 'Bank ≥ moves with weekday, games left, and injury. Rec = Lock / Switch / Wait.';
@@ -1671,6 +1730,17 @@ async function loadMatchups(week, opts){
     const mine = state.pairs.find(p => p.sides.some(s => s.franchise.team === state.focusTeam));
     state.selectedPair = mine || state.pairs[0] || null;
 
+    /* Reload Mon–Sun ESPN slate for the selected fantasy week (logo count = games). */
+    if (!quiet) progress(68, 'Loading week slate…');
+    try {
+      state.nbaWeek = await loadNbaContext(week);
+    } catch (e){
+      console.warn('NBA week slate failed', e);
+      if (!state.nbaWeek || state.nbaWeek.week !== week){
+        state.nbaWeek = {byTeam: {}, oppg: {}, avgOppg: 112, gp: {}, finalEvents: [], week: week};
+      }
+    }
+
     /* Boxscore FP needs matchup rows for the single-game Sleeper fallback. */
     if (!quiet) progress(72, 'Scoring played games…');
     try {
@@ -1682,11 +1752,14 @@ async function loadMatchups(week, opts){
     render();
     if (status){
       const fpN = Object.keys(state.gameFpByPid || {}).length;
+      const wk = state.nbaWeek || {};
       status.classList.remove('error');
-      status.textContent = 'Week ' + state.week + ' · '
+      status.textContent = 'Week ' + state.week
+        + (wk.weekLabel ? (' (' + wk.weekLabel + ')') : '')
+        + ' · Mon–Sun · '
         + state.pairs.length + ' matchups · smash season ' + (state.statsSeason || '—')
-        + ' · ESPN slate ' + (state.nbaWeek && Object.keys(state.nbaWeek.byTeam).length
-          ? Object.keys(state.nbaWeek.byTeam).length + ' teams'
+        + ' · ESPN slate ' + (Object.keys(wk.byTeam || {}).length
+          ? Object.keys(wk.byTeam).length + ' teams'
           : 'unavailable')
         + (fpN ? (' · ' + fpN + ' players with game FP') : '');
     }
@@ -2537,20 +2610,25 @@ async function load(){
   try {
     progress(5, 'Loading league…');
     const share = window.PatioBoysShare;
-    const [league, users, rosters, players] = await Promise.all([
+    const [league, users, rosters, players, nbaState] = await Promise.all([
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID).then(r => r.json()),
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/users').then(r => r.json()),
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters').then(r => r.json()),
       (window.PatioBoysShare && typeof PatioBoysShare.fetchPlayersNba === 'function')
         ? PatioBoysShare.fetchPlayersNba()
-        : fetch('https://api.sleeper.app/v1/players/nba').then(r => r.json())
+        : fetch('https://api.sleeper.app/v1/players/nba').then(r => r.json()),
+      fetch('https://api.sleeper.app/v1/state/nba').then(r => r.ok ? r.json() : null).catch(() => null)
     ]);
     state.league = league;
     state.users = users || [];
     state.rosters = rosters || [];
     state.players = players || {};
+    state.nbaState = nbaState || null;
 
-    const week = Number(league.settings && league.settings.leg) || 1;
+    const week = Number(league.settings && league.settings.leg)
+      || Number(nbaState && nbaState.leg)
+      || Number(nbaState && nbaState.week)
+      || 1;
     const playoff = Number(league.settings && league.settings.playoff_week_start) || 22;
     state.maxWeek = Math.max(week, playoff - 1, 18);
     state.week = week;
@@ -2579,12 +2657,8 @@ async function load(){
       if (pack.statsSeason) state.statsSeason = pack.statsSeason;
     }
 
-    progress(60, 'Loading NBA slate…');
-    try {
-      state.nbaWeek = await loadNbaContext();
-    } catch (e){
-      state.nbaWeek = {byTeam: {}, oppg: {}, avgOppg: 112, gp: {}, finalEvents: []};
-    }
+    /* ESPN Mon–Sun slate loads inside loadMatchups for the selected week. */
+    state.nbaWeek = {byTeam: {}, oppg: {}, avgOppg: 112, gp: {}, finalEvents: [], week: state.week};
 
     /* Week + focus selects */
     const weekSel = document.getElementById('weekSel');
