@@ -254,7 +254,7 @@
         <button type="button" class="btn" id="shotPaste">Paste</button>
         <button type="button" class="btn" id="shotClear" hidden>Clear OCR</button>
       </div>
-      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot. <strong>Locked</strong> scores come only from the chip next to a logo + small closed lock — never from Sleeper/ESPN API points. <strong>LOCK-IN</strong> button = still unlocked.</p>
+      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot. <strong>Locked</strong> scores come only from the chip next to a logo + small closed lock — never from Sleeper/ESPN API points. <strong>LOCK-IN</strong> button = scored night still open to bank before tip.</p>
       <img class="shot-preview" id="shotPreview" alt="" hidden>
     </div>
 
@@ -1848,18 +1848,38 @@ function softNorm(s){
     .replace(/[\.…\u2019']/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-function matchPlayerOnLine(lnOrRaw, idx){
+/* Sleeper prints opponent abbrevs (BKN, DEN…) next to locks — never fuzzy-match those to roster last names.
+   “BKN” → “bane” is edit distance 2 and used to steal Tatum’s 55. */
+const NBA_TEAM_ABBREVS = {
+  atl:1, bos:1, bkn:1, bro:1, cha:1, chi:1, cle:1, dal:1, den:1, det:1,
+  gsw:1, gs:1, hou:1, ind:1, lac:1, lal:1, mem:1, mia:1, mil:1, min:1,
+  nop:1, no:1, nyk:1, ny:1, okc:1, orl:1, phi:1, phx:1, pho:1, por:1,
+  sac:1, sas:1, sa:1, tor:1, uta:1, was:1, wsh:1, nets:1, jazz:1
+};
+
+function isTeamAbbrevToken(w){
+  const t = String(w || '').toLowerCase().replace(/[^a-z]/g, '');
+  return t.length >= 2 && t.length <= 4 && !!NBA_TEAM_ABBREVS[t];
+}
+
+function matchPlayerOnLine(lnOrRaw, idx, opts){
+  const options = opts || {};
+  const strict = !!options.strict; /* exact / prefix only — no edit-distance */
   const ln = normalizeName(lnOrRaw);
   const soft = softNorm(lnOrRaw);
   /* Strip ellipsis from Sleeper truncations: “Antetokou...” */
-  const words = soft.split(/\s+/).map(w => w.replace(/\.+$/g, '')).filter(w => w.length >= 3);
+  const words = soft.split(/\s+/).map(w => w.replace(/\.+$/g, '')).filter(w => {
+    if (w.length < 3) return false;
+    if (isTeamAbbrevToken(w)) return false;
+    return true;
+  });
   let best = null, bestScore = 99;
   idx.forEach(f => {
     let score = 99;
     if (ln.indexOf(f.key) >= 0) score = 0;
     else if (f.abbr && f.abbr.length >= 4 && ln.indexOf(f.abbr) >= 0) score = 1;
     else if (f.last.length >= 4 && ln.indexOf(f.last) >= 0) score = 2;
-    else if (f.last.length >= 4){
+    else if (!strict && f.last.length >= 4){
       words.forEach(w => {
         /* Long Sleeper names often truncate mid-lastname. */
         if (w.length >= 5 && f.last.length >= 6){
@@ -1868,14 +1888,47 @@ function matchPlayerOnLine(lnOrRaw, idx){
             return;
           }
         }
-        if (Math.abs(w.length - f.last.length) > 2) return;
+        /* Short last names (Bane) need a near-exact token — d≤2 made BKN→Bane. */
+        const maxD = f.last.length <= 5 ? 1 : 2;
+        if (Math.abs(w.length - f.last.length) > maxD) return;
         const d = editDist(w, f.last);
-        if (d <= 2) score = Math.min(score, 3 + d);
+        if (d <= maxD && d > 0) score = Math.min(score, 3 + d);
       });
     }
     if (score < bestScore){ bestScore = score; best = f; }
   });
-  return bestScore <= 5 ? best : null;
+  return bestScore <= (strict ? 2 : 4) ? best : null;
+}
+
+/* Closest roster name above a cyan mark — don’t let opponent abbrevs / far bench text win. */
+function matchPlayerAboveMark(mark, words, focusIdx, bothIdx){
+  const above = (words || [])
+    .filter(n => n.y < mark.y && mark.y - n.y < 340 && mark.y - n.y > 6)
+    .filter(n => {
+      const t = String(n.t || '');
+      if (!/[A-Za-z]{3,}/.test(t)) return false;
+      if (/^(lock|lockin|not|yet|play|vs|at|fri|sat|sun|mon|tue|wed|thu|today)$/i.test(t)) return false;
+      if (isTeamAbbrevToken(t)) return false;
+      return true;
+    })
+    .sort((a, c) => c.y - a.y);
+
+  /* Pass 1: exact last-name on nearest tokens (Tatum before any fuzzy noise). */
+  for (let i = 0; i < Math.min(10, above.length); i++){
+    const tok = above[i].t;
+    let match = matchPlayerOnLine(tok, focusIdx, {strict: true});
+    if (!match) match = matchPlayerOnLine(tok, bothIdx, {strict: true});
+    if (match) return match;
+  }
+  /* Pass 2: small joined window with tight fuzzy rules. */
+  for (let n = 2; n <= Math.min(6, above.length); n++){
+    const nearText = above.slice(0, n).map(w => w.t).join(' ');
+    if (/not\s*lock/i.test(nearText) || normalizeName(nearText).indexOf('notlock') >= 0) return null;
+    let match = matchPlayerOnLine(nearText, focusIdx);
+    if (!match) match = matchPlayerOnLine(nearText, bothIdx);
+    if (match) return match;
+  }
+  return null;
 }
 
 function focusRosterPids(){
@@ -2175,15 +2228,8 @@ async function ocrLockScoreFromPatch(worker, colorCanvas, mark){
   }
 }
 
-async function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords, opts){
-  const options = opts || {};
-  const rosterPids = matchupRosterPids();
-  const focusPids = focusRosterPids();
-  const focusIdx = buildNameIndex(focusPids.size ? focusPids : rosterPids);
-  const bothIdx = buildNameIndex(rosterPids);
-  const hits = [];
-  const seen = {};
-  const allWords = (ocrWords || []).filter(w => {
+function filterOcrWords(ocrWords){
+  return (ocrWords || []).filter(w => {
     if (!w || !String(w.text || '').trim()) return false;
     const t = String(w.text || '').trim();
     const conf = Number(w.confidence) || 0;
@@ -2197,6 +2243,33 @@ async function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords, opts
     x: w.bbox ? w.bbox.x0 : 0,
     x1: w.bbox ? w.bbox.x1 : 0
   }));
+}
+
+async function readMarkChipPts(mark, numWords, options){
+  let pts = ocrLockScoreNearMark(mark, numWords);
+  if (options && options.worker && options.colorCanvas){
+    const pagePretty = pts != null && Number.isFinite(pts)
+      && Math.abs(pts * 2 - Math.round(pts * 2)) < 1e-6;
+    if (pts == null || !Number.isFinite(pts) || !pagePretty){
+      const patchPts = await ocrLockScoreFromPatch(options.worker, options.colorCanvas, mark);
+      if (patchPts != null && Number.isFinite(patchPts)){
+        const patchPretty = Math.abs(patchPts * 2 - Math.round(patchPts * 2)) < 1e-6;
+        if (pts == null || !Number.isFinite(pts) || (patchPretty && !pagePretty)) pts = patchPts;
+      }
+    }
+  }
+  return pts;
+}
+
+async function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords, opts){
+  const options = opts || {};
+  const rosterPids = matchupRosterPids();
+  const focusPids = focusRosterPids();
+  const focusIdx = buildNameIndex(focusPids.size ? focusPids : rosterPids);
+  const bothIdx = buildNameIndex(rosterPids);
+  const hits = [];
+  const seen = {};
+  const allWords = filterOcrWords(ocrWords);
   const words = allWords.filter(w => /[A-Za-z]{2,}/.test(w.t));
   const numWords = allWords.filter(w => /\d/.test(w.t));
 
@@ -2214,39 +2287,60 @@ async function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords, opts
   for (let i = 0; i < marks.length; i++){
     const b = marks[i];
     if (nearLockIn(b.y)) continue; /* LOCK-IN button row, not a banked logo. */
-    const above = words
-      .filter(n => n.y < b.y && b.y - n.y < 380 && b.y - n.y > 8)
-      .sort((a, c) => c.y - a.y)
-      .slice(0, 14);
-    const nearText = above.slice(0, 8).map(n => n.t).join(' ');
-    if (/not\s*lock/i.test(nearText) || normalizeName(nearText).indexOf('notlock') >= 0) continue;
-    let match = matchPlayerOnLine(nearText, focusIdx);
-    if (!match) match = matchPlayerOnLine(nearText, bothIdx);
+    const match = matchPlayerAboveMark(b, words, focusIdx, bothIdx);
     if (!match || !rosterPids.has(String(match.pid)) || seen[match.pid]) continue;
 
     const side = sideForPid(match.pid);
     const slot = slotKeyForPidOnSide(side, match.pid);
     /* Only the chip beside the cyan lock logo — never API week/game FP. */
-    let pts = ocrLockScoreNearMark(b, numWords);
-    /* If page OCR missed the chip (or only saw the grey projection under it),
-       re-read a tight patch to the right of the logo-lock. */
-    if (options.worker && options.colorCanvas){
-      const pagePretty = pts != null && Number.isFinite(pts)
-        && Math.abs(pts * 2 - Math.round(pts * 2)) < 1e-6;
-      if (pts == null || !Number.isFinite(pts) || !pagePretty){
-        const patchPts = await ocrLockScoreFromPatch(options.worker, options.colorCanvas, b);
-        if (patchPts != null && Number.isFinite(patchPts)){
-          const patchPretty = Math.abs(patchPts * 2 - Math.round(patchPts * 2)) < 1e-6;
-          if (pts == null || !Number.isFinite(pts) || (patchPretty && !pagePretty)) pts = patchPts;
-        }
-      }
-    }
+    const pts = await readMarkChipPts(b, numWords, options);
     if (pts == null || !Number.isFinite(pts)) continue;
     seen[match.pid] = 1;
     hits.push({
       pid: match.pid,
       name: match.name,
       pts: Number(pts),
+      slot,
+      slotLabel: slotDisplayLabel(slot)
+    });
+  }
+  return hits;
+}
+
+/* Solid LOCK-IN button = scored night still unlocked (can bank before next tip). */
+async function matchLockInOpportunities(lockInBtns, ocrWords, opts){
+  const options = opts || {};
+  const rosterPids = matchupRosterPids();
+  const focusPids = focusRosterPids();
+  const focusIdx = buildNameIndex(focusPids.size ? focusPids : rosterPids);
+  const bothIdx = buildNameIndex(rosterPids);
+  const allWords = filterOcrWords(ocrWords);
+  const words = allWords.filter(w => /[A-Za-z]{2,}/.test(w.t));
+  const numWords = allWords.filter(w => /\d/.test(w.t));
+  const hits = [];
+  const seen = {};
+
+  const btns = lockInBtns || [];
+  for (let i = 0; i < btns.length; i++){
+    const b = btns[i];
+    const above = words
+      .filter(n => n.y < b.y && b.y - n.y < 340 && b.y - n.y > 6)
+      .sort((a, c) => c.y - a.y)
+      .slice(0, 8);
+    const nearText = above.map(n => n.t).join(' ');
+    if (/not\s*lock/i.test(nearText) || normalizeName(nearText).indexOf('notlock') >= 0) continue;
+    const match = matchPlayerAboveMark(b, words, focusIdx, bothIdx);
+    if (!match || !rosterPids.has(String(match.pid)) || seen[match.pid]) continue;
+    /* Prefer focus-team LOCK-INs (left column); skip opponent buttons. */
+    if (focusPids.size && !focusPids.has(String(match.pid))) continue;
+    const side = sideForPid(match.pid);
+    const slot = slotKeyForPidOnSide(side, match.pid);
+    const pts = await readMarkChipPts(b, numWords, options);
+    seen[match.pid] = 1;
+    hits.push({
+      pid: match.pid,
+      name: match.name,
+      pts: pts != null && Number.isFinite(pts) ? Number(pts) : null,
       slot,
       slotLabel: slotDisplayLabel(slot)
     });
@@ -2278,6 +2372,7 @@ async function runOcrOnImage(file){
     let words = [];
     let textSample = '';
     let hits = [];
+    let openLockIns = [];
     try {
       status.textContent = 'Matching locked nights to roster names…';
       const pass1 = await ocrWordsFromCanvas(worker, packs.ocrLeft, 6);
@@ -2316,6 +2411,13 @@ async function runOcrOnImage(file){
         worker,
         colorCanvas: packs.color.canvas
       });
+      if (marks.lockInBtns.length){
+        status.textContent = 'Checking open LOCK-IN opportunities…';
+      }
+      openLockIns = await matchLockInOpportunities(marks.lockInBtns, scaledWords, {
+        worker,
+        colorCanvas: packs.color.canvas
+      });
     } finally {
       await worker.terminate();
     }
@@ -2330,22 +2432,32 @@ async function runOcrOnImage(file){
     saveLockMarks();
     document.getElementById('shotClear').hidden = false;
     const rosterN = matchupRosterPids().size;
+    function fmtLockHit(h){
+      return h.name + ' @' + (h.slotLabel || slotDisplayLabel(h.slot))
+        + (h.pts != null ? (' ' + h.pts) : '');
+    }
+    const openNote = openLockIns.length
+      ? (' · still open to LOCK-IN: ' + openLockIns.map(fmtLockHit).join(', ')
+        + ' (not banked — tap LOCK-IN in Sleeper before tip)')
+      : (marks.lockInBtns.length
+        ? (' · ' + marks.lockInBtns.length + ' LOCK-IN button(s) still unlocked')
+        : '');
     if (!hits.length){
-      status.className = 'shot-status';
+      status.className = openLockIns.length ? 'shot-status ok' : 'shot-status';
       status.textContent = marks.locked.length
         ? ('Found ' + marks.locked.length + ' logo-lock(s) but couldn’t read a lock chip score '
           + 'next to them (API scores are never used). Re-upload a sharper shot or scroll so the '
-          + 'score + lock logo are visible.')
+          + 'score + lock logo are visible.' + openNote)
         : ('No locked logo nights in that shot'
-          + (marks.lockInBtns.length ? (' (' + marks.lockInBtns.length + ' LOCK-IN button(s) = still unlocked)') : '')
-          + '). Only screenshot lock chips count — never API week FP.');
-      console.warn('matchup locks', marks, 'roster pool', rosterN, 'ocr sample', textSample.slice(0, 600));
+          + (openNote || '.')
+          + ' Only screenshot lock chips count — never API week FP.');
+      console.warn('matchup locks', marks, 'openLockIns', openLockIns, 'roster pool', rosterN, 'ocr sample', textSample.slice(0, 600));
       render();
     } else {
       status.className = 'shot-status ok';
       status.textContent = 'LOCKED from screenshot: '
-        + hits.map(h => h.name + ' @' + (h.slotLabel || slotDisplayLabel(h.slot)) + ' ' + h.pts).join(', ')
-        + (marks.lockInBtns.length ? (' · ignored ' + marks.lockInBtns.length + ' LOCK-IN button(s)') : '');
+        + hits.map(fmtLockHit).join(', ')
+        + openNote;
       render();
     }
   } catch (e){
