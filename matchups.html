@@ -1095,9 +1095,14 @@ function openLockSlots(pack){
   const labels = lockSlotLabels();
   const taken = new Set();
   (pack.rows || []).forEach(r => {
-    if (!r.locked) return;
+    /* Locked nights freeze the lineup slot — not open for Switch/Lock-in. */
+    if (!isImmovable(r)) return;
     if (r.slot == null || r.slot === 'BN') return;
-    taken.add(Number(r.slot));
+    const idx = Number(r.slot);
+    if (Number.isFinite(idx)) taken.add(idx);
+    const lab = String(r.slotLabel || '').toUpperCase();
+    const byLabel = labels.indexOf(lab);
+    if (byLabel >= 0) taken.add(byLabel);
   });
   return labels.map((lab, i) => ({index: i, label: lab, open: !taken.has(i)}))
     .filter(s => s.open);
@@ -1184,14 +1189,25 @@ function isBenchRow(r){
   return !r.starter || r.slot === 'BN' || r.slotLabel === 'BN';
 }
 
+/* Screenshot-locked nights are stuck — never Switch them out or over them. */
+function isImmovable(r){
+  if (!r) return true;
+  if (r.locked) return true;
+  if (r.lockPts != null && Number.isFinite(Number(r.lockPts))) return true;
+  if (r.pid != null && isLocked(r.pid)) return true;
+  return false;
+}
+
 /* Starter → bench player eligible for the SAME lock slot.
-   Never recommend swapping one starter for another starter. */
+   Never recommend swapping one starter for another starter.
+   Never recommend moving a locked starter. */
 function betterSwitchTarget(r, pack){
+  if (isImmovable(r)) return null;
   const myMean = r.dist && Number(r.dist.mean) || 0;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null; /* starters only — bench uses switch-in */
   const cands = (pack.rows || []).filter(o => {
-    if (!o || o.pid === r.pid || o.locked) return false;
+    if (!o || o.pid === r.pid || isImmovable(o)) return false;
     if (!isBenchRow(o)) return false; /* bench only — no starter↔starter */
     const inj = o.scout && o.scout.injury;
     if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
@@ -1207,14 +1223,15 @@ function betterSwitchTarget(r, pack){
   return {row: best, into: slotLabel};
 }
 
-/* Bench player → starter they should replace (slot they fit, clearly better). */
+/* Bench player → starter they should replace (slot they fit, clearly better).
+   Locked starters cannot be moved — never “In · over” them. */
 function benchSwitchInOver(r, pack){
   const myMean = r.dist && Number(r.dist.mean) || 0;
   const myScored = latestScoredFp(r);
   const myBank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   const cands = [];
   (pack.rows || []).forEach(o => {
-    if (!o || o.pid === r.pid || o.locked || isBenchRow(o)) return;
+    if (!o || o.pid === r.pid || isImmovable(o) || isBenchRow(o)) return;
     const into = o.slotLabel && o.slotLabel !== 'BN' ? String(o.slotLabel).toUpperCase() : null;
     if (!into || !fitsLockSlot(r.p, into)) return;
     const theirInj = o.scout && o.scout.injury;
@@ -1240,7 +1257,9 @@ function benchSwitchInOver(r, pack){
     if (why) cands.push({row: o, into: into, why: why, score: score});
   });
   cands.sort((a, b) => b.score - a.score);
-  return cands[0] || null;
+  const best = cands[0] || null;
+  if (best && isImmovable(best.row)) return null;
+  return best;
 }
 
 function switchOutLabel(alt){
@@ -1260,11 +1279,11 @@ function switchInLabel(over){
 /* Actionable recommendation: Lock / Switch / Wait (+ reason).
    Only starting slots score — bench Switch means switch THIS player in. */
 function buildRec(r, pack){
-  if (r.locked){
+  if (isImmovable(r)){
     return {
       action: 'locked',
       label: 'Locked · ' + (r.slotLabel || 'slot'),
-      reason: 'Already banked',
+      reason: 'Already banked — can’t move',
       cls: 'rec-locked'
     };
   }
@@ -1471,7 +1490,11 @@ function renderAdvice(pair, leftPack, rightPack){
         .join(' · ')
       + '.</li>');
   }
-  const switches = focusPack.rows.filter(r => r.rec && r.rec.action === 'switch').slice(0, 4);
+  const switches = focusPack.rows.filter(r => {
+    if (!r.rec || r.rec.action !== 'switch') return false;
+    if (isImmovable(r)) return false;
+    return true;
+  }).slice(0, 4);
   if (switches.length){
     tips.push('<li><span class="tag bust">Switch</span>'
       + switches.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> '
