@@ -270,7 +270,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-refresh-fix';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-ocr-pts';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -2007,6 +2007,34 @@ function findSleeperLockMarks(canvas){
   return {locked, lockInBtns};
 }
 
+/* Score printed beside a locked logo on the Sleeper shot (e.g. "34.00").
+   Prefer OCR numbers next to the cyan ring — not ESPN week FP / players_points. */
+function ocrLockScoreNearMark(mark, numWords){
+  const mx = mark.x, my = mark.y;
+  const bw = mark.bw || 100, bh = mark.bh || 100;
+  const cands = [];
+  (numWords || []).forEach(w => {
+    const raw = String(w.t || '').replace(/,/g, '');
+    const m = raw.match(/^(\d{1,3}(?:\.\d{1,2})?)$/);
+    if (!m) return;
+    const v = Number(m[1]);
+    if (!(v >= 5 && v <= 100)) return;
+    const wy = (w.y + (w.y1 || w.y)) / 2;
+    const wx = w.x + ((w.x1 != null ? w.x1 - w.x : 0) / 2);
+    const dy = Math.abs(wy - my);
+    const dx = mx - wx; /* scores sit left of the logo ring */
+    if (dy > bh * 1.15) return;
+    if (dx < -bw * 0.35 || dx > bw * 3.2) return;
+    /* Prefer values that look like Sleeper lock chips (.00 / .50 / .5). */
+    const pretty = /\.\d{2}$/.test(raw) || /\.5$/.test(raw) || /\.0$/.test(raw);
+    const score = (pretty ? 40 : 0) + Math.max(0, 30 - dy / 4) + Math.max(0, 20 - Math.abs(dx - bw * 0.9) / 8);
+    cands.push({v, score, pretty, raw});
+  });
+  if (!cands.length) return null;
+  cands.sort((a, b) => b.score - a.score);
+  return cands[0].v;
+}
+
 function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords){
   const rosterPids = matchupRosterPids();
   const focusPids = focusRosterPids();
@@ -2014,14 +2042,17 @@ function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords){
   const bothIdx = buildNameIndex(rosterPids);
   const hits = [];
   const seen = {};
-  const words = (ocrWords || []).filter(w =>
-    w && w.confidence >= 35 && /[A-Za-z]{2,}/.test(String(w.text || ''))
+  const allWords = (ocrWords || []).filter(w =>
+    w && w.confidence >= 30 && String(w.text || '').trim()
   ).map(w => ({
-    t: String(w.text || ''),
+    t: String(w.text || '').trim(),
     y: w.bbox ? w.bbox.y0 : 0,
     y1: w.bbox ? w.bbox.y1 : 0,
-    x: w.bbox ? w.bbox.x0 : 0
+    x: w.bbox ? w.bbox.x0 : 0,
+    x1: w.bbox ? w.bbox.x1 : 0
   }));
+  const words = allWords.filter(w => /[A-Za-z]{2,}/.test(w.t));
+  const numWords = allWords.filter(w => /\d/.test(w.t));
 
   const lockInYs = (lockInBtns || []).map(b => b.y);
   words.forEach(w => {
@@ -2047,11 +2078,15 @@ function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords){
 
     const side = sideForPid(match.pid);
     const slot = slotKeyForPidOnSide(side, match.pid);
-    let pts = ptsForMatchedPlayer(match.pid);
+    /* Screenshot score wins — week FP (17) is not the locked chip (34.00). */
+    let pts = ocrLockScoreNearMark(b, numWords);
     if (pts == null || !Number.isFinite(pts)){
       const nums = nearText.match(/\b(\d{1,3}(?:\.\d{1,2})?)\b/g) || [];
-      const ptsCand = nums.map(Number).filter(n => n >= 5 && n <= 90);
+      const ptsCand = nums.map(Number).filter(n => n >= 5 && n <= 100);
       if (ptsCand.length) pts = ptsCand[ptsCand.length - 1];
+    }
+    if (pts == null || !Number.isFinite(pts)){
+      pts = ptsForMatchedPlayer(match.pid);
     }
     if (pts == null || !Number.isFinite(pts)) return;
     seen[match.pid] = 1;
