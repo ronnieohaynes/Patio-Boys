@@ -270,7 +270,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-ocr-only';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-no-starter-swap';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1101,13 +1101,15 @@ function isBenchRow(r){
   return !r.starter || r.slot === 'BN' || r.slotLabel === 'BN';
 }
 
-/* Starter → better eligible teammate for the SAME lock slot (never Tatum into PG). */
+/* Starter → bench player eligible for the SAME lock slot.
+   Never recommend swapping one starter for another starter. */
 function betterSwitchTarget(r, pack){
   const myMean = r.dist && Number(r.dist.mean) || 0;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null; /* starters only — bench uses switch-in */
   const cands = (pack.rows || []).filter(o => {
     if (!o || o.pid === r.pid || o.locked) return false;
+    if (!isBenchRow(o)) return false; /* bench only — no starter↔starter */
     const inj = o.scout && o.scout.injury;
     if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
     if (!fitsLockSlot(o.p, slotLabel)) return false;
