@@ -1703,7 +1703,8 @@ function prepColorCanvas(img, opts){
   const leftOnly = options.leftOnly !== false;
   let sw = img.naturalWidth || img.width;
   let sh = img.naturalHeight || img.height;
-  const srcW = leftOnly ? Math.max(1, Math.floor(sw * 0.55)) : sw;
+  /* ~62% keeps left-column lock chips (logo + white score) in frame. */
+  const srcW = leftOnly ? Math.max(1, Math.floor(sw * 0.62)) : sw;
   /* Cap tall Sleeper scrolls so badge scan stays responsive. */
   const maxH = options.maxH || 14000;
   const maxW = options.maxW || 900;
@@ -1724,7 +1725,7 @@ function prepCanvasForOcr(img, opts){
   const leftOnly = !!options.leftOnly;
   let sw = img.naturalWidth || img.width;
   let sh = img.naturalHeight || img.height;
-  const srcW = leftOnly ? Math.max(1, Math.floor(sw * 0.55)) : sw;
+  const srcW = leftOnly ? Math.max(1, Math.floor(sw * 0.62)) : sw;
   const scale = Math.min(1, maxSide / Math.max(srcW, sh));
   const minW = leftOnly ? 900 : 1100;
   const boost = srcW * scale < minW ? (minW / srcW) : scale;
@@ -1736,24 +1737,30 @@ function prepCanvasForOcr(img, opts){
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, srcW, sh, 0, 0, w, h);
-  const imageData = ctx.getImageData(0, 0, w, h);
+  invertCanvasIfDark(canvas);
+  return canvas;
+}
+
+/* Dark Sleeper → black ink on white for Tesseract. */
+function invertCanvasIfDark(canvas){
+  const ctx = canvas.getContext('2d', {willReadFrequently: true});
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const d = imageData.data;
   let sum = 0, step = 20;
   for (let i = 0; i < d.length; i += 4 * step) sum += (d[i] + d[i+1] + d[i+2]) / 3;
   const avg = sum / Math.max(1, Math.floor(d.length / (4 * step)));
-  if (avg < 120){
-    const contrast = 1.35;
-    for (let i = 0; i < d.length; i += 4){
-      let r = 255 - d[i], g = 255 - d[i+1], b = 255 - d[i+2];
-      r = Math.min(255, Math.max(0, (r - 128) * contrast + 128));
-      g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
-      b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
-      const y = 0.299 * r + 0.587 * g + 0.114 * b;
-      const v = y > 155 ? 255 : (y < 75 ? 0 : y);
-      d[i] = d[i+1] = d[i+2] = v;
-    }
-    ctx.putImageData(imageData, 0, 0);
+  if (avg >= 120) return canvas;
+  const contrast = 1.35;
+  for (let i = 0; i < d.length; i += 4){
+    let r = 255 - d[i], g = 255 - d[i+1], b = 255 - d[i+2];
+    r = Math.min(255, Math.max(0, (r - 128) * contrast + 128));
+    g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
+    b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    const v = y > 155 ? 255 : (y < 75 ? 0 : y);
+    d[i] = d[i+1] = d[i+2] = v;
   }
+  ctx.putImageData(imageData, 0, 0);
   return canvas;
 }
 
@@ -1984,44 +1991,206 @@ function findSleeperLockMarks(canvas){
   return {locked, lockInBtns};
 }
 
+/* Normalize OCR number junk: "34.OO", "34 . 00", "34,00", "3400" → 34 / 34.00 */
+function parseOcrLockNumber(text){
+  let raw = String(text || '').trim().replace(/,/g, '.');
+  raw = raw.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5');
+  raw = raw.replace(/\s+/g, '');
+  let m = raw.match(/^(\d{1,3}\.\d{1,2})$/);
+  if (m) return Number(m[1]);
+  m = raw.match(/^(\d{1,3})$/);
+  if (m) return Number(m[1]);
+  /* "3400" / "4150" from a missed decimal → 34.00 / 41.50 when in range */
+  m = raw.match(/^(\d{2,3})(\d{2})$/);
+  if (m){
+    const whole = Number(m[1]);
+    const frac = Number(m[2]);
+    if (whole >= 5 && whole <= 100 && frac <= 99){
+      return whole + frac / 100;
+    }
+  }
+  return null;
+}
+
+/* Merge neighboring OCR scraps into one lock chip ("34" + ".00", "41" + "50"). */
+function mergeOcrNumberWords(numWords){
+  const sorted = (numWords || []).slice().sort((a, b) =>
+    (a.y - b.y) || (a.x - b.x));
+  const out = [];
+  const used = {};
+  for (let i = 0; i < sorted.length; i++){
+    if (used[i]) continue;
+    const a = sorted[i];
+    let text = String(a.t || '');
+    let x1 = a.x1 != null ? a.x1 : a.x;
+    let y1 = a.y1 != null ? a.y1 : a.y;
+    for (let j = i + 1; j < sorted.length; j++){
+      if (used[j]) continue;
+      const b = sorted[j];
+      const ay = (a.y + (a.y1 || a.y)) / 2;
+      const by = (b.y + (b.y1 || b.y)) / 2;
+      if (Math.abs(by - ay) > 18) continue;
+      if (b.x - x1 > 28 || b.x + 4 < a.x) continue;
+      const bt = String(b.t || '');
+      if (!/^(\.\d{1,2}|\d{1,2})$/.test(bt.replace(/[Oo]/g, '0'))) continue;
+      text += (bt.charAt(0) === '.' ? '' : (/^\d/.test(bt) && !/\./.test(text) ? '.' : '')) + bt;
+      x1 = Math.max(x1, b.x1 != null ? b.x1 : b.x);
+      y1 = Math.max(y1, b.y1 != null ? b.y1 : b.y);
+      used[j] = 1;
+    }
+    used[i] = 1;
+    out.push({t: text, x: a.x, y: a.y, x1: x1, y1: y1});
+  }
+  return out;
+}
+
+/* Rank OCR number scraps: white lock chip (.00/.50, taller, above grey proj). */
+function scoreOcrLockCandidate(v, raw, opts){
+  const o = opts || {};
+  const text = String(raw || '');
+  const prettyHalf = Math.abs(v * 2 - Math.round(v * 2)) < 1e-6; /* .00 / .50 */
+  const hasCents = /\.\d{2}/.test(text);
+  let score = 0;
+  if (o.dxRight != null && o.dxRight >= 0) score += 50;
+  if (prettyHalf) score += 55;
+  if (hasCents) score += 20;
+  /* Lock chip is the big white number; grey projection sits under it. */
+  if (o.above) score += 45;
+  if (o.glyphH) score += Math.min(45, o.glyphH);
+  if (o.dy != null) score += Math.max(0, 25 - o.dy / 4);
+  return score;
+}
+
 /* Score printed beside a locked logo on the Sleeper shot (e.g. "34.00").
-   Prefer OCR numbers next to the cyan ring — not ESPN week FP / players_points. */
+   Left-column layout: [logo+lock] [@ DEN] [34.00 above / 25.42 grey below].
+   Prefer the white chip, never the grey projection under it. */
 function ocrLockScoreNearMark(mark, numWords){
   const mx = mark.x, my = mark.y;
   const bw = mark.bw || 100, bh = mark.bh || 100;
+  const merged = mergeOcrNumberWords(numWords);
   const cands = [];
-  (numWords || []).forEach(w => {
-    const raw = String(w.t || '').replace(/,/g, '');
-    const m = raw.match(/^(\d{1,3}(?:\.\d{1,2})?)$/);
-    if (!m) return;
-    const v = Number(m[1]);
-    if (!(v >= 5 && v <= 100)) return;
+  merged.forEach(w => {
+    const v = parseOcrLockNumber(w.t);
+    if (v == null || !Number.isFinite(v) || v < 5 || v > 100) return;
     const wy = (w.y + (w.y1 || w.y)) / 2;
     const wx = w.x + ((w.x1 != null ? w.x1 - w.x : 0) / 2);
     const dy = Math.abs(wy - my);
-    const dx = mx - wx; /* scores sit left of the logo ring */
-    if (dy > bh * 1.15) return;
-    if (dx < -bw * 0.35 || dx > bw * 3.2) return;
-    /* Prefer values that look like Sleeper lock chips (.00 / .50 / .5). */
-    const pretty = /\.\d{2}$/.test(raw) || /\.5$/.test(raw) || /\.0$/.test(raw);
-    const score = (pretty ? 40 : 0) + Math.max(0, 30 - dy / 4) + Math.max(0, 20 - Math.abs(dx - bw * 0.9) / 8);
-    cands.push({v, score, pretty, raw});
+    const dxRight = wx - mx; /* positive = score is right of logo (left column) */
+    if (dy > bh * 1.6) return;
+    /* Chip is right of the ring (often past "@ DEN"); allow a little left. */
+    if (dxRight < -bw * 0.55 || dxRight > bw * 5.5) return;
+    const raw = String(w.t || '');
+    const glyphH = Math.max(0, (w.y1 != null ? w.y1 : w.y) - w.y);
+    const above = wy <= my + bh * 0.12;
+    const score = scoreOcrLockCandidate(v, raw, {dxRight, dy, above, glyphH});
+    cands.push({v, score, raw, dxRight});
   });
   if (!cands.length) return null;
   cands.sort((a, b) => b.score - a.score);
   return cands[0].v;
 }
 
-function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords){
+/* Patch to the right of a logo-lock. mode=score skips "@ DEN" and aims at the chip. */
+function cropLockScorePatch(colorCanvas, mark, mode){
+  const mx = mark.x, my = mark.y;
+  const bw = mark.bw || 100, bh = mark.bh || 100;
+  const scoreCol = mode === 'score';
+  const x0 = Math.max(0, Math.floor(mx + bw * (scoreCol ? 1.75 : 0.25)));
+  const x1 = Math.min(colorCanvas.width, Math.ceil(mx + Math.max(bw * (scoreCol ? 5.0 : 4.8), scoreCol ? 220 : 280)));
+  const y0 = Math.max(0, Math.floor(my - bh * (scoreCol ? 0.8 : 0.95)));
+  const y1 = Math.min(colorCanvas.height, Math.ceil(my + bh * (scoreCol ? 0.9 : 1.05)));
+  const pw = Math.max(1, x1 - x0), ph = Math.max(1, y1 - y0);
+  if (pw < 36 || ph < 20) return null;
+  const patch = document.createElement('canvas');
+  /* Upscale small patches so Tesseract can read 34.00. */
+  const scale = Math.max(2.5, Math.min(5, 400 / pw));
+  patch.width = Math.round(pw * scale);
+  patch.height = Math.round(ph * scale);
+  const ctx = patch.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, patch.width, patch.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(colorCanvas, x0, y0, pw, ph, 0, 0, patch.width, patch.height);
+  invertCanvasIfDark(patch);
+  return patch;
+}
+
+function pickLockScoreFromOcrText(text){
+  const raw = String(text || '').replace(/,/g, '.');
+  /* Reading order: white chip is the first X.XX in the score column.
+     Also split glued OCR like "34.0041.50" / "55.0036". */
+  const decimals = raw.match(/\d{1,3}\.\d{1,2}/g) || [];
+  const cands = [];
+  decimals.forEach((tok, idx) => {
+    const v = parseOcrLockNumber(tok);
+    if (v == null || !Number.isFinite(v) || v < 5 || v > 100) return;
+    const prettyHalf = Math.abs(v * 2 - Math.round(v * 2)) < 1e-6;
+    /* Leftmost banked chip (.00/.50) wins over grey projections under/beside it. */
+    const score = (prettyHalf ? 80 : 20) + (idx === 0 ? 40 : Math.max(0, 30 - idx * 10));
+    cands.push({v, score, raw: tok, idx});
+  });
+  if (!cands.length){
+    const tokens = raw.match(/\d{3,5}|\d{1,3}/g) || [];
+    tokens.forEach((tok, idx) => {
+      const v = parseOcrLockNumber(tok);
+      if (v == null || !Number.isFinite(v) || v < 5 || v > 100) return;
+      const prettyHalf = Math.abs(v * 2 - Math.round(v * 2)) < 1e-6;
+      cands.push({v, score: (prettyHalf ? 70 : 10) + (idx === 0 ? 20 : 0), raw: tok, idx});
+    });
+  }
+  if (!cands.length) return null;
+  cands.sort((a, b) => b.score - a.score || a.idx - b.idx);
+  return cands[0].v;
+}
+
+async function ocrLockScoreFromPatch(worker, colorCanvas, mark){
+  const modes = ['score', 'wide'];
+  const found = [];
+  try {
+    for (let m = 0; m < modes.length; m++){
+      const patch = cropLockScorePatch(colorCanvas, mark, modes[m]);
+      if (!patch) continue;
+      /* Try single-line then sparse: 5→9 misreads happen on one PSM only. */
+      for (const psm of [7, 6]){
+        const data = await ocrWordsFromCanvas(worker, patch, psm);
+        const pts = pickLockScoreFromOcrText(data && data.text);
+        if (pts != null && Number.isFinite(pts)) found.push(pts);
+      }
+    }
+    if (!found.length) return null;
+    const counts = {};
+    found.forEach(v => { counts[v] = (counts[v] || 0) + 1; });
+    const uniq = Object.keys(counts).map(Number);
+    uniq.sort((a, b) => {
+      const ca = counts[a], cb = counts[b];
+      if (cb !== ca) return cb - ca;
+      const pa = Math.abs(a * 2 - Math.round(a * 2)) < 1e-6;
+      const pb = Math.abs(b * 2 - Math.round(b * 2)) < 1e-6;
+      if (pa !== pb) return pa ? -1 : 1;
+      return a - b;
+    });
+    return uniq[0];
+  } catch (e){
+    return null;
+  }
+}
+
+async function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords, opts){
+  const options = opts || {};
   const rosterPids = matchupRosterPids();
   const focusPids = focusRosterPids();
   const focusIdx = buildNameIndex(focusPids.size ? focusPids : rosterPids);
   const bothIdx = buildNameIndex(rosterPids);
   const hits = [];
   const seen = {};
-  const allWords = (ocrWords || []).filter(w =>
-    w && w.confidence >= 30 && String(w.text || '').trim()
-  ).map(w => ({
+  const allWords = (ocrWords || []).filter(w => {
+    if (!w || !String(w.text || '').trim()) return false;
+    const t = String(w.text || '').trim();
+    const conf = Number(w.confidence) || 0;
+    /* Numbers often OCR at lower confidence on dark Sleeper UI. */
+    if (/\d/.test(t)) return conf >= 18;
+    return conf >= 30;
+  }).map(w => ({
     t: String(w.text || '').trim(),
     y: w.bbox ? w.bbox.y0 : 0,
     y1: w.bbox ? w.bbox.y1 : 0,
@@ -2041,23 +2210,38 @@ function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords){
     return lockInYs.some(ly => Math.abs(ly - y) < 160);
   }
 
-  (lockedMarks || []).forEach(b => {
-    if (nearLockIn(b.y)) return; /* LOCK-IN button row, not a banked logo. */
+  const marks = lockedMarks || [];
+  for (let i = 0; i < marks.length; i++){
+    const b = marks[i];
+    if (nearLockIn(b.y)) continue; /* LOCK-IN button row, not a banked logo. */
     const above = words
       .filter(n => n.y < b.y && b.y - n.y < 380 && b.y - n.y > 8)
       .sort((a, c) => c.y - a.y)
       .slice(0, 14);
     const nearText = above.slice(0, 8).map(n => n.t).join(' ');
-    if (/not\s*lock/i.test(nearText) || normalizeName(nearText).indexOf('notlock') >= 0) return;
+    if (/not\s*lock/i.test(nearText) || normalizeName(nearText).indexOf('notlock') >= 0) continue;
     let match = matchPlayerOnLine(nearText, focusIdx);
     if (!match) match = matchPlayerOnLine(nearText, bothIdx);
-    if (!match || !rosterPids.has(String(match.pid)) || seen[match.pid]) return;
+    if (!match || !rosterPids.has(String(match.pid)) || seen[match.pid]) continue;
 
     const side = sideForPid(match.pid);
     const slot = slotKeyForPidOnSide(side, match.pid);
     /* Only the chip beside the cyan lock logo — never API week/game FP. */
-    const pts = ocrLockScoreNearMark(b, numWords);
-    if (pts == null || !Number.isFinite(pts)) return;
+    let pts = ocrLockScoreNearMark(b, numWords);
+    /* If page OCR missed the chip (or only saw the grey projection under it),
+       re-read a tight patch to the right of the logo-lock. */
+    if (options.worker && options.colorCanvas){
+      const pagePretty = pts != null && Number.isFinite(pts)
+        && Math.abs(pts * 2 - Math.round(pts * 2)) < 1e-6;
+      if (pts == null || !Number.isFinite(pts) || !pagePretty){
+        const patchPts = await ocrLockScoreFromPatch(options.worker, options.colorCanvas, b);
+        if (patchPts != null && Number.isFinite(patchPts)){
+          const patchPretty = Math.abs(patchPts * 2 - Math.round(patchPts * 2)) < 1e-6;
+          if (pts == null || !Number.isFinite(pts) || (patchPretty && !pagePretty)) pts = patchPts;
+        }
+      }
+    }
+    if (pts == null || !Number.isFinite(pts)) continue;
     seen[match.pid] = 1;
     hits.push({
       pid: match.pid,
@@ -2066,7 +2250,7 @@ function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords){
       slot,
       slotLabel: slotDisplayLabel(slot)
     });
-  });
+  }
   return hits;
 }
 
@@ -2093,6 +2277,7 @@ async function runOcrOnImage(file){
     const worker = await Tesseract.createWorker('eng');
     let words = [];
     let textSample = '';
+    let hits = [];
     try {
       status.textContent = 'Matching locked nights to roster names…';
       const pass1 = await ocrWordsFromCanvas(worker, packs.ocrLeft, 6);
@@ -2103,31 +2288,37 @@ async function runOcrOnImage(file){
         words = pass2.words || [];
         textSample = (textSample + '\n' + (pass2.text || '')).trim();
       }
+
+      const ocrH = packs.ocrLeft.height || 1;
+      const colorH = packs.color.canvas.height || 1;
+      const yScale = colorH / ocrH;
+      const xScale = packs.color.canvas.width / (packs.ocrLeft.width || 1);
+      const scaledWords = words.map(w => ({
+        text: w.text,
+        confidence: w.confidence,
+        bbox: w.bbox ? {
+          x0: w.bbox.x0 * xScale,
+          y0: w.bbox.y0 * yScale,
+          x1: w.bbox.x1 * xScale,
+          y1: w.bbox.y1 * yScale
+        } : null
+      }));
+
+      Object.keys(state.lockMarks || {}).forEach(pid => {
+        if (state.lockMarks[pid] && state.lockMarks[pid].source === 'ocr'){
+          delete state.lockMarks[pid];
+        }
+      });
+      if (marks.locked.length){
+        status.textContent = 'Reading lock chip scores beside logo-locks…';
+      }
+      hits = await matchLockedLogosToPlayers(marks.locked, marks.lockInBtns, scaledWords, {
+        worker,
+        colorCanvas: packs.color.canvas
+      });
     } finally {
       await worker.terminate();
     }
-
-    const ocrH = packs.ocrLeft.height || 1;
-    const colorH = packs.color.canvas.height || 1;
-    const yScale = colorH / ocrH;
-    const xScale = packs.color.canvas.width / (packs.ocrLeft.width || 1);
-    const scaledWords = words.map(w => ({
-      text: w.text,
-      confidence: w.confidence,
-      bbox: w.bbox ? {
-        x0: w.bbox.x0 * xScale,
-        y0: w.bbox.y0 * yScale,
-        x1: w.bbox.x1 * xScale,
-        y1: w.bbox.y1 * yScale
-      } : null
-    }));
-
-    Object.keys(state.lockMarks || {}).forEach(pid => {
-      if (state.lockMarks[pid] && state.lockMarks[pid].source === 'ocr'){
-        delete state.lockMarks[pid];
-      }
-    });
-    const hits = matchLockedLogosToPlayers(marks.locked, marks.lockInBtns, scaledWords);
     hits.forEach(h => {
       state.lockMarks[h.pid] = {
         pts: h.pts,
