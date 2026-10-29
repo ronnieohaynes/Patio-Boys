@@ -1374,14 +1374,14 @@ function renderAdvice(pair, leftPack, rightPack){
   tips.push('<li><span class="tag lock">Scoreboard</span>Live <strong>'
     + Math.round(focusPts) + '</strong>–<strong>' + Math.round(oppPts) + '</strong> vs '
     + escapeHtml(oppSide.franchise.team)
-    + (margin > 5 ? ' · you lead — protect locks, don’t force fringe banks.'
-      : (margin < -5 ? ' · trailing — hunt smashes; fringe Bank ≥ still applies.'
+    + (margin > 5 ? ' · you lead — protect banks, don’t force fringe nights.'
+      : (margin < -5 ? ' · trailing — chase upside; fringe Bank ≥ still applies.'
         : ' · tight — bank quality nights only.'))
     + '</li>');
 
   const lockNow = focusPack.rows.filter(r => r.rec && r.rec.action === 'lock').slice(0, 4);
   if (lockNow.length){
-    tips.push('<li><span class="tag smash">Lock now</span>'
+    tips.push('<li><span class="tag lock">Bank now</span>'
       + lockNow.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> '
         + escapeHtml(r.rec.label)
         + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.rec.reason) + ')</span>')
@@ -1484,11 +1484,9 @@ function slateHtml(r){
 
 function playerRowHtml(r){
   const avg = r.dist && r.dist.mean != null ? r.dist.mean.toFixed(1) : '—';
-  const smash = r.scout.smashRate != null ? Math.round(r.scout.smashRate * 100) + '%' : '—';
   const bank = r.bank && r.bank.mark != null ? r.bank.mark : '—';
   const bankCls = r.locked ? 'num lock-score' : 'num';
   const bankTitle = (r.bank && r.bank.why) || '';
-  const ovr = r.dist && r.dist.lockOvr != null ? Math.round(r.dist.lockOvr) : '—';
   const rec = r.rec || {label: '—', reason: '', cls: 'rec-none'};
   const hasFp = (r.scout.slate || []).some(s => s.kind === 'fp' && s.fp != null)
     || (r.lockPts != null && Number(r.lockPts) > 0)
@@ -1517,9 +1515,7 @@ function playerRowHtml(r){
     + '<span class="sub">' + elig + meta + '</span>'
     + slateHtml(r)
     + '</div>' + slotBadgeHtml(r.pid, r.slot) + '</div></td>'
-    + '<td class="num">' + ovr + '</td>'
     + '<td class="num">' + avg + '</td>'
-    + '<td class="num">' + smash + '</td>'
     + '<td class="' + bankCls + '" title="' + escapeHtml(bankTitle) + '">' + bank + '</td>'
     + '<td class="rec ' + escapeHtml(rec.cls) + '" title="' + escapeHtml(rec.reason || '') + '">'
     + '<span class="rec-act">' + escapeHtml(rec.label) + '</span>'
@@ -1533,9 +1529,9 @@ function renderSide(side, pack){
   const starters = pack.starters || [];
   const bench = pack.bench || [];
   const body = []
-    .concat(starters.length ? ['<tr class="section-row"><td colspan="6">Starters</td></tr>'] : [])
+    .concat(starters.length ? ['<tr class="section-row"><td colspan="4">Starters</td></tr>'] : [])
     .concat(starters.map(playerRowHtml))
-    .concat(bench.length ? ['<tr class="section-row"><td colspan="6">Bench</td></tr>'] : [])
+    .concat(bench.length ? ['<tr class="section-row"><td colspan="4">Bench</td></tr>'] : [])
     .concat(bench.map(playerRowHtml))
     .join('');
 
@@ -1546,7 +1542,7 @@ function renderSide(side, pack){
     + '<span class="pts">' + Math.round(side.points) + ' FP · '
     + lockedN + '/' + slots + ' locked</span></div>'
     + '<table><thead><tr>'
-    + '<th>Player</th><th class="num">Lock</th><th class="num">Avg</th><th class="num">Smash</th>'
+    + '<th>Player</th><th class="num">Avg</th>'
     + '<th class="num">Bank ≥</th><th>Rec</th>'
     + '</tr></thead><tbody>' + body + '</tbody></table></div>';
 }
