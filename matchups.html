@@ -1630,31 +1630,59 @@ function render(){
   });
 }
 
-async function loadMatchups(week){
-  progress(55, 'Loading matchups…');
-  const rows = await fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/matchups/' + week)
-    .then(r => r.ok ? r.json() : []).catch(() => []);
-  state.week = week;
-  loadLockMarks();
-  state.matchups = rows || [];
-  const franchisesByRoster = {};
-  state.rosters.forEach(r => {
-    franchisesByRoster[String(r.roster_id)] = franchiseOfRoster(r);
-  });
-  state.pairs = buildPairs(state.matchups, franchisesByRoster);
-  /* Prefer focus team's matchup */
-  const mine = state.pairs.find(p => p.sides.some(s => s.franchise.team === state.focusTeam));
-  state.selectedPair = mine || state.pairs[0] || null;
-
-  /* Boxscore FP needs matchup rows for the single-game Sleeper fallback. */
-  progress(72, 'Scoring played games…');
-  try {
-    await loadWeekGameFp(state.nbaWeek);
-  } catch (e){
-    if (!state.gameFpByPid) state.gameFpByPid = {};
-    console.warn('week game FP load failed', e);
+async function loadMatchups(week, opts){
+  const options = opts || {};
+  /* Mid-session refresh must not re-raise the HQ/embed boot loader — progress()
+     posts pb-progress which unhides the parent overlay at 100% (pct never drops)
+     and nothing called signalReady again, so Refresh slate froze forever. */
+  const quiet = !!options.quiet;
+  if (!quiet) progress(55, 'Loading matchups…');
+  const status = document.getElementById('status');
+  if (quiet && status){
+    status.classList.remove('error');
+    status.textContent = 'Refreshing week ' + week + '…';
   }
-  render();
+  try {
+    const rows = await fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/matchups/' + week)
+      .then(r => r.ok ? r.json() : []).catch(() => []);
+    state.week = week;
+    loadLockMarks();
+    state.matchups = rows || [];
+    const franchisesByRoster = {};
+    state.rosters.forEach(r => {
+      franchisesByRoster[String(r.roster_id)] = franchiseOfRoster(r);
+    });
+    state.pairs = buildPairs(state.matchups, franchisesByRoster);
+    /* Prefer focus team's matchup */
+    const mine = state.pairs.find(p => p.sides.some(s => s.franchise.team === state.focusTeam));
+    state.selectedPair = mine || state.pairs[0] || null;
+
+    /* Boxscore FP needs matchup rows for the single-game Sleeper fallback. */
+    if (!quiet) progress(72, 'Scoring played games…');
+    try {
+      await loadWeekGameFp(state.nbaWeek);
+    } catch (e){
+      if (!state.gameFpByPid) state.gameFpByPid = {};
+      console.warn('week game FP load failed', e);
+    }
+    render();
+    if (status){
+      const fpN = Object.keys(state.gameFpByPid || {}).length;
+      status.classList.remove('error');
+      status.textContent = 'Week ' + state.week + ' · '
+        + state.pairs.length + ' matchups · smash season ' + (state.statsSeason || '—')
+        + ' · ESPN slate ' + (state.nbaWeek && Object.keys(state.nbaWeek.byTeam).length
+          ? Object.keys(state.nbaWeek.byTeam).length + ' teams'
+          : 'unavailable')
+        + (fpN ? (' · ' + fpN + ' players with game FP') : '');
+    }
+    const tag = document.getElementById('tag');
+    if (tag) tag.textContent = state.pairs.length + ' games';
+  } finally {
+    if (!quiet && window.PatioBoysLoader){
+      PatioBoysLoader.signalReady({page: 'matchups'});
+    }
+  }
 }
 
 /* ——— Screenshot OCR (Sleeper matchup) ——— */
@@ -2228,7 +2256,7 @@ async function load(){
       if (w === state.week) opt.selected = true;
       weekSel.appendChild(opt);
     }
-    weekSel.addEventListener('change', () => loadMatchups(Number(weekSel.value)));
+    weekSel.addEventListener('change', () => loadMatchups(Number(weekSel.value), {quiet: true}));
 
     const focus = document.getElementById('focusTeam');
     const teamNames = state.rosters.map(r => franchiseOfRoster(r).team)
@@ -2242,21 +2270,15 @@ async function load(){
       if (mine) state.selectedPair = mine;
       render();
     });
-    document.getElementById('refreshBtn').addEventListener('click', () => loadMatchups(state.week));
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+      loadMatchups(state.week, {quiet: true});
+    });
     bindShotUi();
 
     await loadMatchups(state.week);
 
     document.getElementById('app').hidden = false;
-    status.classList.remove('error');
-    const fpN = Object.keys(state.gameFpByPid || {}).length;
-    status.textContent = 'Week ' + state.week + ' · '
-      + state.pairs.length + ' matchups · smash season ' + (state.statsSeason || '—')
-      + ' · ESPN slate ' + (state.nbaWeek && Object.keys(state.nbaWeek.byTeam).length
-        ? Object.keys(state.nbaWeek.byTeam).length + ' teams'
-        : 'unavailable')
-      + (fpN ? (' · ' + fpN + ' players with game FP') : '');
-    tag.textContent = state.pairs.length + ' games';
+    /* loadMatchups already signalReady'd; keep a final Ready stamp for boot. */
     progress(100, 'Ready');
     if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'matchups'});
   } catch (e){
