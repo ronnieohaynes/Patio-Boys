@@ -472,11 +472,12 @@ async function loadNbaContext(){
       }
       /* Upcoming / in-window slate for scouting + played-game FP */
       if (ds >= upcomingCutoff){
+        const tipIso = ev.date || (comp.date) || null;
         (byTeam[hAbbr] = byTeam[hAbbr] || []).push({
-          opp: aAbbr, home: true, date: ds, final: !!final, eventId
+          opp: aAbbr, home: true, date: ds, final: !!final, eventId, tipIso
         });
         (byTeam[aAbbr] = byTeam[aAbbr] || []).push({
-          opp: hAbbr, home: false, date: ds, final: !!final, eventId
+          opp: hAbbr, home: false, date: ds, final: !!final, eventId, tipIso
         });
         if (final && eventId && !seenFinal[eventId]){
           seenFinal[eventId] = true;
@@ -716,18 +717,18 @@ function scoutPlayer(pid, dist){
   const scoredByEvent = {};
   scored.forEach(g => { if (g.eventId) scoredByEvent[g.eventId] = g; });
 
-  /* Full slate under the name: played → FP, upcoming → opponent abbr. */
+  /* Slate for scouting / Rec — UI under names no longer lists every opp. */
   const slate = games.map(g => {
     const oppLabel = ESPN_TO_SLEEPER[g.opp] || g.opp;
     if (g.final){
       const hit = (g.eventId && scoredByEvent[g.eventId])
         || scored.find(s => s.date === g.date && (!s.opp || s.opp === oppLabel));
       if (hit && hit.fp != null){
-        return {kind: 'fp', fp: hit.fp, opp: oppLabel, date: g.date, eventId: g.eventId || hit.eventId};
+        return {kind: 'fp', fp: hit.fp, opp: oppLabel, date: g.date, tipIso: g.tipIso || null, eventId: g.eventId || hit.eventId};
       }
-      return {kind: 'played', opp: oppLabel, date: g.date, eventId: g.eventId || null, fp: null};
+      return {kind: 'played', opp: oppLabel, date: g.date, tipIso: g.tipIso || null, eventId: g.eventId || null, fp: null};
     }
-    return {kind: 'opp', opp: oppLabel, date: g.date, eventId: g.eventId || null};
+    return {kind: 'opp', opp: oppLabel, date: g.date, tipIso: g.tipIso || null, eventId: g.eventId || null};
   });
   /* Fallback: scored lines with no matching slate row (name/team miss). */
   if (!slate.some(s => s.kind === 'fp') && scored.length){
@@ -806,8 +807,18 @@ function scoutPlayer(pid, dist){
     slate,
     gamesLeft: upcoming.length,
     nextGame: upcoming[0]
-      ? {date: upcoming[0].date, opp: oppLabels[0] || null}
+      ? {
+          date: upcoming[0].date,
+          tipIso: upcoming[0].tipIso || null,
+          opp: oppLabels[0] || null
+        }
       : null,
+    lastFp: (() => {
+      for (let i = slate.length - 1; i >= 0; i--){
+        if (slate[i].kind === 'fp' && slate[i].fp != null) return Number(slate[i].fp);
+      }
+      return scored.length ? Number(scored[scored.length - 1].fp) : null;
+    })(),
     smashRate,
     injury: injury || null
   };
@@ -1089,12 +1100,32 @@ function weekdayLabel(ymdStr){
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
 }
 
+function formatTipLabel(tipIso, ymdStr){
+  if (tipIso){
+    const d = new Date(tipIso);
+    if (Number.isFinite(d.getTime())){
+      const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+      let h = d.getHours();
+      const m = d.getMinutes();
+      const ampm = h >= 12 ? 'pm' : 'am';
+      h = h % 12;
+      if (!h) h = 12;
+      return day + ' ' + h + (m ? (':' + String(m).padStart(2, '0')) : '') + ampm;
+    }
+  }
+  return weekdayLabel(ymdStr);
+}
+
 function nextGameLabel(scout){
+  const next = scout && scout.nextGame;
+  if (next){
+    const tip = formatTipLabel(next.tipIso, next.date);
+    return tip || 'next';
+  }
   const slate = (scout && scout.slate) || [];
-  const next = slate.find(s => s.kind === 'opp');
-  if (!next) return null;
-  const day = weekdayLabel(next.date);
-  return (day || 'next') + (next.opp ? (' vs ' + next.opp) : '');
+  const row = slate.find(s => s.kind === 'opp');
+  if (!row) return null;
+  return formatTipLabel(row.tipIso, row.date) || weekdayLabel(row.date) || 'next';
 }
 
 function isBenchRow(r){
@@ -1451,32 +1482,36 @@ function formatFp(v){
 }
 
 function slateHtml(r){
-  const slate = (r.scout && r.scout.slate) || [];
-  const lockPts = r.lockPts != null && Number.isFinite(Number(r.lockPts)) ? Number(r.lockPts) : null;
-  let lockMatched = false;
-  const chips = slate.map(item => {
-    if (item.kind === 'fp' && item.fp != null){
-      const isLock = !lockMatched && lockPts != null && Math.abs(Number(item.fp) - lockPts) < 0.55;
-      if (isLock) lockMatched = true;
-      const title = (item.opp ? ('vs ' + item.opp + ' · ') : '')
-        + formatFp(item.fp) + ' FP'
-        + (isLock ? ' · LOCKED IN' : '');
-      return '<span class="fp-chip' + (isLock ? ' lock' : '') + '" title="' + escapeHtml(title) + '">'
-        + escapeHtml(formatFp(item.fp)) + '</span>';
-    }
-    if (item.kind === 'played'){
-      return '<span class="opp-chip" title="Played — FP unavailable">—</span>';
-    }
-    if (item.opp){
-      return '<span class="opp-chip" title="Upcoming">vs ' + escapeHtml(item.opp) + '</span>';
-    }
-    return '';
-  }).filter(Boolean);
-  /* Locked score with no matching boxscore chip — still show white lock FP. */
-  if (r.locked && lockPts != null && !lockMatched){
-    chips.unshift(
-      '<span class="fp-chip lock" title="Locked in · ' + escapeHtml(formatFp(lockPts)) + ' FP">'
+  /* Locked: only the banked chip. Unlocked: last score · next tip · games left — no opps. */
+  if (r.locked){
+    const lockPts = r.lockPts != null && Number.isFinite(Number(r.lockPts)) ? Number(r.lockPts) : null;
+    if (lockPts == null) return '';
+    return '<div class="slate">'
+      + '<span class="fp-chip lock" title="Locked in · ' + escapeHtml(formatFp(lockPts)) + ' FP">'
       + escapeHtml(formatFp(lockPts)) + '</span>'
+      + '</div>';
+  }
+  const chips = [];
+  const lastFp = r.scout && r.scout.lastFp != null && Number.isFinite(Number(r.scout.lastFp))
+    ? Number(r.scout.lastFp)
+    : latestScoredFp(r);
+  if (lastFp != null && Number.isFinite(lastFp)){
+    chips.push(
+      '<span class="fp-chip" title="Last game · ' + escapeHtml(formatFp(lastFp)) + ' FP">'
+      + escapeHtml(formatFp(lastFp)) + '</span>'
+    );
+  }
+  const nextLbl = nextGameLabel(r.scout);
+  if (nextLbl){
+    chips.push(
+      '<span class="opp-chip" title="Next tip">' + escapeHtml(nextLbl) + '</span>'
+    );
+  }
+  const left = r.scout && r.scout.gamesLeft != null ? Number(r.scout.gamesLeft) : 0;
+  if (left > 0){
+    chips.push(
+      '<span class="opp-chip" title="Games left this week">'
+      + left + ' left</span>'
     );
   }
   return chips.length ? ('<div class="slate">' + chips.join('') + '</div>') : '';
@@ -1587,7 +1622,7 @@ function render(){
 
   document.getElementById('footNote').textContent =
     'Lineup slots mirror Sleeper (PG/SG/G/SF/PF/F/C/UTIL badge on the right; BN on the bench). '
-    + 'Under each name: played games show fantasy points (white = screenshot-locked chip); upcoming show the opponent. '
+    + 'Under each name: locked players show only the screenshot chip; unlocked show last score, next tip, and games left. '
     + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points. '
     + 'Bank ≥ moves with weekday, games left, and injury. Rec = Lock / Switch / Wait.';
 
