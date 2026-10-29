@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patio Boys — Matchups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="hq-loader.js"></script>
+<style>
+  :root{
+    --bg:#0F131B; --surface:#171D28; --surface-2:#1F2735;
+    --ink:#ECEEF3; --ink-dim:#8B93A6; --hairline:#2E3645;
+    --gold:#E8C34A; --coral:#D8553A; --green:#1D9E75;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;line-height:1.45}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 20px 48px}
+  .topbar{
+    display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:16px 0;border-bottom:1px solid var(--hairline);
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);
+    text-transform:uppercase;letter-spacing:.08em;
+  }
+  .topbar .brand{display:flex;align-items:baseline;gap:10px}
+  .topbar .brand .gm{font-family:'Anton',sans-serif;font-size:18px;color:var(--ink);letter-spacing:.04em}
+  .topbar .brand .gm em{color:var(--gold);font-style:normal}
+  body.embed .topbar{padding:10px 0}
+  .status{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--gold);margin:16px 0 0}
+  .status.error{color:var(--coral)}
+
+  .controls{
+    display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;
+    margin:16px 0 12px;padding-bottom:14px;border-bottom:1px solid var(--hairline);
+  }
+  .field{display:flex;flex-direction:column;gap:5px;min-width:120px}
+  .field label{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.08em;text-transform:uppercase;
+  }
+  .field select,.field input,.btn{
+    background:var(--surface);border:1px solid var(--hairline);border-radius:6px;
+    color:var(--ink);font:inherit;font-size:13px;padding:8px 10px;
+  }
+  .btn{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;
+    letter-spacing:.04em;text-transform:uppercase;font-weight:600}
+  .btn:hover{border-color:var(--gold);color:var(--gold)}
+  .btn.primary{background:color-mix(in srgb, var(--gold) 18%, var(--surface));border-color:var(--gold);color:var(--gold)}
+
+  .slate{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:14px 0 18px}
+  .mu-card{
+    border:1px solid var(--hairline);border-radius:8px;padding:12px 14px;background:var(--surface);
+    cursor:pointer;text-align:left;color:inherit;width:100%;
+  }
+  .mu-card:hover{border-color:var(--ink-dim)}
+  .mu-card.active{border-color:var(--gold);background:color-mix(in srgb, var(--gold) 10%, var(--surface))}
+  .mu-card .vs{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:16px;margin:0;line-height:1.15;
+  }
+  .mu-card .score{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--gold);margin:8px 0 0;
+  }
+  .mu-card .sub{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;margin:6px 0 0;
+  }
+
+  .report-head{
+    display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;
+    margin:8px 0 12px;
+  }
+  .report-head h1{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:26px;margin:0;letter-spacing:.03em;
+  }
+  .report-head p{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;margin:0;
+  }
+
+  .advice{
+    border:1px solid var(--hairline);border-radius:8px;padding:14px 16px;background:var(--surface);
+    margin-bottom:16px;
+  }
+  .advice h2{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:18px;margin:0 0 8px;letter-spacing:.03em;
+  }
+  .advice ul{margin:0;padding-left:18px}
+  .advice li{margin:0 0 8px;font-size:14px;color:#C9CDD8}
+  .advice li strong{color:var(--ink)}
+  .advice .tag{
+    display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10px;
+    letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;margin-right:6px;
+  }
+  .tag.smash{background:color-mix(in srgb, var(--green) 22%, transparent);color:var(--green)}
+  .tag.bust{background:color-mix(in srgb, var(--coral) 22%, transparent);color:var(--coral)}
+  .tag.lock{background:color-mix(in srgb, var(--gold) 22%, transparent);color:var(--gold)}
+  .tag.news{background:color-mix(in srgb, #3A8FC9 22%, transparent);color:#7EB6E0}
+
+  .shot{
+    border:1px dashed var(--hairline);border-radius:8px;padding:12px 14px;background:var(--surface-2);
+    margin-bottom:16px;
+  }
+  .shot-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .shot-preview{margin-top:10px;max-width:280px;border-radius:6px;border:1px solid var(--hairline)}
+  .shot-status{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);margin:8px 0 0}
+  .shot-status.ok{color:var(--green)}
+  .shot-status.err{color:var(--coral)}
+
+  .sides{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:820px){.sides{grid-template-columns:1fr}}
+  .side{
+    border:1px solid var(--hairline);border-radius:8px;overflow:hidden;background:var(--surface);
+    border-top:3px solid var(--team-color, var(--gold));
+  }
+  .side-head{
+    display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+    padding:10px 12px;background:var(--surface-2);
+  }
+  .side-head h3{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:18px;margin:0}
+  .side-head .pts{font-family:'IBM Plex Mono',monospace;font-size:14px;color:var(--gold)}
+  table{width:100%;border-collapse:collapse}
+  th,td{
+    text-align:left;padding:8px 10px;
+    border-bottom:1px solid color-mix(in srgb, var(--hairline) 80%, transparent);
+    font-size:13px;vertical-align:top;
+  }
+  th{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:var(--ink-dim);
+    letter-spacing:.04em;text-transform:uppercase;background:var(--surface-2);
+  }
+  td.player{font-weight:600}
+  td.player .sub{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:500;
+    color:var(--ink-dim);margin-top:2px;
+  }
+  td.num{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;color:var(--gold)}
+  td.lean.smash{color:var(--green);font-weight:600}
+  td.lean.bust{color:var(--coral);font-weight:600}
+  tr.locked td{opacity:.72}
+  tr.locked td.player::after{
+    content:' locked';font-family:'IBM Plex Mono',monospace;font-size:9px;
+    color:var(--gold);text-transform:uppercase;letter-spacing:.06em;margin-left:6px;
+  }
+  .foot{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);
+    margin:14px 0 0;line-height:1.55;
+  }
+</style>
+</head>
+<body>
+<script>if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');</script>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><span class="gm">Patio Boys · <em>Matchups</em></span></div>
+    <span id="tag">Loading…</span>
+  </div>
+  <p class="status" id="status">Loading weekly matchups…</p>
+
+  <div id="app" hidden>
+    <div class="controls">
+      <div class="field">
+        <label for="weekSel">Week</label>
+        <select id="weekSel"></select>
+      </div>
+      <div class="field">
+        <label for="focusTeam">Focus team</label>
+        <select id="focusTeam"></select>
+      </div>
+      <button type="button" class="btn" id="refreshBtn">Refresh slate</button>
+    </div>
+
+    <div class="slate" id="slate"></div>
+
+    <div class="shot">
+      <div class="shot-row">
+        <strong style="font-family:'Anton',sans-serif;text-transform:uppercase;letter-spacing:.03em">Upload matchup screenshot</strong>
+        <input type="file" id="shotFile" accept="image/*" hidden>
+        <button type="button" class="btn primary" id="shotPick">Choose image</button>
+        <button type="button" class="btn" id="shotPaste">Paste</button>
+        <button type="button" class="btn" id="shotClear" hidden>Clear OCR</button>
+      </div>
+      <p class="shot-status" id="shotStatus">Drop a Sleeper matchup screen to mark already-scored / locked nights. Advice then respects what’s banked vs your opponent.</p>
+      <img class="shot-preview" id="shotPreview" alt="" hidden>
+    </div>
+
+    <div class="report-head">
+      <h1 id="detailTitle">Matchup</h1>
+      <p id="detailSub"></p>
+    </div>
+    <div class="advice" id="advice"></div>
+    <div class="sides" id="sides"></div>
+    <p class="foot" id="footNote"></p>
+  </div>
+</div>
+
+<script>
+(function(){
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-matchup';
+  ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
+    document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
+  });
+})();
+</script>
+<script>
+const LEAGUE_ID = '1350649177381552128';
+const MY_TEAM = 'Freakonomics';
+const TEAM_COLORS = {
+  'Funeral Home':'#C9963A','BoobieDominguez':'#1D9E75','2011-12 Champs':'#D8553A',
+  'Freakonomics':'#7F77DD','Papa Book':'#D4537E','Bam Add the Mayo':'#3A8FC9',
+  'Hamas':'#9B59B6','Belt':'#5DBB63'
+};
+const TEAM_ALIASES = {
+  '20112012champs':'2011-12 Champs',
+  '20112012champ':'2011-12 Champs',
+  'thehitmanharts':'BoobieDominguez',
+  'badgersretirementhome':'Funeral Home',
+  'belt':'Belt'
+};
+/* Sleeper abbr → ESPN scoreboard abbr */
+const SLEEPER_TO_ESPN = {
+  ATL:'ATL', BKN:'BKN', BOS:'BOS', CHA:'CHA', CHI:'CHI', CLE:'CLE', DAL:'DAL', DEN:'DEN',
+  DET:'DET', GSW:'GS', HOU:'HOU', IND:'IND', LAC:'LAC', LAL:'LAL', MEM:'MEM', MIA:'MIA',
+  MIL:'MIL', MIN:'MIN', NOP:'NO', NYK:'NY', OKC:'OKC', ORL:'ORL', PHI:'PHI', PHX:'PHX',
+  POR:'POR', SAC:'SAC', SAS:'SA', TOR:'TOR', UTA:'UTAH', WAS:'WSH'
+};
+const ESPN_TO_SLEEPER = Object.fromEntries(Object.entries(SLEEPER_TO_ESPN).map(([a,b]) => [b, a]));
+
+const state = {
+  league: null,
+  users: [],
+  rosters: [],
+  players: {},
+  week: null,
+  maxWeek: 21,
+  matchups: [],
+  pairs: [],
+  selectedPair: null,
+  focusTeam: MY_TEAM,
+  lockByPid: {},
+  statsSeason: null,
+  nbaWeek: null, /* { byTeam: {GS:[{opp,date,home}]}, oppg: {GS:n}, avgOppg }
+  ocrLocked: {}, /* pid -> {pts, source:'ocr'} */
+  tesseractLoading: null
+};
+
+function normalizeName(name){
+  return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+}
+function canonicalTeam(name){
+  const norm = normalizeName(name);
+  if (TEAM_ALIASES[norm]) return TEAM_ALIASES[norm];
+  return Object.keys(TEAM_COLORS).find(k => normalizeName(k) === norm) || name;
+}
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function playerName(p){
+  if (!p) return 'Unknown';
+  if (p.full_name) return p.full_name;
+  return ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || 'Unknown';
+}
+function progress(pct, label){
+  if (window.PatioBoysLoader) PatioBoysLoader.reportProgress(pct, label);
+}
+
+function franchiseOfRoster(roster){
+  const owner = state.users.find(u => u.user_id === roster.owner_id);
+  const metaName = owner && owner.metadata && owner.metadata.team_name;
+  const raw = metaName || (owner && owner.display_name) || ('Roster ' + roster.roster_id);
+  return {
+    rosterId: roster.roster_id,
+    team: canonicalTeam(raw),
+    manager: (owner && owner.display_name) || '—',
+    color: TEAM_COLORS[canonicalTeam(raw)] || '#E8C34A',
+    players: (roster.players || []).map(String),
+    starters: (roster.starters || []).map(String)
+  };
+}
+
+function ymd(d){
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return '' + y + m + day;
+}
+
+/* Fantasy weeks roughly Mon–Sun UTC; pull ESPN boards for 7 days around “now”
+   plus a few days of history for opp PPG. */
+async function loadNbaContext(){
+  const today = new Date();
+  const dates = [];
+  for (let i = -10; i <= 6; i++){
+    const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + i));
+    dates.push(ymd(d));
+  }
+  const results = await Promise.all(dates.map(ds =>
+    fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=' + ds)
+      .then(r => r.ok ? r.json() : null).catch(() => null)
+  ));
+  const byTeam = {};
+  const ptsFor = {};
+  const ptsAgainst = {};
+  const gp = {};
+  const upcomingCutoff = ymd(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 1)));
+
+  results.forEach((board, idx) => {
+    const ds = dates[idx];
+    (board && board.events || []).forEach(ev => {
+      const comp = (ev.competitions || [])[0];
+      if (!comp) return;
+      const comps = comp.competitors || [];
+      if (comps.length < 2) return;
+      const home = comps.find(c => c.homeAway === 'home') || comps[0];
+      const away = comps.find(c => c.homeAway === 'away') || comps[1];
+      const hAbbr = home.team && home.team.abbreviation;
+      const aAbbr = away.team && away.team.abbreviation;
+      if (!hAbbr || !aAbbr) return;
+      const status = (comp.status && comp.status.type && comp.status.type.name) || '';
+      const final = /FINAL|STATUS_FINAL/i.test(status) || (comp.status && comp.status.type && comp.status.type.completed);
+      const hScore = Number(home.score);
+      const aScore = Number(away.score);
+      if (final && Number.isFinite(hScore) && Number.isFinite(aScore)){
+        ptsFor[hAbbr] = (ptsFor[hAbbr] || 0) + hScore;
+        ptsAgainst[hAbbr] = (ptsAgainst[hAbbr] || 0) + aScore;
+        gp[hAbbr] = (gp[hAbbr] || 0) + 1;
+        ptsFor[aAbbr] = (ptsFor[aAbbr] || 0) + aScore;
+        ptsAgainst[aAbbr] = (ptsAgainst[aAbbr] || 0) + hScore;
+        gp[aAbbr] = (gp[aAbbr] || 0) + 1;
+      }
+      /* Upcoming / in-window slate for scouting */
+      if (ds >= upcomingCutoff){
+        (byTeam[hAbbr] = byTeam[hAbbr] || []).push({opp: aAbbr, home: true, date: ds, final: !!final});
+        (byTeam[aAbbr] = byTeam[aAbbr] || []).push({opp: hAbbr, home: false, date: ds, final: !!final});
+      }
+    });
+  });
+
+  const oppg = {};
+  Object.keys(gp).forEach(t => {
+    if (gp[t] > 0) oppg[t] = ptsAgainst[t] / gp[t];
+  });
+  const vals = Object.values(oppg);
+  const avgOppg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 112;
+  return {byTeam, oppg, avgOppg, gp};
+}
+
+function espnAbbr(sleeperTeam){
+  if (!sleeperTeam) return null;
+  return SLEEPER_TO_ESPN[String(sleeperTeam).toUpperCase()] || String(sleeperTeam).toUpperCase();
+}
+
+function scoutPlayer(pid, dist){
+  const p = state.players[pid] || {};
+  const team = p.team;
+  const espn = espnAbbr(team);
+  const nba = state.nbaWeek;
+  const games = (espn && nba && nba.byTeam[espn]) || [];
+  const upcoming = games.filter(g => !g.final);
+  const opps = upcoming.map(g => g.opp);
+  const oppLabels = opps.map(o => ESPN_TO_SLEEPER[o] || o);
+
+  const smashRate = dist && dist.smashBoomRate != null ? Number(dist.smashBoomRate)
+    : (dist && window.LockInDist && LockInDist.smashBoomRate ? LockInDist.smashBoomRate(dist) : null);
+  let lean = 'neutral';
+  let leanScore = 0;
+  let why = [];
+
+  if (smashRate != null && smashRate >= 0.38){ leanScore += 1; why.push('high smash rate'); }
+  if (smashRate != null && smashRate <= 0.22){ leanScore -= 1; why.push('low smash rate'); }
+
+  if (nba && opps.length){
+    let envSum = 0, n = 0;
+    opps.forEach(o => {
+      const oAllowed = nba.oppg[o];
+      if (oAllowed != null){
+        envSum += (oAllowed - nba.avgOppg) / 6; /* ~6 pts ≈ 1 step */
+        n++;
+      }
+    });
+    if (n){
+      const env = envSum / n;
+      if (env >= 0.45){ leanScore += 1; why.push('soft defensive slate (' + oppLabels.join('/') + ')'); }
+      else if (env <= -0.45){ leanScore -= 1; why.push('tough defensive slate (' + oppLabels.join('/') + ')'); }
+      else why.push('vs ' + oppLabels.join('/'));
+    } else {
+      why.push('vs ' + oppLabels.join('/'));
+    }
+    /* Back-to-back in upcoming window */
+    const days = upcoming.map(g => g.date).sort();
+    for (let i = 1; i < days.length; i++){
+      const a = days[i - 1], b = days[i];
+      /* yyyymmdd consecutive */
+      const da = Date.UTC(+a.slice(0,4), +a.slice(4,6)-1, +a.slice(6,8));
+      const db = Date.UTC(+b.slice(0,4), +b.slice(4,6)-1, +b.slice(6,8));
+      if ((db - da) / 86400000 === 1){
+        leanScore -= 1;
+        why.push('B2B risk');
+        break;
+      }
+    }
+  } else if (!team){
+    why.push('no NBA team');
+    leanScore -= 1;
+  }
+
+  const injury = String(p.injury_status || '').toUpperCase();
+  if (injury === 'O' || injury === 'OUT' || injury === 'IR'){
+    leanScore -= 2;
+    why.push(injury === 'IR' ? 'on IR' : 'ruled OUT');
+  } else if (injury === 'DTD' || injury === 'Q' || injury === 'QUESTIONABLE'){
+    leanScore -= 1;
+    why.push('questionable / DTD');
+  } else if (injury === 'P' || injury === 'PROBABLE'){
+    why.push('probable');
+  }
+
+  if (leanScore >= 2) lean = 'smash';
+  else if (leanScore <= -2) lean = 'bust';
+  else if (leanScore === 1) lean = 'smash';
+  else if (leanScore === -1) lean = 'bust';
+
+  return {
+    lean: leanScore === 0 ? 'neutral' : lean,
+    leanScore,
+    why: why.join(' · ') || '—',
+    opps: oppLabels,
+    smashRate,
+    injury: injury || null
+  };
+}
+
+/* Lock-in nights = starter slots with scored FP (not every bench box score). */
+function lockedPtsFor(pid, matchupRow){
+  const id = String(pid);
+  if (state.ocrLocked[id] && state.ocrLocked[id].pts != null){
+    return Number(state.ocrLocked[id].pts);
+  }
+  if (!matchupRow) return null;
+  const starters = (matchupRow.starters || []).map(String);
+  const idx = starters.indexOf(id);
+  if (idx < 0) return null;
+  const fromArr = matchupRow.starters_points && matchupRow.starters_points[idx];
+  if (fromArr != null && Number(fromArr) > 0) return Number(fromArr);
+  const fromMap = matchupRow.players_points && matchupRow.players_points[id];
+  if (fromMap != null && Number(fromMap) > 0) return Number(fromMap);
+  return null;
+}
+
+function weekPtsFor(pid, matchupRow){
+  const id = String(pid);
+  if (state.ocrLocked[id] && state.ocrLocked[id].pts != null) return Number(state.ocrLocked[id].pts);
+  if (matchupRow && matchupRow.players_points && matchupRow.players_points[id] != null){
+    const v = Number(matchupRow.players_points[id]);
+    if (Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+function isLocked(pid, matchupRow){
+  return lockedPtsFor(pid, matchupRow) != null;
+}
+
+function buildPairs(matchupRows, franchisesByRoster){
+  const byMid = {};
+  (matchupRows || []).forEach(m => {
+    if (m.matchup_id == null) return;
+    (byMid[m.matchup_id] = byMid[m.matchup_id] || []).push(m);
+  });
+  return Object.keys(byMid).map(mid => {
+    const rows = byMid[mid];
+    const sides = rows.map(r => {
+      const fr = franchisesByRoster[String(r.roster_id)] || {
+        team: 'Roster ' + r.roster_id, color: '#E8C34A', players: [], manager: '—'
+      };
+      return {
+        matchup: r,
+        franchise: fr,
+        points: Number(r.points) || 0
+      };
+    });
+    while (sides.length < 2){
+      sides.push({matchup: null, franchise: {team: 'BYE', color: '#8B93A6', players: []}, points: 0});
+    }
+    return {id: mid, sides: sides.slice(0, 2)};
+  }).sort((a, b) => {
+    const an = a.sides.map(s => s.franchise.team).join(' ');
+    const bn = b.sides.map(s => s.franchise.team).join(' ');
+    return an.localeCompare(bn);
+  });
+}
+
+function bankOptsForSide(sideDists, lockedScores){
+  const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
+  const left = Math.max(1, slots - (lockedScores || []).length);
+  const unlocked = (sideDists || []).filter(d => d && !d._locked);
+  const floor = window.LockInDist && LockInDist.rosterBankFloor
+    ? LockInDist.rosterBankFloor(unlocked, left)
+    : null;
+  const week = state.week;
+  const seasonWeeks = Number(state.league && state.league.settings && state.league.settings.playoff_week_start) > 1
+    ? Number(state.league.settings.playoff_week_start) - 1
+    : 21;
+  return {
+    week,
+    seasonWeeks,
+    slots: left,
+    rosterDists: unlocked,
+    rosterFloor: floor,
+    dow: (new Date()).getDay(),
+    lockedCount: (lockedScores || []).length
+  };
+}
+
+function sidePlayerRows(side){
+  const fr = side.franchise;
+  const mrow = side.matchup;
+  const starterSet = new Set((mrow && mrow.starters || fr.starters || []).map(String));
+  const pids = (fr.players || []).slice();
+  /* Prefer starters first, then rest by lock/mean */
+  pids.sort((a, b) => {
+    const as = starterSet.has(String(a)) ? 0 : 1;
+    const bs = starterSet.has(String(b)) ? 0 : 1;
+    if (as !== bs) return as - bs;
+    const da = state.lockByPid[a] || state.lockByPid[String(a)];
+    const db = state.lockByPid[b] || state.lockByPid[String(b)];
+    const la = da && (da.lockOvr != null ? da.lockOvr : da.mean);
+    const lb = db && (db.lockOvr != null ? db.lockOvr : db.mean);
+    return (lb || 0) - (la || 0);
+  });
+
+  const lockedScores = [];
+  const distList = [];
+  const rows = pids.map(pid => {
+    const id = String(pid);
+    const p = state.players[id] || {};
+    const dist = state.lockByPid[id] ? Object.assign({pid: id}, state.lockByPid[id]) : null;
+    const lockPts = lockedPtsFor(id, mrow);
+    const pts = weekPtsFor(id, mrow);
+    const locked = lockPts != null;
+    if (locked) lockedScores.push(lockPts);
+    if (dist){
+      dist._locked = locked;
+      distList.push(dist);
+    }
+    const scout = scoutPlayer(id, dist);
+    return {pid: id, p, dist, pts, lockPts, locked, scout, starter: starterSet.has(id)};
+  });
+
+  const opts = bankOptsForSide(distList, lockedScores);
+  rows.forEach(r => {
+    if (!r.dist || !window.LockInDist || typeof LockInDist.lockBankPlan !== 'function'){
+      r.bank = null;
+      return;
+    }
+    if (r.locked){
+      r.bank = {
+        mark: Math.round(r.lockPts != null ? r.lockPts : r.pts),
+        rate: 1,
+        why: 'Already scored · locked into week',
+        style: 'locked'
+      };
+      return;
+    }
+    r.bank = LockInDist.lockBankPlan(r.dist, opts);
+  });
+
+  return {rows, lockedScores, opts, starters: rows.filter(r => r.starter).slice(0, 12)};
+}
+
+function renderAdvice(pair, leftPack, rightPack){
+  const el = document.getElementById('advice');
+  if (!pair){ el.innerHTML = ''; return; }
+  const focus = state.focusTeam;
+  const focusSide = pair.sides.find(s => s.franchise.team === focus) || pair.sides[0];
+  const oppSide = pair.sides.find(s => s !== focusSide) || pair.sides[1];
+  const focusPack = focusSide === pair.sides[0] ? leftPack : rightPack;
+  const oppPack = focusSide === pair.sides[0] ? rightPack : leftPack;
+
+  const tips = [];
+  const lockedN = focusPack.lockedScores.length;
+  const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
+  const leftSlots = Math.max(0, slots - lockedN);
+  tips.push('<li><span class="tag lock">Banked</span><strong>'
+    + escapeHtml(focusSide.franchise.team) + '</strong> has <strong>' + lockedN + '/' + slots
+    + '</strong> lock nights scored'
+    + (focusPack.lockedScores.length
+      ? (' (' + focusPack.lockedScores.map(x => Math.round(x)).join(', ') + ')')
+      : '')
+    + '. <strong>' + leftSlots + '</strong> slots left'
+    + (focusPack.opts.rosterFloor != null
+      ? (' · remaining top-' + leftSlots + ' bar ~' + Math.round(focusPack.opts.rosterFloor))
+      : '')
+    + '.</li>');
+
+  const focusPts = focusSide.points;
+  const oppPts = oppSide.points;
+  const margin = focusPts - oppPts;
+  tips.push('<li><span class="tag lock">Scoreboard</span>Live <strong>'
+    + Math.round(focusPts) + '</strong>–<strong>' + Math.round(oppPts) + '</strong> vs '
+    + escapeHtml(oppSide.franchise.team)
+    + (margin > 5 ? ' · you lead — protect locks, don’t force fringe banks.'
+      : (margin < -5 ? ' · trailing — hunt smashes; fringe Bank ≥ still applies.'
+        : ' · tight — bank quality nights only.'))
+    + '</li>');
+
+  const smashCands = focusPack.rows.filter(r => !r.locked && r.scout.lean === 'smash').slice(0, 4);
+  if (smashCands.length){
+    tips.push('<li><span class="tag smash">Smash lean</span>'
+      + smashCands.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong>'
+        + (r.bank && r.bank.mark != null ? (' Bank ≥' + r.bank.mark) : '')
+        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.scout.why) + ')</span>').join(' · ')
+      + '.</li>');
+  }
+  const bustCands = focusPack.rows.filter(r => !r.locked && (r.scout.lean === 'bust' || r.scout.injury)).slice(0, 4);
+  if (bustCands.length){
+    tips.push('<li><span class="tag bust">Bust / sit</span>'
+      + bustCands.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong>'
+        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.scout.why) + ')</span>').join(' · ')
+      + '.</li>');
+  }
+
+  const oppSmash = oppPack.rows.filter(r => !r.locked && r.scout.lean === 'smash').slice(0, 3);
+  if (oppSmash.length){
+    tips.push('<li><span class="tag news">Opp watch</span>'
+      + escapeHtml(oppSide.franchise.team) + ' smash leans: '
+      + oppSmash.map(r => escapeHtml(playerName(r.p))).join(', ')
+      + ' — don’t leave a weak lock slot open if they go off.</li>');
+  }
+
+  const newsBits = focusPack.rows.filter(r => r.scout.injury).slice(0, 5);
+  if (newsBits.length){
+    tips.push('<li><span class="tag news">News</span>'
+      + newsBits.map(r => escapeHtml(playerName(r.p)) + ' · ' + escapeHtml(r.scout.injury)
+        + (r.p.injury_notes ? (' — ' + escapeHtml(String(r.p.injury_notes).slice(0, 80))) : ''))
+        .join(' · ')
+      + '.</li>');
+  }
+
+  /* Who to bank next among unlocked with bank plan */
+  const nextBank = focusPack.rows
+    .filter(r => !r.locked && r.bank && r.bank.mark != null && r.starter)
+    .sort((a, b) => (b.dist && b.dist.mean || 0) - (a.dist && a.dist.mean || 0))
+    .slice(0, 3);
+  if (nextBank.length){
+    tips.push('<li><span class="tag lock">Lock plan</span>Next Bank ≥ targets: '
+      + nextBank.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> ≥' + r.bank.mark
+        + ' <span style="color:var(--ink-dim)">(' + Math.round((r.bank.rate || 0) * 100) + '%)</span>')
+        .join(' · ')
+      + '. Bars already bake in remaining roster quality + midweek timing.</li>');
+  }
+
+  el.innerHTML = '<h2>Advice · ' + escapeHtml(focusSide.franchise.team) + '</h2><ul>' + tips.join('') + '</ul>';
+}
+
+function renderSide(side, pack){
+  const fr = side.franchise;
+  const show = pack.starters.length ? pack.starters : pack.rows.slice(0, 10);
+  const rows = show.map(r => {
+    const leanCls = r.scout.lean === 'smash' ? 'smash' : (r.scout.lean === 'bust' ? 'bust' : '');
+    const leanTxt = r.scout.lean === 'neutral' ? '—' : r.scout.lean;
+    const avg = r.dist && r.dist.mean != null ? r.dist.mean.toFixed(1) : '—';
+    const smash = r.scout.smashRate != null ? Math.round(r.scout.smashRate * 100) + '%' : '—';
+    const bank = r.bank && r.bank.mark != null ? r.bank.mark : '—';
+    const pts = r.pts != null ? r.pts : '—';
+    const ovr = r.dist && r.dist.lockOvr != null ? Math.round(r.dist.lockOvr) : '—';
+    return '<tr class="' + (r.locked ? 'locked' : '') + '">'
+      + '<td class="player">' + escapeHtml(playerName(r.p))
+      + '<span class="sub">' + escapeHtml((r.p.position || r.p.fantasy_positions && r.p.fantasy_positions[0] || '')
+        + (r.p.team ? (' · ' + r.p.team) : '')
+        + (r.scout.opps && r.scout.opps.length ? (' vs ' + r.scout.opps.join('/')) : '')
+        + (r.scout.injury ? (' · ' + r.scout.injury) : ''))
+      + '</span></td>'
+      + '<td class="num">' + ovr + '</td>'
+      + '<td class="num">' + avg + '</td>'
+      + '<td class="num">' + smash + '</td>'
+      + '<td class="num" title="' + escapeHtml((r.bank && r.bank.why) || '') + '">' + bank + '</td>'
+      + '<td class="num">' + pts + '</td>'
+      + '<td class="lean ' + leanCls + '" title="' + escapeHtml(r.scout.why) + '">' + leanTxt + '</td>'
+      + '</tr>';
+  }).join('');
+
+  return '<div class="side" style="--team-color:' + escapeHtml(fr.color) + '">'
+    + '<div class="side-head"><h3>' + escapeHtml(fr.team) + '</h3>'
+    + '<span class="pts">' + Math.round(side.points) + ' FP</span></div>'
+    + '<table><thead><tr>'
+    + '<th>Player</th><th class="num">Lock</th><th class="num">Avg</th><th class="num">Smash</th>'
+    + '<th class="num">Bank ≥</th><th class="num">Wk</th><th>Lean</th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function render(){
+  const slate = document.getElementById('slate');
+  slate.innerHTML = state.pairs.map(pair => {
+    const a = pair.sides[0], b = pair.sides[1];
+    const active = state.selectedPair && String(state.selectedPair.id) === String(pair.id);
+    return '<button type="button" class="mu-card' + (active ? ' active' : '') + '" data-mid="' + pair.id + '">'
+      + '<p class="vs">' + escapeHtml(a.franchise.team) + ' <span style="color:var(--ink-dim)">vs</span> '
+      + escapeHtml(b.franchise.team) + '</p>'
+      + '<p class="score">' + Math.round(a.points) + ' — ' + Math.round(b.points) + '</p>'
+      + '<p class="sub">Matchup ' + pair.id + '</p>'
+      + '</button>';
+  }).join('');
+  slate.querySelectorAll('.mu-card').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.selectedPair = state.pairs.find(p => String(p.id) === String(btn.dataset.mid));
+      render();
+    });
+  });
+
+  const pair = state.selectedPair || state.pairs[0];
+  state.selectedPair = pair;
+  if (!pair){
+    document.getElementById('detailTitle').textContent = 'No matchups';
+    document.getElementById('sides').innerHTML = '';
+    document.getElementById('advice').innerHTML = '';
+    return;
+  }
+
+  const leftPack = sidePlayerRows(pair.sides[0]);
+  const rightPack = sidePlayerRows(pair.sides[1]);
+  document.getElementById('detailTitle').textContent =
+    pair.sides[0].franchise.team + ' vs ' + pair.sides[1].franchise.team;
+  document.getElementById('detailSub').textContent =
+    'Week ' + state.week + ' · starters · Bank ≥ uses remaining lock slots after scored nights';
+  document.getElementById('sides').innerHTML =
+    renderSide(pair.sides[0], leftPack) + renderSide(pair.sides[1], rightPack);
+  renderAdvice(pair, leftPack, rightPack);
+
+  document.getElementById('footNote').textContent =
+    'Smash/bust leans blend season smash rate, ESPN slate opponents (opp PPG allowed), B2B, and Sleeper injury tags. '
+    + 'Upload a matchup screenshot to mark locked nights the API has not scored yet. '
+    + 'Bank ≥ drops remaining slots after locks so a midweek fringe 34 is judged against what’s left — and your opponent’s smash leans.';
+}
+
+async function loadMatchups(week){
+  progress(55, 'Loading matchups…');
+  const rows = await fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/matchups/' + week)
+    .then(r => r.ok ? r.json() : []).catch(() => []);
+  state.week = week;
+  state.matchups = rows || [];
+  const franchisesByRoster = {};
+  state.rosters.forEach(r => {
+    franchisesByRoster[String(r.roster_id)] = franchiseOfRoster(r);
+  });
+  state.pairs = buildPairs(state.matchups, franchisesByRoster);
+  /* Prefer focus team's matchup */
+  const mine = state.pairs.find(p => p.sides.some(s => s.franchise.team === state.focusTeam));
+  state.selectedPair = mine || state.pairs[0] || null;
+  render();
+}
+
+/* ——— Screenshot OCR (Sleeper matchup) ——— */
+function loadTesseract(){
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (state.tesseractLoading) return state.tesseractLoading;
+  state.tesseractLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+    s.async = true;
+    s.onload = () => window.Tesseract ? resolve(window.Tesseract) : reject(new Error('Tesseract missing'));
+    s.onerror = () => reject(new Error('Could not load OCR library'));
+    document.head.appendChild(s);
+  }).catch(err => { state.tesseractLoading = null; throw err; });
+  return state.tesseractLoading;
+}
+
+function resizeImageForOcr(file){
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const maxSide = 2000;
+        let w = img.naturalWidth || img.width;
+        let h = img.naturalHeight || img.height;
+        const scale = Math.min(1, maxSide / Math.max(w, h));
+        w = Math.max(1, Math.round(w * scale));
+        h = Math.max(1, Math.round(h * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const d = imageData.data;
+        let sum = 0, step = 16;
+        for (let i = 0; i < d.length; i += 4 * step) sum += (d[i] + d[i+1] + d[i+2]) / 3;
+        const avg = sum / Math.max(1, Math.floor(d.length / (4 * step)));
+        if (avg < 110){
+          const contrast = 1.55;
+          for (let i = 0; i < d.length; i += 4){
+            let r = 255 - d[i], g = 255 - d[i+1], b = 255 - d[i+2];
+            r = Math.min(255, Math.max(0, (r - 128) * contrast + 128));
+            g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
+            b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
+            const y = 0.299 * r + 0.587 * g + 0.114 * b;
+            const v = y > 140 ? 255 : (y < 90 ? 0 : y);
+            d[i] = d[i+1] = d[i+2] = v;
+          }
+          ctx.putImageData(imageData, 0, 0);
+        }
+        canvas.toBlob(blob => {
+          URL.revokeObjectURL(url);
+          if (!blob) reject(new Error('Could not prepare image'));
+          else resolve(blob);
+        }, 'image/png');
+      } catch (e){ URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read image')); };
+    img.src = url;
+  });
+}
+
+function buildNameIndex(){
+  const idx = [];
+  Object.keys(state.players).forEach(pid => {
+    const p = state.players[pid];
+    if (!p || String(pid).indexOf('TEAM_') === 0) return;
+    const name = playerName(p);
+    const key = normalizeName(name);
+    if (key.length < 4) return;
+    const last = normalizeName(p.last_name || name.split(' ').slice(-1)[0]);
+    idx.push({pid: String(pid), name, key, last});
+  });
+  return idx;
+}
+
+function matchOcrText(text){
+  const idx = buildNameIndex();
+  const norm = normalizeName(text);
+  const found = [];
+  idx.forEach(row => {
+    if (norm.indexOf(row.key) >= 0 || (row.last.length >= 5 && norm.indexOf(row.last) >= 0)){
+      found.push(row);
+    }
+  });
+  /* Extract numbers that look like fantasy points near end of lines */
+  const lines = String(text || '').split(/\n+/);
+  const hits = [];
+  lines.forEach(line => {
+    const ln = normalizeName(line);
+    const nums = String(line).match(/\b(\d{1,3}(?:\.\d)?)\b/g) || [];
+    const pts = nums.map(Number).filter(n => n >= 8 && n <= 90).pop();
+    if (pts == null) return;
+    const match = found.find(f => ln.indexOf(f.key) >= 0 || (f.last.length >= 5 && ln.indexOf(f.last) >= 0));
+    if (match) hits.push({pid: match.pid, name: match.name, pts});
+  });
+  return hits;
+}
+
+async function runOcrOnImage(file){
+  const status = document.getElementById('shotStatus');
+  const preview = document.getElementById('shotPreview');
+  status.className = 'shot-status';
+  status.textContent = 'Reading screenshot…';
+  preview.hidden = false;
+  preview.src = URL.createObjectURL(file);
+  try {
+    await loadTesseract();
+    const blob = await resizeImageForOcr(file);
+    const worker = await Tesseract.createWorker('eng');
+    await worker.setParameters({tessedit_pageseg_mode: '6'});
+    let {data: {text}} = await worker.recognize(blob);
+    if (!text || text.length < 20){
+      await worker.setParameters({tessedit_pageseg_mode: '11'});
+      const retry = await worker.recognize(blob);
+      text = retry.data.text;
+    }
+    await worker.terminate();
+    const hits = matchOcrText(text);
+    hits.forEach(h => {
+      state.ocrLocked[h.pid] = {pts: h.pts, source: 'ocr', name: h.name};
+    });
+    document.getElementById('shotClear').hidden = false;
+    if (!hits.length){
+      status.className = 'shot-status err';
+      status.textContent = 'OCR finished but no rostered players+scores matched. Try a sharper crop.';
+    } else {
+      status.className = 'shot-status ok';
+      status.textContent = 'Locked from screenshot: '
+        + hits.map(h => h.name + ' ' + h.pts).join(', ');
+      render();
+    }
+  } catch (e){
+    status.className = 'shot-status err';
+    status.textContent = 'OCR failed: ' + (e.message || e);
+  }
+}
+
+function bindShotUi(){
+  const file = document.getElementById('shotFile');
+  document.getElementById('shotPick').addEventListener('click', () => file.click());
+  file.addEventListener('change', () => {
+    const f = file.files && file.files[0];
+    if (f) runOcrOnImage(f);
+  });
+  document.getElementById('shotPaste').addEventListener('click', async () => {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items){
+        const type = item.types.find(t => t.startsWith('image/'));
+        if (!type) continue;
+        const blob = await item.getType(type);
+        await runOcrOnImage(new File([blob], 'paste.png', {type}));
+        return;
+      }
+      document.getElementById('shotStatus').textContent = 'No image on clipboard.';
+    } catch (e){
+      document.getElementById('shotStatus').textContent = 'Clipboard paste blocked — use Choose image.';
+    }
+  });
+  document.getElementById('shotClear').addEventListener('click', () => {
+    state.ocrLocked = {};
+    document.getElementById('shotPreview').hidden = true;
+    document.getElementById('shotClear').hidden = true;
+    document.getElementById('shotStatus').className = 'shot-status';
+    document.getElementById('shotStatus').textContent = 'OCR locks cleared.';
+    render();
+  });
+}
+
+async function load(){
+  const status = document.getElementById('status');
+  const tag = document.getElementById('tag');
+  try {
+    progress(5, 'Loading league…');
+    const share = window.PatioBoysShare;
+    const [league, users, rosters, players] = await Promise.all([
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID).then(r => r.json()),
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/users').then(r => r.json()),
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters').then(r => r.json()),
+      share && share.getPlayers ? share.getPlayers(fetch) :
+        fetch('https://api.sleeper.app/v1/players/nba').then(r => r.json())
+    ]);
+    state.league = league;
+    state.users = users || [];
+    state.rosters = rosters || [];
+    state.players = players || {};
+
+    const week = Number(league.settings && league.settings.leg) || 1;
+    const playoff = Number(league.settings && league.settings.playoff_week_start) || 22;
+    state.maxWeek = Math.max(week, playoff - 1, 18);
+    state.week = week;
+    state.focusTeam = MY_TEAM;
+
+    progress(25, 'Loading dynasty curves…');
+    let statsSeason = league.season;
+    try {
+      /* Prefer completed smash season when current has thin samples */
+      const prev = String(Number(league.season) - 1);
+      statsSeason = prev;
+    } catch (e) { /* keep */ }
+    state.statsSeason = statsSeason;
+
+    if (window.LockInDist && typeof LockInDist.fetchLockValueIndex === 'function'){
+      const rosterIds = [];
+      state.rosters.forEach(r => (r.players || []).forEach(id => rosterIds.push(String(id))));
+      const pack = await LockInDist.fetchLockValueIndex({
+        scoring: league.scoring_settings,
+        statsSeason,
+        playerDb: state.players,
+        playerIds: rosterIds,
+        twoKSnapshot: window.TWO_K_SNAPSHOT || null
+      });
+      state.lockByPid = pack.distMap || {};
+      if (pack.statsSeason) state.statsSeason = pack.statsSeason;
+    }
+
+    progress(60, 'Loading NBA slate…');
+    try {
+      state.nbaWeek = await loadNbaContext();
+    } catch (e){
+      state.nbaWeek = {byTeam: {}, oppg: {}, avgOppg: 112, gp: {}};
+    }
+
+    /* Week + focus selects */
+    const weekSel = document.getElementById('weekSel');
+    weekSel.innerHTML = '';
+    for (let w = 1; w <= state.maxWeek; w++){
+      const opt = document.createElement('option');
+      opt.value = w; opt.textContent = 'Week ' + w;
+      if (w === state.week) opt.selected = true;
+      weekSel.appendChild(opt);
+    }
+    weekSel.addEventListener('change', () => loadMatchups(Number(weekSel.value)));
+
+    const focus = document.getElementById('focusTeam');
+    const teamNames = state.rosters.map(r => franchiseOfRoster(r).team)
+      .filter((t, i, a) => a.indexOf(t) === i).sort();
+    focus.innerHTML = teamNames.map(t =>
+      '<option value="' + escapeHtml(t) + '"' + (t === state.focusTeam ? ' selected' : '') + '>'
+      + escapeHtml(t) + '</option>').join('');
+    focus.addEventListener('change', () => {
+      state.focusTeam = focus.value;
+      const mine = state.pairs.find(p => p.sides.some(s => s.franchise.team === state.focusTeam));
+      if (mine) state.selectedPair = mine;
+      render();
+    });
+    document.getElementById('refreshBtn').addEventListener('click', () => loadMatchups(state.week));
+    bindShotUi();
+
+    await loadMatchups(state.week);
+
+    document.getElementById('app').hidden = false;
+    status.classList.remove('error');
+    status.textContent = 'Week ' + state.week + ' · '
+      + state.pairs.length + ' matchups · smash season ' + (state.statsSeason || '—')
+      + ' · ESPN slate ' + (state.nbaWeek && Object.keys(state.nbaWeek.byTeam).length
+        ? Object.keys(state.nbaWeek.byTeam).length + ' teams'
+        : 'unavailable');
+    tag.textContent = state.pairs.length + ' games';
+    progress(100, 'Ready');
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'matchups'});
+  } catch (e){
+    status.classList.add('error');
+    status.textContent = 'Could not load matchups: ' + (e.message || e);
+    tag.textContent = 'Error';
+    if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'matchups', error: true});
+  }
+}
+
+load();
+</script>
+</body>
+</html>

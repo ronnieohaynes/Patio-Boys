@@ -556,6 +556,7 @@
       <div class="nav-secondary" id="navSecondary" role="tablist" aria-label="History panels">
         <!-- League team tabs are injected by buildLeagueTeamTabs(); hidden until League is selected. -->
         <button class="nav-sub" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa" data-group="moves" data-tab="fa" hidden>FA</button>
+        <button class="nav-sub" id="tabBtnMatchup" type="button" role="tab" aria-selected="false" aria-controls="tabMatchup" data-group="moves" data-tab="matchup" hidden>Matchup</button>
         <button class="nav-sub" id="tabBtnTx" type="button" role="tab" aria-selected="false" aria-controls="tabTx" data-group="moves" data-tab="tx" hidden>Trades</button>
         <button class="nav-sub" id="tabBtnTrade" type="button" role="tab" aria-selected="false" aria-controls="tabTrade" data-group="moves" data-tab="trade" hidden>Analyzer</button>
         <button class="nav-sub active" id="tabBtnStatus" type="button" role="tab" aria-selected="true" aria-controls="tabStatus" data-group="history" data-tab="status">Status</button>
@@ -638,6 +639,9 @@
     </div>
     <div class="boardsection status-panel" id="tabFa" role="tabpanel" aria-labelledby="tabBtnFa" hidden>
       <iframe class="status-frame" id="freeAgentsFrame" title="Free Agents" src="about:blank"></iframe>
+    </div>
+    <div class="boardsection status-panel" id="tabMatchup" role="tabpanel" aria-labelledby="tabBtnMatchup" hidden>
+      <iframe class="status-frame" id="matchupsFrame" title="Matchups" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabTx" role="tabpanel" aria-labelledby="tabBtnTx" hidden>
       <iframe class="status-frame" id="transactionsFrame" title="Trades" src="about:blank"></iframe>
@@ -2373,9 +2377,10 @@ const HQ_NAV = {
     label: 'Moves',
     defaultTab: 'fa',
     tabs: {
-      fa:    { panel: 'tabFa',    btn: 'tabBtnFa',    frame: 'freeAgentsFrame',    src: 'free-agents.html?embed=1&v=20261001-bench10', loaded: 'faFrameLoaded' },
-      tx:    { panel: 'tabTx',    btn: 'tabBtnTx',    frame: 'transactionsFrame',  src: 'transactions.html?embed=1&v=20260929-starround', loaded: 'txFrameLoaded' },
-      trade: { panel: 'tabTrade', btn: 'tabBtnTrade', frame: 'tradeAnalyzerFrame', src: 'trade-analyzer.html?embed=1&v=20260929-starround', loaded: 'tradeFrameLoaded' }
+      fa:      { panel: 'tabFa',      btn: 'tabBtnFa',      frame: 'freeAgentsFrame',    src: 'free-agents.html?embed=1&v=20261001-bench10', loaded: 'faFrameLoaded' },
+      matchup: { panel: 'tabMatchup', btn: 'tabBtnMatchup', frame: 'matchupsFrame',      src: 'matchups.html?embed=1&v=20261029-matchup', loaded: 'matchupFrameLoaded' },
+      tx:      { panel: 'tabTx',      btn: 'tabBtnTx',      frame: 'transactionsFrame',  src: 'transactions.html?embed=1&v=20260929-starround', loaded: 'txFrameLoaded' },
+      trade:   { panel: 'tabTrade',   btn: 'tabBtnTrade',   frame: 'tradeAnalyzerFrame', src: 'trade-analyzer.html?embed=1&v=20260929-starround', loaded: 'tradeFrameLoaded' }
     }
   },
   history: {
@@ -2491,6 +2496,7 @@ const hqFrameLoaded = {
   mockFrameLoaded: false,
   gradesFrameLoaded: false,
   faFrameLoaded: false,
+  matchupFrameLoaded: false,
   txFrameLoaded: false,
   tradeFrameLoaded: false,
   offseasonFrameLoaded: false,
@@ -2504,6 +2510,7 @@ let goatFrameLoaded = false;
 let mockFrameLoaded = false;
 let gradesFrameLoaded = false;
 let faFrameLoaded = false;
+let matchupFrameLoaded = false;
 let txFrameLoaded = false;
 let tradeFrameLoaded = false;
 let offseasonFrameLoaded = false;
@@ -2517,6 +2524,7 @@ function syncFrameLoadedFlags(){
   mockFrameLoaded = hqFrameLoaded.mockFrameLoaded;
   gradesFrameLoaded = hqFrameLoaded.gradesFrameLoaded;
   faFrameLoaded = hqFrameLoaded.faFrameLoaded;
+  matchupFrameLoaded = hqFrameLoaded.matchupFrameLoaded;
   txFrameLoaded = hqFrameLoaded.txFrameLoaded;
   tradeFrameLoaded = hqFrameLoaded.tradeFrameLoaded;
   offseasonFrameLoaded = hqFrameLoaded.offseasonFrameLoaded;
@@ -2657,6 +2665,7 @@ function tabLoaderLabel(tab){
     intel: 'Loading team intel…',
     goat: 'Loading GOAT race…',
     fa: 'Loading free agents…',
+    matchup: 'Loading matchups…',
     tx: 'Loading trades…',
     trade: 'Loading trade analyzer…',
     offseason: 'Loading report card…',
