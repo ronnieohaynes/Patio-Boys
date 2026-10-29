@@ -185,7 +185,7 @@
         <button type="button" class="btn" id="shotPaste">Paste</button>
         <button type="button" class="btn" id="shotClear" hidden>Clear OCR</button>
       </div>
-      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot — we look for green <strong>LOCK-IN</strong> badges (not blue UNLOCKED). Or tap a lock pill on any row. Hard-refresh if the old error still shows.</p>
+      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot — we look for <strong>green closed-lock</strong> badges only (cyan/blue open-lock “LOCK-IN” = still unlocked). Or tap a lock pill on any row.</p>
       <img class="shot-preview" id="shotPreview" alt="" hidden>
     </div>
 
@@ -201,7 +201,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-lockin-ocr';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-green-lock';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -771,8 +771,8 @@ function render(){
   renderAdvice(pair, leftPack, rightPack);
 
   document.getElementById('footNote').textContent =
-    'Green LOCKED = banked into lock-in. Blue UNLOCKED = scored but still movable — does not fill a lock slot. '
-    + 'Sleeper’s API does not expose lock status, so upload a matchup screenshot (reads LOCKED labels) or tap a lock pill. '
+    'Green LOCKED = banked into lock-in. Blue/cyan UNLOCKED (open lock / “LOCK-IN” button) = scored but still movable. '
+    + 'Sleeper’s API does not expose lock status, so upload a matchup screenshot (reads green closed-lock badges only) or tap a lock pill. '
     + 'Smash/bust leans blend smash rate, ESPN slate, B2B, and injury tags. Bank ≥ uses remaining slots after green locks only.';
 
   document.querySelectorAll('[data-lock-pid]').forEach(btn => {
@@ -834,16 +834,35 @@ function loadTesseract(){
   return state.tesseractLoading;
 }
 
-/* Soft invert for dark Sleeper UI — keep midtones so LOCK-IN glyphs survive. */
+/* Color canvas of the left roster column — used for green vs cyan lock badges. */
+function prepColorCanvas(img, opts){
+  const options = opts || {};
+  const leftOnly = options.leftOnly !== false;
+  let sw = img.naturalWidth || img.width;
+  let sh = img.naturalHeight || img.height;
+  const srcW = leftOnly ? Math.max(1, Math.floor(sw * 0.55)) : sw;
+  /* Cap tall Sleeper scrolls so badge scan stays responsive. */
+  const maxH = options.maxH || 14000;
+  const maxW = options.maxW || 900;
+  const scale = Math.min(1, maxW / srcW, maxH / sh);
+  const w = Math.max(1, Math.round(srcW * scale));
+  const h = Math.max(1, Math.round(sh * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d', {willReadFrequently: true});
+  ctx.drawImage(img, 0, 0, srcW, sh, 0, 0, w, h);
+  return {canvas, scale, srcW, sh};
+}
+
+/* Soft invert for dark Sleeper UI — name OCR only (not badge color). */
 function prepCanvasForOcr(img, opts){
   const options = opts || {};
   const maxSide = options.maxSide || 2400;
   const leftOnly = !!options.leftOnly;
   let sw = img.naturalWidth || img.width;
   let sh = img.naturalHeight || img.height;
-  const srcW = leftOnly ? Math.max(1, Math.floor(sw * 0.58)) : sw;
+  const srcW = leftOnly ? Math.max(1, Math.floor(sw * 0.55)) : sw;
   const scale = Math.min(1, maxSide / Math.max(srcW, sh));
-  /* Tall phone shots: never shrink below readable lock labels */
   const minW = leftOnly ? 900 : 1100;
   const boost = srcW * scale < minW ? (minW / srcW) : scale;
   const w = Math.max(1, Math.round(srcW * boost));
@@ -867,7 +886,6 @@ function prepCanvasForOcr(img, opts){
       g = Math.min(255, Math.max(0, (g - 128) * contrast + 128));
       b = Math.min(255, Math.max(0, (b - 128) * contrast + 128));
       const y = 0.299 * r + 0.587 * g + 0.114 * b;
-      /* Soft threshold — hard B/W kills LOCK-IN under badges */
       const v = y > 155 ? 255 : (y < 75 ? 0 : y);
       d[i] = d[i+1] = d[i+2] = v;
     }
@@ -885,20 +903,20 @@ function canvasToBlob(canvas){
   });
 }
 
-function resizeImageForOcr(file){
+function loadShotImage(file){
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      Promise.resolve()
-        .then(async () => {
-          const full = prepCanvasForOcr(img, {leftOnly: false});
-          const left = prepCanvasForOcr(img, {leftOnly: true});
-          const [fullBlob, leftBlob] = await Promise.all([canvasToBlob(full), canvasToBlob(left)]);
-          URL.revokeObjectURL(url);
-          resolve({full: fullBlob, left: leftBlob});
-        })
-        .catch(e => { URL.revokeObjectURL(url); reject(e); });
+      try {
+        const color = prepColorCanvas(img, {leftOnly: true});
+        const ocrLeft = prepCanvasForOcr(img, {leftOnly: true});
+        URL.revokeObjectURL(url);
+        resolve({img, color, ocrLeft});
+      } catch (e){
+        URL.revokeObjectURL(url);
+        reject(e);
+      }
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read image')); };
     img.src = url;
@@ -986,96 +1004,181 @@ function ptsForMatchedPlayer(pid){
   return weekPtsFor(pid, side && side.matchup);
 }
 
-/* Sleeper badges OCR as "LOCK-IN" (green) / "UNLOCKED" / "NOT LOCK" — not always "LOCKED". */
-function matchOcrLockedText(text){
+/* Sleeper: cyan open-lock + “LOCK-IN” label = still unlocked.
+   Green closed-lock badge near a scored night = actually banked. Never treat
+   LOCK-IN text alone as locked — OCR reads that label on unlocked rows too. */
+function rgbToHsv(r, g, b){
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d){
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return {h, s: max ? d / max : 0, v: max};
+}
+
+function classifyLockPixel(r, g, b){
+  const {h, s, v} = rgbToHsv(r, g, b);
+  if (v < 0.35 || s < 0.4) return null;
+  /* True green locked — exclude cyan/teal unlocked buttons. */
+  if (h >= 95 && h <= 145 && g > r + 20 && g > b + 10) return 'green';
+  if (h >= 155 && h <= 205 && g > r + 15 && b > r + 15) return 'cyan';
+  return null;
+}
+
+function findGreenLockBadges(canvas){
+  const ctx = canvas.getContext('2d', {willReadFrequently: true});
+  const w = canvas.width, h = canvas.height;
+  const {data} = ctx.getImageData(0, 0, w, h);
+  const step = 4, rad = 30;
+  const x0 = Math.floor(w * 0.04), x1 = Math.floor(w * 0.95);
+  const peaks = [];
+  for (let y = Math.min(400, Math.floor(h * 0.04)); y < h - 40; y += step){
+    for (let x = x0; x < x1; x += step){
+      let gN = 0, cN = 0;
+      for (let dy = -rad; dy <= rad; dy += 2){
+        for (let dx = -rad; dx <= rad; dx += 2){
+          if (dx * dx + dy * dy > rad * rad) continue;
+          const yy = y + dy, xx = x + dx;
+          if (yy < 0 || xx < 0 || yy >= h || xx >= w) continue;
+          const i = (yy * w + xx) * 4;
+          const k = classifyLockPixel(data[i], data[i + 1], data[i + 2]);
+          if (k === 'green') gN++;
+          else if (k === 'cyan') cN++;
+        }
+      }
+      /* Large LOCK-IN buttons ~500–600; skip green “W” glyphs (~95). */
+      if (gN < 180 || gN <= cN * 1.25) continue;
+      peaks.push({x, y, gN, cN, score: gN});
+    }
+  }
+  peaks.sort((a, b) => b.score - a.score);
+  const kept = [];
+  peaks.forEach(p => {
+    if (kept.some(k => Math.hypot(k.x - p.x, k.y - p.y) < 60)) return;
+    kept.push(p);
+  });
+  return kept.sort((a, b) => a.y - b.y);
+}
+
+function matchGreenBadgesToPlayers(badges, ocrWords){
   const idx = buildNameIndex();
   const prefer = focusRosterPids();
-  const lines = String(text || '').split(/\n+/);
   const hits = [];
   const seen = {};
+  const words = (ocrWords || []).filter(w =>
+    w && w.confidence >= 40 && /[A-Za-z]{3,}/.test(String(w.text || ''))
+  ).map(w => ({
+    t: String(w.text || ''),
+    y: w.bbox ? w.bbox.y0 : 0,
+    y1: w.bbox ? w.bbox.y1 : 0,
+    x: w.bbox ? w.bbox.x0 : 0
+  }));
 
-  function isLockInLine(ln){
-    if (!ln) return false;
-    if (ln.indexOf('unlocked') >= 0) return false;
-    if (ln.indexOf('notlock') >= 0 && ln.indexOf('lockin') < 0 && ln.indexOf('locked') < 0){
-      return false;
+  badges.forEach(b => {
+    /* Color canvas + OCR canvas share left-column crop; OCR may be scaled up. */
+    const by = b.y;
+    const above = words
+      .filter(n => n.y < by && by - n.y < 350 && by - n.y > 10)
+      .sort((a, c) => c.y - a.y)
+      .slice(0, 12);
+    /* Prefer the nearest name line above the badge. */
+    const nearText = above.slice(0, 6).map(n => n.t).join(' ');
+    let match = matchPlayerOnLine(nearText, idx, {preferPids: prefer});
+    if (!match) match = matchPlayerOnLine(nearText, idx, null);
+    if (!match || seen[match.pid]) return;
+
+    let pts = ptsForMatchedPlayer(match.pid);
+    if (pts == null || !Number.isFinite(pts)){
+      const nums = nearText.match(/\b(\d{1,3}(?:\.\d{1,2})?)\b/g) || [];
+      const ptsCand = nums.map(Number).filter(n => n >= 5 && n <= 90);
+      if (ptsCand.length) pts = ptsCand[ptsCand.length - 1];
     }
-    return ln.indexOf('lockin') >= 0
-      || ln.indexOf('locked') >= 0
-      || /lock[\s\-]?in/.test(ln);
-  }
-
-  for (let i = 0; i < lines.length; i++){
-    const raw = String(lines[i] || '');
-    const ln = normalizeName(raw);
-    if (!isLockInLine(ln)) continue;
-    /* "LOCK-IN NOT LOCK" = left player locked, right not — still a hit for left. */
-
-    const windowLines = [
-      lines[i - 4] || '', lines[i - 3] || '', lines[i - 2] || '',
-      lines[i - 1] || '', raw
-    ].join(' ');
-    let match = matchPlayerOnLine(windowLines, idx, {preferPids: prefer});
-    if (!match) match = matchPlayerOnLine(windowLines, idx, null);
-    if (!match || seen[match.pid]) continue;
-
-    const nums = windowLines.match(/\b(\d{1,3}(?:\.\d{1,2})?)\b/g) || [];
-    const ptsCand = nums.map(Number).filter(n => n >= 5 && n <= 90);
-    let pts = null;
-    const halfish = ptsCand.filter(n => Math.abs(n * 2 - Math.round(n * 2)) < 1e-6 && n >= 10);
-    if (halfish.length) pts = halfish[halfish.length - 1];
-    else if (ptsCand.length) pts = ptsCand[ptsCand.length - 1];
-    if (pts == null) pts = ptsForMatchedPlayer(match.pid);
-    if (pts == null || !Number.isFinite(pts)) continue;
+    if (pts == null || !Number.isFinite(pts)) return;
     seen[match.pid] = 1;
     hits.push({pid: match.pid, name: match.name, pts: Number(pts)});
-  }
+  });
   return hits;
 }
 
-async function ocrBlob(worker, blob, psm){
+async function ocrWordsFromCanvas(worker, canvas, psm){
   await worker.setParameters({tessedit_pageseg_mode: String(psm)});
-  const {data: {text}} = await worker.recognize(blob);
-  return text || '';
+  const blob = await canvasToBlob(canvas);
+  const {data} = await worker.recognize(blob);
+  return data;
 }
 
 async function runOcrOnImage(file){
   const status = document.getElementById('shotStatus');
   const preview = document.getElementById('shotPreview');
   status.className = 'shot-status';
-  status.textContent = 'Reading screenshot for LOCK-IN badges…';
+  status.textContent = 'Reading screenshot for green lock badges…';
   preview.hidden = false;
   preview.src = URL.createObjectURL(file);
   try {
     await loadTesseract();
-    const packs = await resizeImageForOcr(file);
+    const packs = await loadShotImage(file);
+    status.textContent = 'Scanning green vs cyan lock badges…';
+    const greenBadges = findGreenLockBadges(packs.color.canvas);
+
     const worker = await Tesseract.createWorker('eng');
-    /* Left column first (your roster), then full frame; PSM 6 + 4. */
-    let text = '';
-    const parts = [];
+    let words = [];
+    let textSample = '';
     try {
-      parts.push(await ocrBlob(worker, packs.left, 6));
-      status.textContent = 'Reading screenshot… (pass 2)';
-      parts.push(await ocrBlob(worker, packs.left, 4));
-      status.textContent = 'Reading screenshot… (pass 3)';
-      parts.push(await ocrBlob(worker, packs.full, 6));
+      status.textContent = 'Matching badge rows to roster names…';
+      const pass1 = await ocrWordsFromCanvas(worker, packs.ocrLeft, 6);
+      words = pass1.words || [];
+      textSample = pass1.text || '';
+      if (!words.length){
+        const pass2 = await ocrWordsFromCanvas(worker, packs.ocrLeft, 4);
+        words = pass2.words || [];
+        textSample = (textSample + '\n' + (pass2.text || '')).trim();
+      }
     } finally {
       await worker.terminate();
     }
-    text = parts.join('\n');
-    const hits = matchOcrLockedText(text);
+
+    /* Scale OCR word Y into color-canvas space when heights differ. */
+    const ocrH = packs.ocrLeft.height || 1;
+    const colorH = packs.color.canvas.height || 1;
+    const yScale = colorH / ocrH;
+    const scaledWords = words.map(w => ({
+      text: w.text,
+      confidence: w.confidence,
+      bbox: w.bbox ? {
+        x0: w.bbox.x0 * (packs.color.canvas.width / (packs.ocrLeft.width || 1)),
+        y0: w.bbox.y0 * yScale,
+        x1: w.bbox.x1 * (packs.color.canvas.width / (packs.ocrLeft.width || 1)),
+        y1: w.bbox.y1 * yScale
+      } : null
+    }));
+
+    const hits = matchGreenBadgesToPlayers(greenBadges, scaledWords);
+    /* Replace OCR marks for this pass — don't keep stale LOCK-IN false positives. */
+    Object.keys(state.lockMarks || {}).forEach(pid => {
+      if (state.lockMarks[pid] && state.lockMarks[pid].source === 'ocr'){
+        delete state.lockMarks[pid];
+      }
+    });
     hits.forEach(h => {
       state.lockMarks[h.pid] = {pts: h.pts, source: 'ocr', name: h.name};
     });
     saveLockMarks();
     document.getElementById('shotClear').hidden = false;
     if (!hits.length){
-      status.className = 'shot-status err';
-      status.textContent = 'Couldn’t find LOCK-IN badges. Tap lock pills on green-locked players (or re-upload a tighter crop of Starters).';
-      console.warn('matchup OCR text sample', text.slice(0, 800));
+      status.className = 'shot-status';
+      status.textContent = greenBadges.length
+        ? ('Found ' + greenBadges.length + ' green badge(s) but couldn’t match roster names. Tap lock pills on green-locked starters.')
+        : 'No green locked badges in that shot (cyan “LOCK-IN” = still unlocked). Tap lock pills if any row is wrong.';
+      console.warn('matchup green badges', greenBadges.length, 'ocr sample', textSample.slice(0, 600));
+      render();
     } else {
       status.className = 'shot-status ok';
-      status.textContent = 'LOCK-IN from screenshot: '
+      status.textContent = 'Green LOCKED from screenshot: '
         + hits.map(h => h.name + ' ' + h.pts).join(', ');
       render();
     }
