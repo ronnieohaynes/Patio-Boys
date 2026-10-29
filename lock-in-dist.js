@@ -843,12 +843,39 @@
     return 0;
   }
 
+  /* Remaining games this week for the player. Many left → hold; last game → ease. */
+  function bankGamesLeftAdj(style, gamesLeft, dow){
+    const g = Number(gamesLeft);
+    if (!Number.isFinite(g)) return 0;
+    const fringe = style === 'fringe' || style === 'stream';
+    const starter = style === 'starter';
+    const d = Number(dow);
+    const weekend = d === 0 || d === 5 || d === 6;
+    if (g >= 3) return fringe ? 4 : (starter ? 2 : 1);
+    if (g === 2) return fringe ? 2 : (starter ? 1 : 0);
+    if (g === 1){
+      if (fringe) return weekend ? -3 : -1;
+      if (starter) return weekend ? -2 : -1;
+      return weekend ? -1 : 0;
+    }
+    return 0;
+  }
+
+  /* Injury raises the bar (or blocks banking). Returns null mark when OUT/IR. */
+  function bankInjuryAdj(injury){
+    const s = String(injury || '').toUpperCase();
+    if (s === 'O' || s === 'OUT' || s === 'IR') return {block: true, adj: 0, label: s === 'IR' ? 'IR' : 'OUT'};
+    if (s === 'DTD' || s === 'Q' || s === 'QUESTIONABLE') return {block: false, adj: 4, label: 'questionable'};
+    if (s === 'P' || s === 'PROBABLE') return {block: false, adj: 1, label: 'probable'};
+    return {block: false, adj: 0, label: null};
+  }
+
   /* Per-player lock plan: FP floor to bank this night into a lock-in week.
      Stars bank near Avg (don't hunt unicorns). Fringe waits for a real smash.
      Early season → pickier; late season → bank sooner so top-10 slots fill.
      When rosterDists are passed, raise the bar to the roster's Nth GG so a
      mediocre fringe night doesn't steal a slot stars still need — and midweek
-     (dow) makes fringe pickier while games remain. */
+     (dow) + gamesLeft + injury make the bar move with the week. */
   function lockBankPlan(dist, opts){
     const options = opts || {};
     if (!dist || dist.projOnly) return null;
@@ -937,8 +964,29 @@
       mark = teamMark;
     }
 
+    const injuryInfo = bankInjuryAdj(options.injury);
+    if (injuryInfo.block){
+      return {
+        mark: null,
+        rate: 0,
+        style,
+        phase,
+        personalMark,
+        rosterFloor: rosterFloor != null ? Math.round(rosterFloor * 10) / 10 : null,
+        dayAdj: 0,
+        gamesLeftAdj: 0,
+        injuryAdj: 0,
+        blocked: true,
+        quality: quality != null && Number.isFinite(quality) ? Math.round(quality * 10) / 10 : null,
+        mean: Math.round(mean * 10) / 10,
+        why: (injuryInfo.label || 'OUT') + ' — do not bank'
+      };
+    }
+
     const dayAdj = bankDayAdj(style, options.dow);
-    mark = mark + dayAdj;
+    const gamesLeftAdj = bankGamesLeftAdj(style, options.gamesLeft, options.dow);
+    const injuryAdj = injuryInfo.adj || 0;
+    mark = mark + dayAdj + gamesLeftAdj + injuryAdj;
     /* Do not re-cap at personal ceiling after roster/day lifts — fringe often
        must clear a bar above their typical Ceil to deserve a lock on a deep team. */
     if (mark < Math.ceil(mean)) mark = Math.ceil(mean);
@@ -958,6 +1006,13 @@
     }
     if (dayAdj > 0) whyBits.push('midweek · hold for better nights');
     if (dayAdj < 0) whyBits.push('weekend · bank sooner');
+    const gLeft = Number(options.gamesLeft);
+    if (Number.isFinite(gLeft)){
+      if (gamesLeftAdj > 0) whyBits.push(gLeft + ' games left · hold');
+      else if (gamesLeftAdj < 0) whyBits.push('last game · bank sooner');
+      else if (gLeft === 0) whyBits.push('no games left');
+    }
+    if (injuryAdj > 0 && injuryInfo.label) whyBits.push(injuryInfo.label + ' · raise bar');
     whyBits.push('hits ~' + Math.round(rate * 100) + '%');
 
     return {
@@ -968,6 +1023,9 @@
       personalMark,
       rosterFloor: rosterFloor != null ? Math.round(rosterFloor * 10) / 10 : null,
       dayAdj,
+      gamesLeftAdj,
+      injuryAdj,
+      blocked: false,
       quality: quality != null && Number.isFinite(quality) ? Math.round(quality * 10) / 10 : null,
       mean: Math.round(mean * 10) / 10,
       why: whyBits.join(' · ')
@@ -2567,6 +2625,8 @@
     attachSmashGrade,
     rosterBankFloor,
     bankDayAdj,
+    bankGamesLeftAdj,
+    bankInjuryAdj,
     lockBankPlan,
     SMASH_BOOM_SIGMA,
     SMASH_GRADE_BANDS,

@@ -134,9 +134,43 @@
     display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:500;
     color:var(--ink-dim);margin-top:2px;
   }
+  td.player .slate{
+    display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;align-items:center;
+  }
+  td.player .fp-chip{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
+    font-variant-numeric:tabular-nums;letter-spacing:.02em;
+    padding:1px 5px;border-radius:4px;line-height:1.35;
+    color:var(--gold);background:color-mix(in srgb, var(--gold) 12%, transparent);
+    border:1px solid color-mix(in srgb, var(--gold) 35%, transparent);
+  }
+  /* Locked-in game score — white so it stands apart from raw FP chips. */
+  td.player .fp-chip.lock{
+    color:#fff;background:color-mix(in srgb, #fff 14%, transparent);
+    border-color:color-mix(in srgb, #fff 45%, transparent);
+  }
+  td.player .opp-chip{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:500;
+    color:var(--ink-dim);letter-spacing:.04em;text-transform:uppercase;
+  }
   td.num{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;color:var(--gold)}
+  td.num.lock-score{color:#fff}
   td.lean.smash{color:var(--green);font-weight:600}
   td.lean.bust{color:var(--coral);font-weight:600}
+  td.rec{font-size:12px;line-height:1.35;min-width:7.5rem}
+  td.rec .rec-act{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;
+    letter-spacing:.03em;text-transform:uppercase;
+  }
+  td.rec .rec-why{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:500;
+    color:var(--ink-dim);margin-top:2px;
+  }
+  td.rec.rec-lock .rec-act{color:var(--green)}
+  td.rec.rec-switch .rec-act{color:var(--coral)}
+  td.rec.rec-wait .rec-act{color:var(--gold)}
+  td.rec.rec-sit .rec-act, td.rec.rec-none .rec-act{color:var(--ink-dim)}
+  td.rec.rec-locked .rec-act{color:#fff}
   tr.locked td{background:color-mix(in srgb, var(--green) 10%, transparent)}
   .lock-pill{
     display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:9px;
@@ -236,7 +270,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-logo-lock';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-bank-rec';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -279,7 +313,9 @@ const state = {
   focusTeam: MY_TEAM,
   lockByPid: {},
   statsSeason: null,
-  nbaWeek: null, /* { byTeam, oppg, avgOppg } from ESPN slate */
+  nbaWeek: null, /* { byTeam, oppg, avgOppg, finalEvents } from ESPN slate */
+  /* pid -> [{eventId, date, opp, fp}] scored box scores for played games. */
+  gameFpByPid: {},
   /* Only green LOCKED nights — never inferred from “starter with points”. */
   lockMarks: {}, /* pid -> {pts, source:'ocr'|'manual', name, slot} */
   tesseractLoading: null
@@ -405,6 +441,8 @@ async function loadNbaContext(){
   const ptsFor = {};
   const ptsAgainst = {};
   const gp = {};
+  const finalEvents = []; /* {eventId, date, home, away} for boxscore FP */
+  const seenFinal = {};
   const upcomingCutoff = ymd(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 1)));
 
   results.forEach((board, idx) => {
@@ -421,6 +459,7 @@ async function loadNbaContext(){
       if (!hAbbr || !aAbbr) return;
       const status = (comp.status && comp.status.type && comp.status.type.name) || '';
       const final = /FINAL|STATUS_FINAL/i.test(status) || (comp.status && comp.status.type && comp.status.type.completed);
+      const eventId = String(ev.id || comp.id || '');
       const hScore = Number(home.score);
       const aScore = Number(away.score);
       if (final && Number.isFinite(hScore) && Number.isFinite(aScore)){
@@ -431,10 +470,18 @@ async function loadNbaContext(){
         ptsAgainst[aAbbr] = (ptsAgainst[aAbbr] || 0) + hScore;
         gp[aAbbr] = (gp[aAbbr] || 0) + 1;
       }
-      /* Upcoming / in-window slate for scouting */
+      /* Upcoming / in-window slate for scouting + played-game FP */
       if (ds >= upcomingCutoff){
-        (byTeam[hAbbr] = byTeam[hAbbr] || []).push({opp: aAbbr, home: true, date: ds, final: !!final});
-        (byTeam[aAbbr] = byTeam[aAbbr] || []).push({opp: hAbbr, home: false, date: ds, final: !!final});
+        (byTeam[hAbbr] = byTeam[hAbbr] || []).push({
+          opp: aAbbr, home: true, date: ds, final: !!final, eventId
+        });
+        (byTeam[aAbbr] = byTeam[aAbbr] || []).push({
+          opp: hAbbr, home: false, date: ds, final: !!final, eventId
+        });
+        if (final && eventId && !seenFinal[eventId]){
+          seenFinal[eventId] = true;
+          finalEvents.push({eventId, date: ds, home: hAbbr, away: aAbbr});
+        }
       }
     });
   });
@@ -445,12 +492,215 @@ async function loadNbaContext(){
   });
   const vals = Object.values(oppg);
   const avgOppg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 112;
-  return {byTeam, oppg, avgOppg, gp};
+  return {byTeam, oppg, avgOppg, gp, finalEvents};
+}
+
+function parseMadeAtt(cell){
+  if (!cell || String(cell).indexOf('-') < 0) return {made: 0, att: 0};
+  const parts = String(cell).split('-');
+  const made = Number(parts[0]);
+  const att = Number(parts[1]);
+  return {
+    made: Number.isFinite(made) ? made : 0,
+    att: Number.isFinite(att) ? att : 0
+  };
+}
+
+function parseBoxMinutes(cell){
+  if (cell == null) return 0;
+  const s = String(cell).trim();
+  if (!s || s === '-' || s === 'DNP' || s === 'NWT' || s === '0' || s === '00' || s === '0:00') return 0;
+  if (s.indexOf(':') >= 0){
+    const parts = s.split(':');
+    const m = Number(parts[0]);
+    const sec = Number(parts[1]);
+    if (!Number.isFinite(m)) return 0;
+    return m + (Number.isFinite(sec) ? sec / 60 : 0);
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function playerNameKey(name){
+  return String(name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b\.?/g, '')
+    .replace(/[.\u2019']/g, '').replace(/[^a-z0-9]/g, '');
+}
+
+function buildRosterNameMap(){
+  const map = {}; /* nameKey -> pid */
+  const prefer = {}; /* nameKey -> score */
+  (state.rosters || []).forEach(r => {
+    (r.players || []).forEach(pid => {
+      const id = String(pid);
+      const p = state.players[id];
+      if (!p) return;
+      const key = playerNameKey(playerName(p));
+      if (key.length < 4) return;
+      const score = (p.team ? 2 : 0) + (p.active === false ? 0 : 1);
+      if (!map[key] || score >= (prefer[key] || 0)){
+        map[key] = id;
+        prefer[key] = score;
+      }
+    });
+  });
+  return map;
+}
+
+function parseEspnBoxscore(payload){
+  const rows = [];
+  const box = payload && payload.boxscore;
+  (box && box.players || []).forEach(teamBlock => {
+    const teamAbbr = teamBlock.team && teamBlock.team.abbreviation;
+    (teamBlock.statistics || []).forEach(group => {
+      const labels = (group.labels || []).map(x => String(x).toUpperCase());
+      if (!labels.length) return;
+      const idx = {};
+      labels.forEach((lab, i) => { idx[lab] = i; });
+      const needed = ['PTS', 'REB', 'AST', 'TO', 'STL', 'BLK', 'FG', 'FT', '3PT'];
+      if (needed.some(k => idx[k] == null)) return;
+      (group.athletes || []).forEach(ath => {
+        if (ath.didNotPlay) return;
+        const athlete = ath.athlete || {};
+        const name = athlete.displayName || athlete.shortName || '';
+        const stats = ath.stats || [];
+        const cell = (lab) => {
+          const i = idx[lab];
+          return i == null || i >= stats.length ? null : stats[i];
+        };
+        const minutes = idx.MIN != null ? parseBoxMinutes(cell('MIN')) : 0;
+        if (!(minutes > 0)) return;
+        const fg = parseMadeAtt(cell('FG'));
+        const ft = parseMadeAtt(cell('FT'));
+        const tp = parseMadeAtt(cell('3PT'));
+        const toNum = (lab) => {
+          const v = Number(cell(lab));
+          return Number.isFinite(v) ? v : 0;
+        };
+        const obj = {
+          pts: toNum('PTS'),
+          reb: toNum('REB'),
+          oreb: toNum('OREB'),
+          ast: toNum('AST'),
+          stl: toNum('STL'),
+          blk: toNum('BLK'),
+          to: toNum('TO'),
+          fgmi: Math.max(0, fg.att - fg.made),
+          ftmi: Math.max(0, ft.att - ft.made),
+          tpm: tp.made,
+          min: Math.round(minutes * 100) / 100
+        };
+        if (obj.pts + obj.reb + obj.ast + obj.stl + obj.blk + obj.to + obj.fgmi + obj.ftmi + obj.tpm === 0){
+          return;
+        }
+        rows.push({name, teamAbbr, obj});
+      });
+    });
+  });
+  return rows;
+}
+
+function applySleeperSingleGameFallback(byPid, nbaWeek){
+  const events = (nbaWeek && nbaWeek.finalEvents) || [];
+  const finalsByEspn = {};
+  events.forEach(ev => {
+    (finalsByEspn[ev.home] = finalsByEspn[ev.home] || []).push(ev);
+    (finalsByEspn[ev.away] = finalsByEspn[ev.away] || []).push(ev);
+  });
+  (state.matchups || []).forEach(m => {
+    const ptsMap = m && m.players_points;
+    if (!ptsMap) return;
+    Object.keys(ptsMap).forEach(pid => {
+      if (byPid[pid] && byPid[pid].length) return;
+      const v = Number(ptsMap[pid]);
+      if (!Number.isFinite(v) || v <= 0) return;
+      const p = state.players[pid] || {};
+      const espn = espnAbbr(p.team);
+      const finals = (espn && finalsByEspn[espn]) || [];
+      if (finals.length !== 1) return;
+      const ev = finals[0];
+      const oppEspn = espn === ev.home ? ev.away : ev.home;
+      byPid[pid] = [{
+        eventId: ev.eventId,
+        date: ev.date,
+        opp: ESPN_TO_SLEEPER[oppEspn] || oppEspn,
+        fp: Math.round(v * 10) / 10,
+        source: 'sleeper-week'
+      }];
+    });
+  });
+  return byPid;
+}
+
+/* Score final ESPN boxscores under league settings → per-game FP by Sleeper pid. */
+async function loadWeekGameFp(nbaWeek){
+  const scoring = state.league && state.league.scoring_settings;
+  const events = (nbaWeek && nbaWeek.finalEvents) || [];
+  if (!scoring || !window.LockInDist || typeof LockInDist.scoreGame !== 'function'){
+    state.gameFpByPid = {};
+    return {};
+  }
+  let byPid = {};
+  if (state._boxFpByPid){
+    byPid = JSON.parse(JSON.stringify(state._boxFpByPid));
+  } else if (events.length){
+    const nameMap = buildRosterNameMap();
+    const chunks = [];
+    for (let i = 0; i < events.length; i += 8) chunks.push(events.slice(i, i + 8));
+    for (let c = 0; c < chunks.length; c++){
+      const pack = await Promise.all(chunks[c].map(ev =>
+        fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event=' + ev.eventId)
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null)
+          .then(payload => ({ev, payload}))
+      ));
+      pack.forEach(item => {
+        if (!item.payload) return;
+        const lines = parseEspnBoxscore(item.payload);
+        const home = item.ev.home;
+        const away = item.ev.away;
+        lines.forEach(line => {
+          const key = playerNameKey(line.name);
+          const pid = nameMap[key];
+          if (!pid) return;
+          const fp = LockInDist.scoreGame(line.obj, scoring);
+          if (fp == null || !Number.isFinite(fp)) return;
+          let opp = null;
+          if (line.teamAbbr && home && away){
+            if (line.teamAbbr === home) opp = away;
+            else if (line.teamAbbr === away) opp = home;
+          }
+          const oppLabel = opp ? (ESPN_TO_SLEEPER[opp] || opp) : null;
+          (byPid[pid] = byPid[pid] || []).push({
+            eventId: item.ev.eventId,
+            date: item.ev.date,
+            opp: oppLabel,
+            fp: Math.round(fp * 10) / 10
+          });
+        });
+      });
+    }
+    Object.keys(byPid).forEach(pid => {
+      byPid[pid].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    });
+    state._boxFpByPid = JSON.parse(JSON.stringify(byPid));
+  }
+
+  /* If a team has exactly one final this window and boxscore name-match missed,
+     fall back to Sleeper’s week total for that single night. */
+  applySleeperSingleGameFallback(byPid, nbaWeek);
+  state.gameFpByPid = byPid;
+  return byPid;
 }
 
 function espnAbbr(sleeperTeam){
   if (!sleeperTeam) return null;
   return SLEEPER_TO_ESPN[String(sleeperTeam).toUpperCase()] || String(sleeperTeam).toUpperCase();
+}
+
+function gameFpForPid(pid){
+  const id = String(pid);
+  return (state.gameFpByPid && state.gameFpByPid[id]) || [];
 }
 
 function scoutPlayer(pid, dist){
@@ -462,6 +712,31 @@ function scoutPlayer(pid, dist){
   const upcoming = games.filter(g => !g.final);
   const opps = upcoming.map(g => g.opp);
   const oppLabels = opps.map(o => ESPN_TO_SLEEPER[o] || o);
+  const scored = gameFpForPid(pid);
+  const scoredByEvent = {};
+  scored.forEach(g => { if (g.eventId) scoredByEvent[g.eventId] = g; });
+
+  /* Full slate under the name: played → FP, upcoming → opponent abbr. */
+  const slate = games.map(g => {
+    const oppLabel = ESPN_TO_SLEEPER[g.opp] || g.opp;
+    if (g.final){
+      const hit = (g.eventId && scoredByEvent[g.eventId])
+        || scored.find(s => s.date === g.date && (!s.opp || s.opp === oppLabel));
+      if (hit && hit.fp != null){
+        return {kind: 'fp', fp: hit.fp, opp: oppLabel, date: g.date, eventId: g.eventId || hit.eventId};
+      }
+      return {kind: 'played', opp: oppLabel, date: g.date, eventId: g.eventId || null, fp: null};
+    }
+    return {kind: 'opp', opp: oppLabel, date: g.date, eventId: g.eventId || null};
+  });
+  /* Fallback: scored lines with no matching slate row (name/team miss). */
+  if (!slate.some(s => s.kind === 'fp') && scored.length){
+    scored.forEach(g => {
+      if (slate.some(s => s.eventId && g.eventId && s.eventId === g.eventId)) return;
+      slate.push({kind: 'fp', fp: g.fp, opp: g.opp, date: g.date, eventId: g.eventId});
+    });
+    slate.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+  }
 
   const smashRate = dist && dist.smashBoomRate != null ? Number(dist.smashBoomRate)
     : (dist && window.LockInDist && LockInDist.smashBoomRate ? LockInDist.smashBoomRate(dist) : null);
@@ -528,6 +803,11 @@ function scoutPlayer(pid, dist){
     leanScore,
     why: why.join(' · ') || '—',
     opps: oppLabels,
+    slate,
+    gamesLeft: upcoming.length,
+    nextGame: upcoming[0]
+      ? {date: upcoming[0].date, opp: oppLabels[0] || null}
+      : null,
     smashRate,
     injury: injury || null
   };
@@ -546,6 +826,12 @@ function lockedPtsFor(pid){
 
 function weekPtsFor(pid, matchupRow){
   const id = String(pid);
+  /* Prefer latest single-game FP (lock-in unit), not Sleeper week totals. */
+  const games = gameFpForPid(id);
+  if (games.length){
+    const last = games[games.length - 1];
+    if (last && last.fp != null && Number.isFinite(Number(last.fp))) return Number(last.fp);
+  }
   if (matchupRow && matchupRow.players_points && matchupRow.players_points[id] != null){
     const v = Number(matchupRow.players_points[id]);
     if (Number.isFinite(v)) return v;
@@ -728,16 +1014,223 @@ function sidePlayerRows(side){
       };
       return;
     }
-    r.bank = LockInDist.lockBankPlan(r.dist, opts);
+    const playerOpts = Object.assign({}, opts, {
+      gamesLeft: r.scout && r.scout.gamesLeft != null
+        ? r.scout.gamesLeft
+        : ((r.scout && r.scout.slate) || []).filter(s => s.kind === 'opp').length,
+      injury: r.scout && r.scout.injury
+    });
+    r.bank = LockInDist.lockBankPlan(r.dist, playerOpts);
   });
 
-  return {
+  const pack = {
     rows,
     lockedScores,
     opts,
     starters: rows.filter(r => r.starter),
     bench: rows.filter(r => !r.starter)
   };
+  rows.forEach(r => { r.rec = buildRec(r, pack); });
+  return pack;
+}
+
+function latestScoredFp(r){
+  const fps = ((r.scout && r.scout.slate) || []).filter(s => s.kind === 'fp' && s.fp != null);
+  if (fps.length) return Number(fps[fps.length - 1].fp);
+  if (r.lockPts != null && Number.isFinite(Number(r.lockPts))) return Number(r.lockPts);
+  return null;
+}
+
+function openLockSlots(pack){
+  const labels = lockSlotLabels();
+  const taken = new Set();
+  (pack.rows || []).forEach(r => {
+    if (!r.locked) return;
+    if (r.slot == null || r.slot === 'BN') return;
+    taken.add(Number(r.slot));
+  });
+  return labels.map((lab, i) => ({index: i, label: lab, open: !taken.has(i)}))
+    .filter(s => s.open);
+}
+
+function eligList(p){
+  return (p && (p.fantasy_positions || (p.position ? [p.position] : []))) || [];
+}
+
+function fitsLockSlot(p, slotLabel){
+  const elig = eligList(p).map(String);
+  const lab = String(slotLabel || '').toUpperCase();
+  if (lab === 'UTIL') return true;
+  if (lab === 'G') return elig.some(e => e === 'PG' || e === 'SG' || e === 'G');
+  if (lab === 'F') return elig.some(e => e === 'SF' || e === 'PF' || e === 'F');
+  return elig.indexOf(lab) >= 0;
+}
+
+function preferSlotForPlayer(p, openSlots){
+  const order = ['PG', 'SG', 'SF', 'PF', 'C', 'G', 'F', 'UTIL'];
+  const ranked = (openSlots || []).slice().sort((a, b) =>
+    order.indexOf(a.label) - order.indexOf(b.label));
+  const elig = eligList(p).map(String);
+  for (let i = 0; i < ranked.length; i++){
+    const s = ranked[i];
+    if (s.label === 'UTIL') continue;
+    if (elig.indexOf(s.label) >= 0 && fitsLockSlot(p, s.label)) return s;
+  }
+  for (let i = 0; i < ranked.length; i++){
+    const s = ranked[i];
+    if ((s.label === 'G' || s.label === 'F') && fitsLockSlot(p, s.label)) return s;
+  }
+  for (let i = 0; i < ranked.length; i++){
+    if (fitsLockSlot(p, ranked[i].label)) return ranked[i];
+  }
+  return null;
+}
+
+function shortPlayerName(p){
+  if (!p) return '—';
+  if (p.last_name) return p.last_name;
+  const full = playerName(p);
+  const parts = full.split(/\s+/);
+  return parts.length ? parts[parts.length - 1] : full;
+}
+
+function weekdayLabel(ymdStr){
+  if (!ymdStr || String(ymdStr).length < 8) return null;
+  const s = String(ymdStr);
+  const d = new Date(Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)));
+  if (!Number.isFinite(d.getTime())) return null;
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
+}
+
+function nextGameLabel(scout){
+  const slate = (scout && scout.slate) || [];
+  const next = slate.find(s => s.kind === 'opp');
+  if (!next) return null;
+  const day = weekdayLabel(next.date);
+  return (day || 'next') + (next.opp ? (' vs ' + next.opp) : '');
+}
+
+function betterSwitchTarget(r, pack){
+  const myMean = r.dist && Number(r.dist.mean) || 0;
+  const cands = (pack.rows || []).filter(o => {
+    if (!o || o.pid === r.pid || o.locked) return false;
+    const inj = o.scout && o.scout.injury;
+    if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
+    const mean = o.dist && Number(o.dist.mean) || 0;
+    if (!(mean > myMean + 2)) return false;
+    const left = o.scout && o.scout.gamesLeft || 0;
+    const scored = latestScoredFp(o);
+    return left > 0 || scored != null;
+  }).sort((a, b) => (Number(b.dist && b.dist.mean) || 0) - (Number(a.dist && a.dist.mean) || 0));
+  return cands[0] || null;
+}
+
+/* Actionable recommendation: Lock / Switch / Wait (+ reason). */
+function buildRec(r, pack){
+  if (r.locked){
+    return {
+      action: 'locked',
+      label: 'Locked · ' + (r.slotLabel || 'slot'),
+      reason: 'Already banked',
+      cls: 'rec-locked'
+    };
+  }
+  const injury = r.scout && r.scout.injury;
+  const gamesLeft = r.scout && r.scout.gamesLeft != null
+    ? r.scout.gamesLeft
+    : ((r.scout && r.scout.slate) || []).filter(s => s.kind === 'opp').length;
+  const scored = latestScoredFp(r);
+  const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const open = openLockSlots(pack);
+  const slot = preferSlotForPlayer(r.p, open);
+  const nextLbl = nextGameLabel(r.scout);
+
+  if (injury === 'OUT' || injury === 'O' || injury === 'IR'){
+    const alt = betterSwitchTarget(r, pack);
+    const tag = injury === 'IR' ? 'IR' : 'OUT';
+    if (alt){
+      return {
+        action: 'switch',
+        label: 'Switch · ' + shortPlayerName(alt.p),
+        reason: tag + ' — use ' + shortPlayerName(alt.p),
+        cls: 'rec-switch'
+      };
+    }
+    return {action: 'sit', label: 'Sit', reason: 'ruled ' + tag, cls: 'rec-sit'};
+  }
+
+  if (scored != null && bank != null && scored + 1e-9 >= bank){
+    if (slot){
+      return {
+        action: 'lock',
+        label: 'Lock · ' + slot.label,
+        reason: formatFp(scored) + ' ≥ Bank ' + bank,
+        cls: 'rec-lock'
+      };
+    }
+    return {
+      action: 'lock',
+      label: 'Lock',
+      reason: formatFp(scored) + ' ≥ Bank ' + bank + ' · no open slot',
+      cls: 'rec-lock'
+    };
+  }
+
+  if (scored != null && bank != null && scored < bank){
+    const alt = betterSwitchTarget(r, pack);
+    const myMean = r.dist && Number(r.dist.mean) || 0;
+    const altMean = alt && alt.dist && Number(alt.dist.mean) || 0;
+    if (alt && altMean - myMean >= 4){
+      return {
+        action: 'switch',
+        label: 'Switch · ' + shortPlayerName(alt.p),
+        reason: formatFp(scored) + ' < Bank ' + bank,
+        cls: 'rec-switch'
+      };
+    }
+    if (gamesLeft > 0){
+      return {
+        action: 'wait',
+        label: 'Wait',
+        reason: formatFp(scored) + ' < ' + bank
+          + (nextLbl ? (' · next ' + nextLbl) : (' · ' + gamesLeft + ' left')),
+        cls: 'rec-wait'
+      };
+    }
+    return {
+      action: 'sit',
+      label: 'Pass',
+      reason: formatFp(scored) + ' below Bank ' + bank + ' · no games left',
+      cls: 'rec-sit'
+    };
+  }
+
+  if (injury === 'DTD' || injury === 'Q' || injury === 'QUESTIONABLE'){
+    return {
+      action: 'wait',
+      label: 'Wait',
+      reason: 'Questionable' + (nextLbl ? (' · confirm by ' + nextLbl) : ''),
+      cls: 'rec-wait'
+    };
+  }
+
+  if (gamesLeft > 0){
+    const bits = [];
+    if (bank != null) bits.push('Bank ≥' + bank);
+    if (nextLbl) bits.push('hold for ' + nextLbl);
+    else bits.push(gamesLeft + ' game' + (gamesLeft > 1 ? 's' : '') + ' left');
+    return {action: 'wait', label: 'Wait', reason: bits.join(' · '), cls: 'rec-wait'};
+  }
+
+  if (scored != null){
+    return {
+      action: 'sit',
+      label: bank != null && scored < bank ? 'Pass' : '—',
+      reason: 'No games left this window',
+      cls: 'rec-sit'
+    };
+  }
+  return {action: 'none', label: '—', reason: 'No slate', cls: 'rec-none'};
 }
 
 function renderAdvice(pair, leftPack, rightPack){
@@ -777,27 +1270,40 @@ function renderAdvice(pair, leftPack, rightPack){
         : ' · tight — bank quality nights only.'))
     + '</li>');
 
-  const smashCands = focusPack.rows.filter(r => !r.locked && r.scout.lean === 'smash').slice(0, 4);
-  if (smashCands.length){
-    tips.push('<li><span class="tag smash">Smash lean</span>'
-      + smashCands.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong>'
-        + (r.bank && r.bank.mark != null ? (' Bank ≥' + r.bank.mark) : '')
-        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.scout.why) + ')</span>').join(' · ')
+  const lockNow = focusPack.rows.filter(r => r.rec && r.rec.action === 'lock').slice(0, 4);
+  if (lockNow.length){
+    tips.push('<li><span class="tag smash">Lock now</span>'
+      + lockNow.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> '
+        + escapeHtml(r.rec.label)
+        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.rec.reason) + ')</span>')
+        .join(' · ')
       + '.</li>');
   }
-  const bustCands = focusPack.rows.filter(r => !r.locked && (r.scout.lean === 'bust' || r.scout.injury)).slice(0, 4);
-  if (bustCands.length){
-    tips.push('<li><span class="tag bust">Bust / sit</span>'
-      + bustCands.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong>'
-        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.scout.why) + ')</span>').join(' · ')
+  const switches = focusPack.rows.filter(r => r.rec && r.rec.action === 'switch').slice(0, 4);
+  if (switches.length){
+    tips.push('<li><span class="tag bust">Switch</span>'
+      + switches.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> '
+        + escapeHtml(r.rec.label)
+        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.rec.reason) + ')</span>')
+        .join(' · ')
+      + '.</li>');
+  }
+  const waits = focusPack.rows
+    .filter(r => r.rec && r.rec.action === 'wait' && r.starter)
+    .slice(0, 4);
+  if (waits.length){
+    tips.push('<li><span class="tag lock">Wait</span>'
+      + waits.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong>'
+        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.rec.reason) + ')</span>')
+        .join(' · ')
       + '.</li>');
   }
 
-  const oppSmash = oppPack.rows.filter(r => !r.locked && r.scout.lean === 'smash').slice(0, 3);
-  if (oppSmash.length){
+  const oppLocks = oppPack.rows.filter(r => r.rec && r.rec.action === 'lock').slice(0, 3);
+  if (oppLocks.length){
     tips.push('<li><span class="tag news">Opp watch</span>'
-      + escapeHtml(oppSide.franchise.team) + ' smash leans: '
-      + oppSmash.map(r => escapeHtml(playerName(r.p))).join(', ')
+      + escapeHtml(oppSide.franchise.team) + ' ready to lock: '
+      + oppLocks.map(r => escapeHtml(playerName(r.p))).join(', ')
       + ' — don’t leave a weak lock slot open if they go off.</li>');
   }
 
@@ -808,19 +1314,6 @@ function renderAdvice(pair, leftPack, rightPack){
         + (r.p.injury_notes ? (' — ' + escapeHtml(String(r.p.injury_notes).slice(0, 80))) : ''))
         .join(' · ')
       + '.</li>');
-  }
-
-  /* Who to bank next among unlocked with bank plan */
-  const nextBank = focusPack.rows
-    .filter(r => !r.locked && r.bank && r.bank.mark != null && r.starter)
-    .sort((a, b) => (b.dist && b.dist.mean || 0) - (a.dist && a.dist.mean || 0))
-    .slice(0, 3);
-  if (nextBank.length){
-    tips.push('<li><span class="tag lock">Lock plan</span>Next Bank ≥ targets: '
-      + nextBank.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> ≥' + r.bank.mark
-        + ' <span style="color:var(--ink-dim)">(' + Math.round((r.bank.rate || 0) * 100) + '%)</span>')
-        .join(' · ')
-      + '. Bars already bake in remaining roster quality + midweek timing.</li>');
   }
 
   el.innerHTML = '<h2>Advice · ' + escapeHtml(focusSide.franchise.team) + '</h2><ul>' + tips.join('') + '</ul>';
@@ -842,42 +1335,86 @@ function slotBadgeHtml(pid, slotKey){
     + '</select>';
 }
 
+function formatFp(v){
+  if (v == null || !Number.isFinite(Number(v))) return '—';
+  const n = Number(v);
+  return Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1);
+}
+
+function slateHtml(r){
+  const slate = (r.scout && r.scout.slate) || [];
+  const lockPts = r.lockPts != null && Number.isFinite(Number(r.lockPts)) ? Number(r.lockPts) : null;
+  let lockMatched = false;
+  const chips = slate.map(item => {
+    if (item.kind === 'fp' && item.fp != null){
+      const isLock = !lockMatched && lockPts != null && Math.abs(Number(item.fp) - lockPts) < 0.55;
+      if (isLock) lockMatched = true;
+      const title = (item.opp ? ('vs ' + item.opp + ' · ') : '')
+        + formatFp(item.fp) + ' FP'
+        + (isLock ? ' · LOCKED IN' : '');
+      return '<span class="fp-chip' + (isLock ? ' lock' : '') + '" title="' + escapeHtml(title) + '">'
+        + escapeHtml(formatFp(item.fp)) + '</span>';
+    }
+    if (item.kind === 'played'){
+      return '<span class="opp-chip" title="Played — FP unavailable">—</span>';
+    }
+    if (item.opp){
+      return '<span class="opp-chip" title="Upcoming">vs ' + escapeHtml(item.opp) + '</span>';
+    }
+    return '';
+  }).filter(Boolean);
+  /* Locked score with no matching boxscore chip — still show white lock FP. */
+  if (r.locked && lockPts != null && !lockMatched){
+    chips.unshift(
+      '<span class="fp-chip lock" title="Locked in · ' + escapeHtml(formatFp(lockPts)) + ' FP">'
+      + escapeHtml(formatFp(lockPts)) + '</span>'
+    );
+  }
+  return chips.length ? ('<div class="slate">' + chips.join('') + '</div>') : '';
+}
+
 function playerRowHtml(r){
-  const leanCls = r.scout.lean === 'smash' ? 'smash' : (r.scout.lean === 'bust' ? 'bust' : '');
-  const leanTxt = r.scout.lean === 'neutral' ? '—' : r.scout.lean;
   const avg = r.dist && r.dist.mean != null ? r.dist.mean.toFixed(1) : '—';
   const smash = r.scout.smashRate != null ? Math.round(r.scout.smashRate * 100) + '%' : '—';
   const bank = r.bank && r.bank.mark != null ? r.bank.mark : '—';
-  const pts = r.pts != null ? r.pts : '—';
+  const bankCls = r.locked ? 'num lock-score' : 'num';
+  const bankTitle = (r.bank && r.bank.why) || '';
   const ovr = r.dist && r.dist.lockOvr != null ? Math.round(r.dist.lockOvr) : '—';
-  const scored = r.pts != null && Number(r.pts) > 0;
-  const pillCls = r.locked ? 'locked' : (scored ? 'open' : 'none');
-  const pillTxt = r.locked ? 'Locked' : (scored ? 'Unlocked' : 'Not lock');
+  const rec = r.rec || {label: '—', reason: '', cls: 'rec-none'};
+  const hasFp = (r.scout.slate || []).some(s => s.kind === 'fp' && s.fp != null)
+    || (r.lockPts != null && Number(r.lockPts) > 0)
+    || (r.pts != null && Number(r.pts) > 0);
+  const pillCls = r.locked ? 'locked' : (hasFp ? 'open' : 'none');
+  const pillTxt = r.locked ? 'Locked' : (hasFp ? 'Unlocked' : 'Not lock');
+  const lockPtsAttr = r.lockPts != null ? r.lockPts
+    : (r.scout.slate || []).filter(s => s.kind === 'fp' && s.fp != null).map(s => s.fp).slice(-1)[0];
   const pillTitle = r.locked
     ? ('Green LOCKED at ' + (r.slotLabel || 'slot') + ' — counts toward lock-in. Click to unmark.')
-    : (scored
+    : (hasFp
       ? 'Scored but still UNLOCKED (can sub/move). Click to mark as green LOCKED.'
       : 'No scored night yet. Click to mark locked if needed.');
   const trCls = (r.locked ? 'locked' : '') + (!r.starter ? ' bench' : '');
   const elig = eligHtml(r.p);
   const meta = (r.p.team ? (' · ' + escapeHtml(r.p.team)) : '')
-    + (r.scout.opps && r.scout.opps.length ? (' vs ' + escapeHtml(r.scout.opps.join('/'))) : '')
     + (r.scout.injury ? (' · ' + escapeHtml(r.scout.injury)) : '');
   return '<tr class="' + trCls.trim() + '">'
     + '<td class="player"><div class="player-row"><div class="player-main">'
     + escapeHtml(playerName(r.p))
     + '<button type="button" class="lock-pill ' + pillCls + '" data-lock-pid="' + escapeHtml(r.pid)
-    + '" data-lock-pts="' + (r.pts != null ? r.pts : '') + '" data-lock-slot="'
+    + '" data-lock-pts="' + (lockPtsAttr != null ? lockPtsAttr : '') + '" data-lock-slot="'
     + escapeHtml(String(r.slot == null ? 'BN' : r.slot)) + '" title="' + escapeHtml(pillTitle) + '">'
     + pillTxt + '</button>'
     + '<span class="sub">' + elig + meta + '</span>'
+    + slateHtml(r)
     + '</div>' + slotBadgeHtml(r.pid, r.slot) + '</div></td>'
     + '<td class="num">' + ovr + '</td>'
     + '<td class="num">' + avg + '</td>'
     + '<td class="num">' + smash + '</td>'
-    + '<td class="num" title="' + escapeHtml((r.bank && r.bank.why) || '') + '">' + bank + '</td>'
-    + '<td class="num">' + pts + '</td>'
-    + '<td class="lean ' + leanCls + '" title="' + escapeHtml(r.scout.why) + '">' + leanTxt + '</td>'
+    + '<td class="' + bankCls + '" title="' + escapeHtml(bankTitle) + '">' + bank + '</td>'
+    + '<td class="rec ' + escapeHtml(rec.cls) + '" title="' + escapeHtml(rec.reason || '') + '">'
+    + '<span class="rec-act">' + escapeHtml(rec.label) + '</span>'
+    + (rec.reason ? ('<span class="rec-why">' + escapeHtml(rec.reason) + '</span>') : '')
+    + '</td>'
     + '</tr>';
 }
 
@@ -886,9 +1423,9 @@ function renderSide(side, pack){
   const starters = pack.starters || [];
   const bench = pack.bench || [];
   const body = []
-    .concat(starters.length ? ['<tr class="section-row"><td colspan="7">Starters</td></tr>'] : [])
+    .concat(starters.length ? ['<tr class="section-row"><td colspan="6">Starters</td></tr>'] : [])
     .concat(starters.map(playerRowHtml))
-    .concat(bench.length ? ['<tr class="section-row"><td colspan="7">Bench</td></tr>'] : [])
+    .concat(bench.length ? ['<tr class="section-row"><td colspan="6">Bench</td></tr>'] : [])
     .concat(bench.map(playerRowHtml))
     .join('');
 
@@ -900,7 +1437,7 @@ function renderSide(side, pack){
     + lockedN + '/' + slots + ' locked</span></div>'
     + '<table><thead><tr>'
     + '<th>Player</th><th class="num">Lock</th><th class="num">Avg</th><th class="num">Smash</th>'
-    + '<th class="num">Bank ≥</th><th class="num">Wk</th><th>Lean</th>'
+    + '<th class="num">Bank ≥</th><th>Rec</th>'
     + '</tr></thead><tbody>' + body + '</tbody></table></div>';
 }
 
@@ -937,15 +1474,17 @@ function render(){
   document.getElementById('detailTitle').textContent =
     pair.sides[0].franchise.team + ' vs ' + pair.sides[1].franchise.team;
   document.getElementById('detailSub').textContent =
-    'Week ' + state.week + ' · Sleeper lineup slots · Bank ≥ after green locks only';
+    'Week ' + state.week + ' · Bank ≥ moves with weekday, games left, and injury · Rec = Lock / Switch / Wait';
   document.getElementById('sides').innerHTML =
     renderSide(pair.sides[0], leftPack) + renderSide(pair.sides[1], rightPack);
   renderAdvice(pair, leftPack, rightPack);
 
   document.getElementById('footNote').textContent =
     'Lineup slots mirror Sleeper (PG/SG/G/SF/PF/F/C/UTIL badge on the right; BN on the bench). '
-    + 'LOCKED = team-logo night with a small closed lock (banked into that slot). '
-    + 'Large cyan LOCK-IN button = scored but still unlocked. OCR only matches this matchup’s two rosters.';
+    + 'Under each name: played games show fantasy points (white = locked in); upcoming show the opponent. '
+    + 'Bank ≥ rises midweek / with games left / when questionable, and eases on last-game weekends. '
+    + 'Rec says Lock (slot), Switch (for whom), or Wait (why / until when). '
+    + 'OCR only matches this matchup’s two rosters.';
 
   document.querySelectorAll('[data-lock-pid]').forEach(btn => {
     btn.addEventListener('click', (ev) => {
@@ -985,6 +1524,15 @@ async function loadMatchups(week){
   /* Prefer focus team's matchup */
   const mine = state.pairs.find(p => p.sides.some(s => s.franchise.team === state.focusTeam));
   state.selectedPair = mine || state.pairs[0] || null;
+
+  /* Boxscore FP needs matchup rows for the single-game Sleeper fallback. */
+  progress(72, 'Scoring played games…');
+  try {
+    await loadWeekGameFp(state.nbaWeek);
+  } catch (e){
+    if (!state.gameFpByPid) state.gameFpByPid = {};
+    console.warn('week game FP load failed', e);
+  }
   render();
 }
 
@@ -1547,7 +2095,7 @@ async function load(){
     try {
       state.nbaWeek = await loadNbaContext();
     } catch (e){
-      state.nbaWeek = {byTeam: {}, oppg: {}, avgOppg: 112, gp: {}};
+      state.nbaWeek = {byTeam: {}, oppg: {}, avgOppg: 112, gp: {}, finalEvents: []};
     }
 
     /* Week + focus selects */
@@ -1580,11 +2128,13 @@ async function load(){
 
     document.getElementById('app').hidden = false;
     status.classList.remove('error');
+    const fpN = Object.keys(state.gameFpByPid || {}).length;
     status.textContent = 'Week ' + state.week + ' · '
       + state.pairs.length + ' matchups · smash season ' + (state.statsSeason || '—')
       + ' · ESPN slate ' + (state.nbaWeek && Object.keys(state.nbaWeek.byTeam).length
         ? Object.keys(state.nbaWeek.byTeam).length + ' teams'
-        : 'unavailable');
+        : 'unavailable')
+      + (fpN ? (' · ' + fpN + ' players with game FP') : '');
     tag.textContent = state.pairs.length + ' games';
     progress(100, 'Ready');
     if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'matchups'});
