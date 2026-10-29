@@ -196,7 +196,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-matchup';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-mu1380';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -239,7 +239,7 @@ const state = {
   focusTeam: MY_TEAM,
   lockByPid: {},
   statsSeason: null,
-  nbaWeek: null, /* { byTeam: {GS:[{opp,date,home}]}, oppg: {GS:n}, avgOppg }
+  nbaWeek: null, /* { byTeam, oppg, avgOppg } from ESPN slate */
   ocrLocked: {}, /* pid -> {pts, source:'ocr'} */
   tesseractLoading: null
 };
@@ -436,8 +436,9 @@ function scoutPlayer(pid, dist){
 /* Lock-in nights = starter slots with scored FP (not every bench box score). */
 function lockedPtsFor(pid, matchupRow){
   const id = String(pid);
-  if (state.ocrLocked[id] && state.ocrLocked[id].pts != null){
-    return Number(state.ocrLocked[id].pts);
+  const ocr = state.ocrLocked || (state.ocrLocked = {});
+  if (ocr[id] && ocr[id].pts != null){
+    return Number(ocr[id].pts);
   }
   if (!matchupRow) return null;
   const starters = (matchupRow.starters || []).map(String);
@@ -452,7 +453,8 @@ function lockedPtsFor(pid, matchupRow){
 
 function weekPtsFor(pid, matchupRow){
   const id = String(pid);
-  if (state.ocrLocked[id] && state.ocrLocked[id].pts != null) return Number(state.ocrLocked[id].pts);
+  const ocr = state.ocrLocked || (state.ocrLocked = {});
+  if (ocr[id] && ocr[id].pts != null) return Number(ocr[id].pts);
   if (matchupRow && matchupRow.players_points && matchupRow.players_points[id] != null){
     const v = Number(matchupRow.players_points[id]);
     if (Number.isFinite(v)) return v;
@@ -934,8 +936,9 @@ async function load(){
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID).then(r => r.json()),
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/users').then(r => r.json()),
       fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters').then(r => r.json()),
-      share && share.getPlayers ? share.getPlayers(fetch) :
-        fetch('https://api.sleeper.app/v1/players/nba').then(r => r.json())
+      (window.PatioBoysShare && typeof PatioBoysShare.fetchPlayersNba === 'function')
+        ? PatioBoysShare.fetchPlayersNba()
+        : fetch('https://api.sleeper.app/v1/players/nba').then(r => r.json())
     ]);
     state.league = league;
     state.users = users || [];
@@ -1020,6 +1023,7 @@ async function load(){
     status.classList.add('error');
     status.textContent = 'Could not load matchups: ' + (e.message || e);
     tag.textContent = 'Error';
+    console.error('matchups load failed', e);
     if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'matchups', error: true});
   }
 }
