@@ -157,6 +157,20 @@
   td.num.lock-score{color:#fff}
   td.lean.smash{color:var(--green);font-weight:600}
   td.lean.bust{color:var(--coral);font-weight:600}
+  td.rec{font-size:12px;line-height:1.35;min-width:7.5rem}
+  td.rec .rec-act{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;
+    letter-spacing:.03em;text-transform:uppercase;
+  }
+  td.rec .rec-why{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:500;
+    color:var(--ink-dim);margin-top:2px;
+  }
+  td.rec.rec-lock .rec-act{color:var(--green)}
+  td.rec.rec-switch .rec-act{color:var(--coral)}
+  td.rec.rec-wait .rec-act{color:var(--gold)}
+  td.rec.rec-sit .rec-act, td.rec.rec-none .rec-act{color:var(--ink-dim)}
+  td.rec.rec-locked .rec-act{color:#fff}
   tr.locked td{background:color-mix(in srgb, var(--green) 10%, transparent)}
   .lock-pill{
     display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:9px;
@@ -256,7 +270,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-logo-lock';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-bank-rec';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -790,6 +804,10 @@ function scoutPlayer(pid, dist){
     why: why.join(' · ') || '—',
     opps: oppLabels,
     slate,
+    gamesLeft: upcoming.length,
+    nextGame: upcoming[0]
+      ? {date: upcoming[0].date, opp: oppLabels[0] || null}
+      : null,
     smashRate,
     injury: injury || null
   };
@@ -996,16 +1014,223 @@ function sidePlayerRows(side){
       };
       return;
     }
-    r.bank = LockInDist.lockBankPlan(r.dist, opts);
+    const playerOpts = Object.assign({}, opts, {
+      gamesLeft: r.scout && r.scout.gamesLeft != null
+        ? r.scout.gamesLeft
+        : ((r.scout && r.scout.slate) || []).filter(s => s.kind === 'opp').length,
+      injury: r.scout && r.scout.injury
+    });
+    r.bank = LockInDist.lockBankPlan(r.dist, playerOpts);
   });
 
-  return {
+  const pack = {
     rows,
     lockedScores,
     opts,
     starters: rows.filter(r => r.starter),
     bench: rows.filter(r => !r.starter)
   };
+  rows.forEach(r => { r.rec = buildRec(r, pack); });
+  return pack;
+}
+
+function latestScoredFp(r){
+  const fps = ((r.scout && r.scout.slate) || []).filter(s => s.kind === 'fp' && s.fp != null);
+  if (fps.length) return Number(fps[fps.length - 1].fp);
+  if (r.lockPts != null && Number.isFinite(Number(r.lockPts))) return Number(r.lockPts);
+  return null;
+}
+
+function openLockSlots(pack){
+  const labels = lockSlotLabels();
+  const taken = new Set();
+  (pack.rows || []).forEach(r => {
+    if (!r.locked) return;
+    if (r.slot == null || r.slot === 'BN') return;
+    taken.add(Number(r.slot));
+  });
+  return labels.map((lab, i) => ({index: i, label: lab, open: !taken.has(i)}))
+    .filter(s => s.open);
+}
+
+function eligList(p){
+  return (p && (p.fantasy_positions || (p.position ? [p.position] : []))) || [];
+}
+
+function fitsLockSlot(p, slotLabel){
+  const elig = eligList(p).map(String);
+  const lab = String(slotLabel || '').toUpperCase();
+  if (lab === 'UTIL') return true;
+  if (lab === 'G') return elig.some(e => e === 'PG' || e === 'SG' || e === 'G');
+  if (lab === 'F') return elig.some(e => e === 'SF' || e === 'PF' || e === 'F');
+  return elig.indexOf(lab) >= 0;
+}
+
+function preferSlotForPlayer(p, openSlots){
+  const order = ['PG', 'SG', 'SF', 'PF', 'C', 'G', 'F', 'UTIL'];
+  const ranked = (openSlots || []).slice().sort((a, b) =>
+    order.indexOf(a.label) - order.indexOf(b.label));
+  const elig = eligList(p).map(String);
+  for (let i = 0; i < ranked.length; i++){
+    const s = ranked[i];
+    if (s.label === 'UTIL') continue;
+    if (elig.indexOf(s.label) >= 0 && fitsLockSlot(p, s.label)) return s;
+  }
+  for (let i = 0; i < ranked.length; i++){
+    const s = ranked[i];
+    if ((s.label === 'G' || s.label === 'F') && fitsLockSlot(p, s.label)) return s;
+  }
+  for (let i = 0; i < ranked.length; i++){
+    if (fitsLockSlot(p, ranked[i].label)) return ranked[i];
+  }
+  return null;
+}
+
+function shortPlayerName(p){
+  if (!p) return '—';
+  if (p.last_name) return p.last_name;
+  const full = playerName(p);
+  const parts = full.split(/\s+/);
+  return parts.length ? parts[parts.length - 1] : full;
+}
+
+function weekdayLabel(ymdStr){
+  if (!ymdStr || String(ymdStr).length < 8) return null;
+  const s = String(ymdStr);
+  const d = new Date(Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)));
+  if (!Number.isFinite(d.getTime())) return null;
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
+}
+
+function nextGameLabel(scout){
+  const slate = (scout && scout.slate) || [];
+  const next = slate.find(s => s.kind === 'opp');
+  if (!next) return null;
+  const day = weekdayLabel(next.date);
+  return (day || 'next') + (next.opp ? (' vs ' + next.opp) : '');
+}
+
+function betterSwitchTarget(r, pack){
+  const myMean = r.dist && Number(r.dist.mean) || 0;
+  const cands = (pack.rows || []).filter(o => {
+    if (!o || o.pid === r.pid || o.locked) return false;
+    const inj = o.scout && o.scout.injury;
+    if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
+    const mean = o.dist && Number(o.dist.mean) || 0;
+    if (!(mean > myMean + 2)) return false;
+    const left = o.scout && o.scout.gamesLeft || 0;
+    const scored = latestScoredFp(o);
+    return left > 0 || scored != null;
+  }).sort((a, b) => (Number(b.dist && b.dist.mean) || 0) - (Number(a.dist && a.dist.mean) || 0));
+  return cands[0] || null;
+}
+
+/* Actionable recommendation: Lock / Switch / Wait (+ reason). */
+function buildRec(r, pack){
+  if (r.locked){
+    return {
+      action: 'locked',
+      label: 'Locked · ' + (r.slotLabel || 'slot'),
+      reason: 'Already banked',
+      cls: 'rec-locked'
+    };
+  }
+  const injury = r.scout && r.scout.injury;
+  const gamesLeft = r.scout && r.scout.gamesLeft != null
+    ? r.scout.gamesLeft
+    : ((r.scout && r.scout.slate) || []).filter(s => s.kind === 'opp').length;
+  const scored = latestScoredFp(r);
+  const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const open = openLockSlots(pack);
+  const slot = preferSlotForPlayer(r.p, open);
+  const nextLbl = nextGameLabel(r.scout);
+
+  if (injury === 'OUT' || injury === 'O' || injury === 'IR'){
+    const alt = betterSwitchTarget(r, pack);
+    const tag = injury === 'IR' ? 'IR' : 'OUT';
+    if (alt){
+      return {
+        action: 'switch',
+        label: 'Switch · ' + shortPlayerName(alt.p),
+        reason: tag + ' — use ' + shortPlayerName(alt.p),
+        cls: 'rec-switch'
+      };
+    }
+    return {action: 'sit', label: 'Sit', reason: 'ruled ' + tag, cls: 'rec-sit'};
+  }
+
+  if (scored != null && bank != null && scored + 1e-9 >= bank){
+    if (slot){
+      return {
+        action: 'lock',
+        label: 'Lock · ' + slot.label,
+        reason: formatFp(scored) + ' ≥ Bank ' + bank,
+        cls: 'rec-lock'
+      };
+    }
+    return {
+      action: 'lock',
+      label: 'Lock',
+      reason: formatFp(scored) + ' ≥ Bank ' + bank + ' · no open slot',
+      cls: 'rec-lock'
+    };
+  }
+
+  if (scored != null && bank != null && scored < bank){
+    const alt = betterSwitchTarget(r, pack);
+    const myMean = r.dist && Number(r.dist.mean) || 0;
+    const altMean = alt && alt.dist && Number(alt.dist.mean) || 0;
+    if (alt && altMean - myMean >= 4){
+      return {
+        action: 'switch',
+        label: 'Switch · ' + shortPlayerName(alt.p),
+        reason: formatFp(scored) + ' < Bank ' + bank,
+        cls: 'rec-switch'
+      };
+    }
+    if (gamesLeft > 0){
+      return {
+        action: 'wait',
+        label: 'Wait',
+        reason: formatFp(scored) + ' < ' + bank
+          + (nextLbl ? (' · next ' + nextLbl) : (' · ' + gamesLeft + ' left')),
+        cls: 'rec-wait'
+      };
+    }
+    return {
+      action: 'sit',
+      label: 'Pass',
+      reason: formatFp(scored) + ' below Bank ' + bank + ' · no games left',
+      cls: 'rec-sit'
+    };
+  }
+
+  if (injury === 'DTD' || injury === 'Q' || injury === 'QUESTIONABLE'){
+    return {
+      action: 'wait',
+      label: 'Wait',
+      reason: 'Questionable' + (nextLbl ? (' · confirm by ' + nextLbl) : ''),
+      cls: 'rec-wait'
+    };
+  }
+
+  if (gamesLeft > 0){
+    const bits = [];
+    if (bank != null) bits.push('Bank ≥' + bank);
+    if (nextLbl) bits.push('hold for ' + nextLbl);
+    else bits.push(gamesLeft + ' game' + (gamesLeft > 1 ? 's' : '') + ' left');
+    return {action: 'wait', label: 'Wait', reason: bits.join(' · '), cls: 'rec-wait'};
+  }
+
+  if (scored != null){
+    return {
+      action: 'sit',
+      label: bank != null && scored < bank ? 'Pass' : '—',
+      reason: 'No games left this window',
+      cls: 'rec-sit'
+    };
+  }
+  return {action: 'none', label: '—', reason: 'No slate', cls: 'rec-none'};
 }
 
 function renderAdvice(pair, leftPack, rightPack){
@@ -1045,27 +1270,40 @@ function renderAdvice(pair, leftPack, rightPack){
         : ' · tight — bank quality nights only.'))
     + '</li>');
 
-  const smashCands = focusPack.rows.filter(r => !r.locked && r.scout.lean === 'smash').slice(0, 4);
-  if (smashCands.length){
-    tips.push('<li><span class="tag smash">Smash lean</span>'
-      + smashCands.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong>'
-        + (r.bank && r.bank.mark != null ? (' Bank ≥' + r.bank.mark) : '')
-        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.scout.why) + ')</span>').join(' · ')
+  const lockNow = focusPack.rows.filter(r => r.rec && r.rec.action === 'lock').slice(0, 4);
+  if (lockNow.length){
+    tips.push('<li><span class="tag smash">Lock now</span>'
+      + lockNow.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> '
+        + escapeHtml(r.rec.label)
+        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.rec.reason) + ')</span>')
+        .join(' · ')
       + '.</li>');
   }
-  const bustCands = focusPack.rows.filter(r => !r.locked && (r.scout.lean === 'bust' || r.scout.injury)).slice(0, 4);
-  if (bustCands.length){
-    tips.push('<li><span class="tag bust">Bust / sit</span>'
-      + bustCands.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong>'
-        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.scout.why) + ')</span>').join(' · ')
+  const switches = focusPack.rows.filter(r => r.rec && r.rec.action === 'switch').slice(0, 4);
+  if (switches.length){
+    tips.push('<li><span class="tag bust">Switch</span>'
+      + switches.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> '
+        + escapeHtml(r.rec.label)
+        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.rec.reason) + ')</span>')
+        .join(' · ')
+      + '.</li>');
+  }
+  const waits = focusPack.rows
+    .filter(r => r.rec && r.rec.action === 'wait' && r.starter)
+    .slice(0, 4);
+  if (waits.length){
+    tips.push('<li><span class="tag lock">Wait</span>'
+      + waits.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong>'
+        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.rec.reason) + ')</span>')
+        .join(' · ')
       + '.</li>');
   }
 
-  const oppSmash = oppPack.rows.filter(r => !r.locked && r.scout.lean === 'smash').slice(0, 3);
-  if (oppSmash.length){
+  const oppLocks = oppPack.rows.filter(r => r.rec && r.rec.action === 'lock').slice(0, 3);
+  if (oppLocks.length){
     tips.push('<li><span class="tag news">Opp watch</span>'
-      + escapeHtml(oppSide.franchise.team) + ' smash leans: '
-      + oppSmash.map(r => escapeHtml(playerName(r.p))).join(', ')
+      + escapeHtml(oppSide.franchise.team) + ' ready to lock: '
+      + oppLocks.map(r => escapeHtml(playerName(r.p))).join(', ')
       + ' — don’t leave a weak lock slot open if they go off.</li>');
   }
 
@@ -1076,19 +1314,6 @@ function renderAdvice(pair, leftPack, rightPack){
         + (r.p.injury_notes ? (' — ' + escapeHtml(String(r.p.injury_notes).slice(0, 80))) : ''))
         .join(' · ')
       + '.</li>');
-  }
-
-  /* Who to bank next among unlocked with bank plan */
-  const nextBank = focusPack.rows
-    .filter(r => !r.locked && r.bank && r.bank.mark != null && r.starter)
-    .sort((a, b) => (b.dist && b.dist.mean || 0) - (a.dist && a.dist.mean || 0))
-    .slice(0, 3);
-  if (nextBank.length){
-    tips.push('<li><span class="tag lock">Lock plan</span>Next Bank ≥ targets: '
-      + nextBank.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> ≥' + r.bank.mark
-        + ' <span style="color:var(--ink-dim)">(' + Math.round((r.bank.rate || 0) * 100) + '%)</span>')
-        .join(' · ')
-      + '. Bars already bake in remaining roster quality + midweek timing.</li>');
   }
 
   el.innerHTML = '<h2>Advice · ' + escapeHtml(focusSide.franchise.team) + '</h2><ul>' + tips.join('') + '</ul>';
@@ -1149,13 +1374,13 @@ function slateHtml(r){
 }
 
 function playerRowHtml(r){
-  const leanCls = r.scout.lean === 'smash' ? 'smash' : (r.scout.lean === 'bust' ? 'bust' : '');
-  const leanTxt = r.scout.lean === 'neutral' ? '—' : r.scout.lean;
   const avg = r.dist && r.dist.mean != null ? r.dist.mean.toFixed(1) : '—';
   const smash = r.scout.smashRate != null ? Math.round(r.scout.smashRate * 100) + '%' : '—';
   const bank = r.bank && r.bank.mark != null ? r.bank.mark : '—';
   const bankCls = r.locked ? 'num lock-score' : 'num';
+  const bankTitle = (r.bank && r.bank.why) || '';
   const ovr = r.dist && r.dist.lockOvr != null ? Math.round(r.dist.lockOvr) : '—';
+  const rec = r.rec || {label: '—', reason: '', cls: 'rec-none'};
   const hasFp = (r.scout.slate || []).some(s => s.kind === 'fp' && s.fp != null)
     || (r.lockPts != null && Number(r.lockPts) > 0)
     || (r.pts != null && Number(r.pts) > 0);
@@ -1185,8 +1410,11 @@ function playerRowHtml(r){
     + '<td class="num">' + ovr + '</td>'
     + '<td class="num">' + avg + '</td>'
     + '<td class="num">' + smash + '</td>'
-    + '<td class="' + bankCls + '" title="' + escapeHtml((r.bank && r.bank.why) || '') + '">' + bank + '</td>'
-    + '<td class="lean ' + leanCls + '" title="' + escapeHtml(r.scout.why) + '">' + leanTxt + '</td>'
+    + '<td class="' + bankCls + '" title="' + escapeHtml(bankTitle) + '">' + bank + '</td>'
+    + '<td class="rec ' + escapeHtml(rec.cls) + '" title="' + escapeHtml(rec.reason || '') + '">'
+    + '<span class="rec-act">' + escapeHtml(rec.label) + '</span>'
+    + (rec.reason ? ('<span class="rec-why">' + escapeHtml(rec.reason) + '</span>') : '')
+    + '</td>'
     + '</tr>';
 }
 
@@ -1209,7 +1437,7 @@ function renderSide(side, pack){
     + lockedN + '/' + slots + ' locked</span></div>'
     + '<table><thead><tr>'
     + '<th>Player</th><th class="num">Lock</th><th class="num">Avg</th><th class="num">Smash</th>'
-    + '<th class="num">Bank ≥</th><th>Lean</th>'
+    + '<th class="num">Bank ≥</th><th>Rec</th>'
     + '</tr></thead><tbody>' + body + '</tbody></table></div>';
 }
 
@@ -1246,7 +1474,7 @@ function render(){
   document.getElementById('detailTitle').textContent =
     pair.sides[0].franchise.team + ' vs ' + pair.sides[1].franchise.team;
   document.getElementById('detailSub').textContent =
-    'Week ' + state.week + ' · Sleeper lineup slots · Bank ≥ after green locks only';
+    'Week ' + state.week + ' · Bank ≥ moves with weekday, games left, and injury · Rec = Lock / Switch / Wait';
   document.getElementById('sides').innerHTML =
     renderSide(pair.sides[0], leftPack) + renderSide(pair.sides[1], rightPack);
   renderAdvice(pair, leftPack, rightPack);
@@ -1254,8 +1482,9 @@ function render(){
   document.getElementById('footNote').textContent =
     'Lineup slots mirror Sleeper (PG/SG/G/SF/PF/F/C/UTIL badge on the right; BN on the bench). '
     + 'Under each name: played games show fantasy points (white = locked in); upcoming show the opponent. '
-    + 'LOCKED = team-logo night with a small closed lock (banked into that slot). '
-    + 'Large cyan LOCK-IN button = scored but still unlocked. OCR only matches this matchup’s two rosters.';
+    + 'Bank ≥ rises midweek / with games left / when questionable, and eases on last-game weekends. '
+    + 'Rec says Lock (slot), Switch (for whom), or Wait (why / until when). '
+    + 'OCR only matches this matchup’s two rosters.';
 
   document.querySelectorAll('[data-lock-pid]').forEach(btn => {
     btn.addEventListener('click', (ev) => {
