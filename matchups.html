@@ -147,20 +147,41 @@
   .lock-pill.open{color:#6ec8ff; border-color:#3A8FC9; background:color-mix(in srgb, #3A8FC9 14%, transparent)}
   .lock-pill.none{color:var(--ink-dim); border-color:var(--hairline)}
   .lock-pill:hover{filter:brightness(1.15)}
-  td.slot{white-space:nowrap}
-  .slot-sel{
-    font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;
-    color:var(--ink);background:var(--surface-2);border:1px solid var(--hairline);
-    border-radius:4px;padding:2px 4px;max-width:5.5rem;
+  /* Sleeper-style lineup: name left, slot badge right */
+  .player-row{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .player-main{min-width:0;flex:1}
+  tr.bench td.player .player-main{font-weight:500;color:var(--ink-dim)}
+  .slot-badge{
+    -webkit-appearance:none;appearance:none;flex:0 0 auto;align-self:center;
+    font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;
+    letter-spacing:.04em;text-transform:uppercase;text-align:center;
+    border:none;border-radius:6px;padding:5px 8px;min-width:2.75rem;cursor:pointer;
+    line-height:1;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
   }
-  .slot-sel:focus{outline:1px solid var(--gold);border-color:var(--gold)}
-  tr.bench td.player{font-weight:500;color:var(--ink-dim)}
-  .slot-tag{
-    display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
-    letter-spacing:.04em;padding:1px 5px;border-radius:3px;border:1px solid var(--hairline);
-    color:var(--ink-dim);
+  .slot-badge:focus{outline:1px solid var(--gold)}
+  .slot-badge.pg{background:#2E3A66;color:#F0718A}
+  .slot-badge.sg{background:#2E3A66;color:#F5A15C}
+  .slot-badge.sf{background:#2E3A66;color:#E8C34A}
+  .slot-badge.pf{background:#2E3A66;color:#6EC8FF}
+  .slot-badge.c{background:#2E3A66;color:#B8A4FF}
+  .slot-badge.g{
+    background:linear-gradient(90deg,#FD6483 0%,#FD6483 70%,#FF8A4C 100%);
+    color:#14080c;
   }
-  .slot-tag.bn{opacity:.75}
+  .slot-badge.f{
+    background:linear-gradient(90deg,#7ED9B0 0%,#7ED9B0 65%,#52B8E5 100%);
+    color:#0a1a14;
+  }
+  .slot-badge.util{background:#8B64FB;color:#160c2e}
+  .slot-badge.bn{background:#3B4364;color:#9AA3BD}
+  .elig{font-weight:600}
+  .elig.pg{color:#F0718A}.elig.sg{color:#F5A15C}.elig.sf{color:#E8C34A}
+  .elig.pf{color:#6EC8FF}.elig.c{color:#B8A4FF}.elig.g{color:#FD6483}.elig.f{color:#7ED9B0}
+  tr.section-row td{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;
+    letter-spacing:.06em;text-transform:uppercase;color:var(--ink-dim);
+    background:var(--surface-2);padding:6px 10px;border-bottom:1px solid var(--hairline);
+  }
   .foot{
     font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-dim);
     margin:14px 0 0;line-height:1.55;
@@ -215,7 +236,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-roster-slots';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-sleeper-slots';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -282,11 +303,31 @@ function slotDisplayLabel(slotKey){
   const labels = lockSlotLabels();
   const i = Number(slotKey);
   if (!Number.isFinite(i) || i < 0 || i >= labels.length) return 'BN';
-  const lab = labels[i];
-  if (lab !== 'UTIL') return lab;
-  let utilN = 0;
-  for (let j = 0; j <= i; j++) if (labels[j] === 'UTIL') utilN++;
-  return 'UTIL ' + utilN;
+  /* Mirror Sleeper: all three utility slots read “UTIL”, not UTIL 1/2/3. */
+  return labels[i] || 'BN';
+}
+
+function slotBadgeClass(label){
+  const lab = String(label || 'BN').toUpperCase();
+  if (lab === 'PG') return 'pg';
+  if (lab === 'SG') return 'sg';
+  if (lab === 'SF') return 'sf';
+  if (lab === 'PF') return 'pf';
+  if (lab === 'C') return 'c';
+  if (lab === 'G') return 'g';
+  if (lab === 'F') return 'f';
+  if (lab === 'UTIL') return 'util';
+  return 'bn';
+}
+
+function eligHtml(p){
+  const raw = (p && (p.fantasy_positions || (p.position ? [p.position] : []))) || [];
+  const parts = raw.map(String).filter(Boolean);
+  if (!parts.length) return '';
+  return parts.map(pos => {
+    const cls = slotBadgeClass(pos);
+    return '<span class="elig ' + cls + '">' + escapeHtml(pos) + '</span>';
+  }).join(' ');
 }
 
 function lockStorageKey(){
@@ -785,63 +826,71 @@ function renderAdvice(pair, leftPack, rightPack){
   el.innerHTML = '<h2>Advice · ' + escapeHtml(focusSide.franchise.team) + '</h2><ul>' + tips.join('') + '</ul>';
 }
 
-function slotSelectHtml(pid, slotKey){
+function slotBadgeHtml(pid, slotKey){
   const labels = lockSlotLabels();
-  let utilN = 0;
+  const label = slotDisplayLabel(slotKey);
+  const cls = slotBadgeClass(label);
   const opts = labels.map((lab, i) => {
-    let shown = lab;
-    if (lab === 'UTIL'){ utilN++; shown = 'UTIL ' + utilN; }
     const sel = String(slotKey) === String(i) ? ' selected' : '';
-    return '<option value="' + i + '"' + sel + '>' + escapeHtml(shown) + '</option>';
+    return '<option value="' + i + '"' + sel + '>' + escapeHtml(lab) + '</option>';
   }).join('');
   const bnSel = (slotKey == null || slotKey === 'BN') ? ' selected' : '';
-  return '<select class="slot-sel" data-slot-pid="' + escapeHtml(String(pid)) + '" title="Lineup lock slot (BN until changed)">'
+  return '<select class="slot-badge ' + cls + '" data-slot-pid="' + escapeHtml(String(pid))
+    + '" title="Lineup slot (same as Sleeper)">'
     + opts
     + '<option value="BN"' + bnSel + '>BN</option>'
     + '</select>';
 }
 
+function playerRowHtml(r){
+  const leanCls = r.scout.lean === 'smash' ? 'smash' : (r.scout.lean === 'bust' ? 'bust' : '');
+  const leanTxt = r.scout.lean === 'neutral' ? '—' : r.scout.lean;
+  const avg = r.dist && r.dist.mean != null ? r.dist.mean.toFixed(1) : '—';
+  const smash = r.scout.smashRate != null ? Math.round(r.scout.smashRate * 100) + '%' : '—';
+  const bank = r.bank && r.bank.mark != null ? r.bank.mark : '—';
+  const pts = r.pts != null ? r.pts : '—';
+  const ovr = r.dist && r.dist.lockOvr != null ? Math.round(r.dist.lockOvr) : '—';
+  const scored = r.pts != null && Number(r.pts) > 0;
+  const pillCls = r.locked ? 'locked' : (scored ? 'open' : 'none');
+  const pillTxt = r.locked ? 'Locked' : (scored ? 'Unlocked' : 'Not lock');
+  const pillTitle = r.locked
+    ? ('Green LOCKED at ' + (r.slotLabel || 'slot') + ' — counts toward lock-in. Click to unmark.')
+    : (scored
+      ? 'Scored but still UNLOCKED (can sub/move). Click to mark as green LOCKED.'
+      : 'No scored night yet. Click to mark locked if needed.');
+  const trCls = (r.locked ? 'locked' : '') + (!r.starter ? ' bench' : '');
+  const elig = eligHtml(r.p);
+  const meta = (r.p.team ? (' · ' + escapeHtml(r.p.team)) : '')
+    + (r.scout.opps && r.scout.opps.length ? (' vs ' + escapeHtml(r.scout.opps.join('/'))) : '')
+    + (r.scout.injury ? (' · ' + escapeHtml(r.scout.injury)) : '');
+  return '<tr class="' + trCls.trim() + '">'
+    + '<td class="player"><div class="player-row"><div class="player-main">'
+    + escapeHtml(playerName(r.p))
+    + '<button type="button" class="lock-pill ' + pillCls + '" data-lock-pid="' + escapeHtml(r.pid)
+    + '" data-lock-pts="' + (r.pts != null ? r.pts : '') + '" data-lock-slot="'
+    + escapeHtml(String(r.slot == null ? 'BN' : r.slot)) + '" title="' + escapeHtml(pillTitle) + '">'
+    + pillTxt + '</button>'
+    + '<span class="sub">' + elig + meta + '</span>'
+    + '</div>' + slotBadgeHtml(r.pid, r.slot) + '</div></td>'
+    + '<td class="num">' + ovr + '</td>'
+    + '<td class="num">' + avg + '</td>'
+    + '<td class="num">' + smash + '</td>'
+    + '<td class="num" title="' + escapeHtml((r.bank && r.bank.why) || '') + '">' + bank + '</td>'
+    + '<td class="num">' + pts + '</td>'
+    + '<td class="lean ' + leanCls + '" title="' + escapeHtml(r.scout.why) + '">' + leanTxt + '</td>'
+    + '</tr>';
+}
+
 function renderSide(side, pack){
   const fr = side.franchise;
-  /* Full roster: starters in slot order, then bench (BN). */
-  const show = pack.rows;
-  const rows = show.map(r => {
-    const leanCls = r.scout.lean === 'smash' ? 'smash' : (r.scout.lean === 'bust' ? 'bust' : '');
-    const leanTxt = r.scout.lean === 'neutral' ? '—' : r.scout.lean;
-    const avg = r.dist && r.dist.mean != null ? r.dist.mean.toFixed(1) : '—';
-    const smash = r.scout.smashRate != null ? Math.round(r.scout.smashRate * 100) + '%' : '—';
-    const bank = r.bank && r.bank.mark != null ? r.bank.mark : '—';
-    const pts = r.pts != null ? r.pts : '—';
-    const ovr = r.dist && r.dist.lockOvr != null ? Math.round(r.dist.lockOvr) : '—';
-    const scored = r.pts != null && Number(r.pts) > 0;
-    const pillCls = r.locked ? 'locked' : (scored ? 'open' : 'none');
-    const pillTxt = r.locked ? 'Locked' : (scored ? 'Unlocked' : 'Not lock');
-    const pillTitle = r.locked
-      ? ('Green LOCKED at ' + (r.slotLabel || 'slot') + ' — counts toward lock-in. Click to unmark.')
-      : (scored
-        ? 'Scored but still UNLOCKED (can sub/move). Click to mark as green LOCKED.'
-        : 'No scored night yet. Click to mark locked if needed.');
-    const trCls = (r.locked ? 'locked' : '') + (!r.starter ? ' bench' : '');
-    return '<tr class="' + trCls.trim() + '">'
-      + '<td class="player">' + escapeHtml(playerName(r.p))
-      + '<button type="button" class="lock-pill ' + pillCls + '" data-lock-pid="' + escapeHtml(r.pid)
-      + '" data-lock-pts="' + (r.pts != null ? r.pts : '') + '" data-lock-slot="'
-      + escapeHtml(String(r.slot == null ? 'BN' : r.slot)) + '" title="' + escapeHtml(pillTitle) + '">'
-      + pillTxt + '</button>'
-      + '<span class="sub">' + escapeHtml((r.p.position || r.p.fantasy_positions && r.p.fantasy_positions[0] || '')
-        + (r.p.team ? (' · ' + r.p.team) : '')
-        + (r.scout.opps && r.scout.opps.length ? (' vs ' + r.scout.opps.join('/')) : '')
-        + (r.scout.injury ? (' · ' + r.scout.injury) : ''))
-      + '</span></td>'
-      + '<td class="slot">' + slotSelectHtml(r.pid, r.slot) + '</td>'
-      + '<td class="num">' + ovr + '</td>'
-      + '<td class="num">' + avg + '</td>'
-      + '<td class="num">' + smash + '</td>'
-      + '<td class="num" title="' + escapeHtml((r.bank && r.bank.why) || '') + '">' + bank + '</td>'
-      + '<td class="num">' + pts + '</td>'
-      + '<td class="lean ' + leanCls + '" title="' + escapeHtml(r.scout.why) + '">' + leanTxt + '</td>'
-      + '</tr>';
-  }).join('');
+  const starters = pack.starters || [];
+  const bench = pack.bench || [];
+  const body = []
+    .concat(starters.length ? ['<tr class="section-row"><td colspan="7">Starters</td></tr>'] : [])
+    .concat(starters.map(playerRowHtml))
+    .concat(bench.length ? ['<tr class="section-row"><td colspan="7">Bench</td></tr>'] : [])
+    .concat(bench.map(playerRowHtml))
+    .join('');
 
   const lockedN = pack.lockedScores.length;
   const slots = lockSlotLabels().length;
@@ -850,9 +899,9 @@ function renderSide(side, pack){
     + '<span class="pts">' + Math.round(side.points) + ' FP · '
     + lockedN + '/' + slots + ' locked</span></div>'
     + '<table><thead><tr>'
-    + '<th>Player</th><th>Pos</th><th class="num">Lock</th><th class="num">Avg</th><th class="num">Smash</th>'
+    + '<th>Player</th><th class="num">Lock</th><th class="num">Avg</th><th class="num">Smash</th>'
     + '<th class="num">Bank ≥</th><th class="num">Wk</th><th>Lean</th>'
-    + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+    + '</tr></thead><tbody>' + body + '</tbody></table></div>';
 }
 
 function render(){
