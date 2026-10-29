@@ -254,7 +254,7 @@
         <button type="button" class="btn" id="shotPaste">Paste</button>
         <button type="button" class="btn" id="shotClear" hidden>Clear OCR</button>
       </div>
-      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot. <strong>Locked</strong> = scored night’s team logo with a small closed lock (no LOCK-IN button). <strong>LOCK-IN</strong> button = scored but still unlocked. Matched only to this matchup’s rosters.</p>
+      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot. <strong>Locked</strong> scores come only from the chip next to a logo + small closed lock — never from Sleeper/ESPN API points. <strong>LOCK-IN</strong> button = still unlocked.</p>
       <img class="shot-preview" id="shotPreview" alt="" hidden>
     </div>
 
@@ -270,7 +270,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-ocr-pts';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-ocr-only';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -863,17 +863,13 @@ function sideForPid(pid){
   return pair.sides.find(s => (s.franchise.players || []).map(String).includes(String(pid))) || null;
 }
 
-function toggleLockMark(pid, weekPts, name, slotKey){
+/* Locks only come from screenshot OCR. Manual click can unmark; never invent
+   pts from Sleeper/ESPN week scoring. */
+function toggleLockMark(pid){
   const id = String(pid);
   const marks = state.lockMarks || (state.lockMarks = {});
-  if (marks[id]){
-    delete marks[id];
-  } else {
-    const pts = weekPts != null && Number.isFinite(Number(weekPts)) ? Number(weekPts) : 0;
-    const side = sideForPid(id);
-    const slot = slotKey != null ? slotKey : slotKeyForPidOnSide(side, id);
-    marks[id] = {pts, source: 'manual', name: name || id, slot};
-  }
+  if (!marks[id]) return; /* cannot bank without a screenshot score */
+  delete marks[id];
   saveLockMarks();
   render();
 }
@@ -881,23 +877,14 @@ function toggleLockMark(pid, weekPts, name, slotKey){
 function setPlayerSlot(pid, slotKey){
   const id = String(pid);
   const marks = state.lockMarks || (state.lockMarks = {});
-  const side = sideForPid(id);
-  const pts = weekPtsFor(id, side && side.matchup);
   if (!marks[id]){
-    /* Changing BN → a lock slot banks them into that position. */
-    if (slotKey === 'BN') return;
-    marks[id] = {
-      pts: pts != null && Number.isFinite(Number(pts)) ? Number(pts) : 0,
-      source: 'manual',
-      name: playerName(state.players[id]),
-      slot: slotKey
-    };
+    /* Slot badge alone does not create a lock — need OCR chip pts. */
+    return;
+  }
+  if (slotKey === 'BN'){
+    delete marks[id];
   } else {
     marks[id].slot = slotKey;
-    if (slotKey === 'BN'){
-      /* BN means unlocked / not filling a lock slot. */
-      delete marks[id];
-    }
   }
   saveLockMarks();
   render();
@@ -1377,7 +1364,7 @@ function renderAdvice(pair, leftPack, rightPack){
     + (focusPack.opts.rosterFloor != null
       ? (' · remaining top-' + leftSlots + ' bar ~' + Math.round(focusPack.opts.rosterFloor))
       : '')
-    + '. Upload a screenshot or tap a lock pill to sync.</li>');
+    + '. Upload a screenshot to sync locked chips (API scores never bank).</li>');
 
   const focusPts = focusSide.points;
   const oppPts = oppSide.points;
@@ -1506,13 +1493,14 @@ function playerRowHtml(r){
     || (r.pts != null && Number(r.pts) > 0);
   const pillCls = r.locked ? 'locked' : (hasFp ? 'open' : 'none');
   const pillTxt = r.locked ? 'Locked' : (hasFp ? 'Unlocked' : 'Not lock');
-  const lockPtsAttr = r.lockPts != null ? r.lockPts
-    : (r.scout.slate || []).filter(s => s.kind === 'fp' && s.fp != null).map(s => s.fp).slice(-1)[0];
+  /* Lock pts only from screenshot OCR — never seed from API FP. */
+  const lockPtsAttr = r.lockPts != null ? r.lockPts : '';
   const pillTitle = r.locked
-    ? ('Green LOCKED at ' + (r.slotLabel || 'slot') + ' — counts toward lock-in. Click to unmark.')
+    ? ('Screenshot LOCKED at ' + (r.slotLabel || 'slot') + ' · ' + formatFp(r.lockPts)
+      + ' — click to unmark.')
     : (hasFp
-      ? 'Scored but still UNLOCKED (can sub/move). Click to mark as green LOCKED.'
-      : 'No scored night yet. Click to mark locked if needed.');
+      ? 'Scored but not locked. Upload a matchup screenshot to bank the logo-lock chip.'
+      : 'No screenshot lock yet. Upload a Sleeper matchup shot to lock.');
   const trCls = (r.locked ? 'locked' : '') + (!r.starter ? ' bench' : '');
   const elig = eligHtml(r.p);
   const meta = (r.p.team ? (' · ' + escapeHtml(r.p.team)) : '')
@@ -1601,23 +1589,16 @@ function render(){
 
   document.getElementById('footNote').textContent =
     'Lineup slots mirror Sleeper (PG/SG/G/SF/PF/F/C/UTIL badge on the right; BN on the bench). '
-    + 'Under each name: played games show fantasy points (white = locked in); upcoming show the opponent. '
-    + 'Bank ≥ rises midweek / with games left / when questionable, and eases on last-game weekends. '
-    + 'Rec says Lock (slot), Switch out / In · over starter (slot-eligible only), or Wait. '
-    + 'Bench Switch only when they should come in over a starter. '
-    + 'OCR only matches this matchup’s two rosters.';
+    + 'Under each name: played games show fantasy points (white = screenshot-locked chip); upcoming show the opponent. '
+    + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points. '
+    + 'Bank ≥ moves with weekday, games left, and injury. Rec = Lock / Switch / Wait.';
 
   document.querySelectorAll('[data-lock-pid]').forEach(btn => {
     btn.addEventListener('click', (ev) => {
       ev.preventDefault();
       const pid = btn.getAttribute('data-lock-pid');
-      const ptsRaw = btn.getAttribute('data-lock-pts');
-      const pts = ptsRaw === '' || ptsRaw == null ? null : Number(ptsRaw);
-      const slotRaw = btn.getAttribute('data-lock-slot');
-      const slot = slotRaw === '' || slotRaw == null ? 'BN'
-        : (slotRaw === 'BN' ? 'BN' : Number(slotRaw));
-      const p = state.players[pid] || {};
-      toggleLockMark(pid, pts, playerName(p), slot);
+      if (!isLocked(pid)) return; /* only unmark OCR locks — never invent API pts */
+      toggleLockMark(pid);
     });
   });
   document.querySelectorAll('[data-slot-pid]').forEach(sel => {
@@ -1898,12 +1879,6 @@ function focusRosterPids(){
   return set;
 }
 
-function ptsForMatchedPlayer(pid){
-  const pair = state.selectedPair || state.pairs[0];
-  const side = pair && pair.sides.find(s => (s.franchise.players || []).map(String).includes(String(pid)));
-  return weekPtsFor(pid, side && side.matchup);
-}
-
 /* Sleeper lock states (from matchup SC):
    1) LOCKED — scored night’s team logo with cyan ring + small closed lock (no LOCK-IN button)
    2) Eligible unlocked — large solid cyan open-lock button labeled “LOCK-IN”
@@ -2078,16 +2053,8 @@ function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords){
 
     const side = sideForPid(match.pid);
     const slot = slotKeyForPidOnSide(side, match.pid);
-    /* Screenshot score wins — week FP (17) is not the locked chip (34.00). */
-    let pts = ocrLockScoreNearMark(b, numWords);
-    if (pts == null || !Number.isFinite(pts)){
-      const nums = nearText.match(/\b(\d{1,3}(?:\.\d{1,2})?)\b/g) || [];
-      const ptsCand = nums.map(Number).filter(n => n >= 5 && n <= 100);
-      if (ptsCand.length) pts = ptsCand[ptsCand.length - 1];
-    }
-    if (pts == null || !Number.isFinite(pts)){
-      pts = ptsForMatchedPlayer(match.pid);
-    }
+    /* Only the chip beside the cyan lock logo — never API week/game FP. */
+    const pts = ocrLockScoreNearMark(b, numWords);
     if (pts == null || !Number.isFinite(pts)) return;
     seen[match.pid] = 1;
     hits.push({
@@ -2173,11 +2140,12 @@ async function runOcrOnImage(file){
     if (!hits.length){
       status.className = 'shot-status';
       status.textContent = marks.locked.length
-        ? ('Found ' + marks.locked.length + ' logo-lock(s) but none matched the '
-          + rosterN + ' rostered players in this matchup. Tap lock pills if needed.')
+        ? ('Found ' + marks.locked.length + ' logo-lock(s) but couldn’t read a lock chip score '
+          + 'next to them (API scores are never used). Re-upload a sharper shot or scroll so the '
+          + 'score + lock logo are visible.')
         : ('No locked logo nights in that shot'
           + (marks.lockInBtns.length ? (' (' + marks.lockInBtns.length + ' LOCK-IN button(s) = still unlocked)') : '')
-          + '). Matched only against this matchup’s rosters.');
+          + '). Only screenshot lock chips count — never API week FP.');
       console.warn('matchup locks', marks, 'roster pool', rosterN, 'ocr sample', textSample.slice(0, 600));
       render();
     } else {
@@ -2190,7 +2158,7 @@ async function runOcrOnImage(file){
   } catch (e){
     status.className = 'shot-status err';
     status.textContent = 'OCR failed: ' + (e.message || e)
-      + '. You can still tap lock pills on each starter.';
+      + '. Re-upload the screenshot — locks only come from the shot, not the API.';
   }
 }
 
