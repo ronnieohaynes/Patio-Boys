@@ -270,7 +270,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-rec-slot';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-bench-in';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1110,36 +1110,68 @@ function nextGameLabel(scout){
   return (day || 'next') + (next.opp ? (' vs ' + next.opp) : '');
 }
 
-/* Alt must be eligible for the same lock slot (never Tatum into PG).
-   BN / no slot → alt must fit at least one currently open lock slot. */
+function isBenchRow(r){
+  return !r.starter || r.slot === 'BN' || r.slotLabel === 'BN';
+}
+
+/* Starter → better eligible teammate for the SAME lock slot (never Tatum into PG). */
 function betterSwitchTarget(r, pack){
   const myMean = r.dist && Number(r.dist.mean) || 0;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
-  const open = openLockSlots(pack);
+  if (!slotLabel) return null; /* starters only — bench uses switch-in */
   const cands = (pack.rows || []).filter(o => {
     if (!o || o.pid === r.pid || o.locked) return false;
     const inj = o.scout && o.scout.injury;
     if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
+    if (!fitsLockSlot(o.p, slotLabel)) return false;
     const mean = o.dist && Number(o.dist.mean) || 0;
     if (!(mean > myMean + 2)) return false;
     const left = o.scout && o.scout.gamesLeft || 0;
     const scored = latestScoredFp(o);
-    if (!(left > 0 || scored != null)) return false;
-    if (slotLabel){
-      if (!fitsLockSlot(o.p, slotLabel)) return false;
-    } else if (!preferSlotForPlayer(o.p, open)){
-      return false;
-    }
-    return true;
+    return left > 0 || scored != null;
   }).sort((a, b) => (Number(b.dist && b.dist.mean) || 0) - (Number(a.dist && a.dist.mean) || 0));
   const best = cands[0] || null;
   if (!best) return null;
-  const pref = !slotLabel ? preferSlotForPlayer(best.p, open) : null;
-  const into = slotLabel || (pref && pref.label) || null;
-  return {row: best, into: into};
+  return {row: best, into: slotLabel};
 }
 
-function switchRecLabel(alt){
+/* Bench player → starter they should replace (slot they fit, clearly better). */
+function benchSwitchInOver(r, pack){
+  const myMean = r.dist && Number(r.dist.mean) || 0;
+  const myScored = latestScoredFp(r);
+  const myBank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const cands = [];
+  (pack.rows || []).forEach(o => {
+    if (!o || o.pid === r.pid || o.locked || isBenchRow(o)) return;
+    const into = o.slotLabel && o.slotLabel !== 'BN' ? String(o.slotLabel).toUpperCase() : null;
+    if (!into || !fitsLockSlot(r.p, into)) return;
+    const theirInj = o.scout && o.scout.injury;
+    const theirMean = o.dist && Number(o.dist.mean) || 0;
+    const theirScored = latestScoredFp(o);
+    let why = null;
+    let score = 0;
+    if (theirInj === 'OUT' || theirInj === 'O' || theirInj === 'IR'){
+      why = (theirInj === 'IR' ? 'IR' : 'OUT') + ' starter';
+      score = 1000 + myMean;
+    } else if (myMean > theirMean + 4){
+      why = 'higher Avg';
+      score = (myMean - theirMean) * 10;
+    } else if (myScored != null && myBank != null && myScored + 1e-9 >= myBank
+      && (theirScored == null || theirScored + 1e-9 < (o.bank && o.bank.mark != null ? Number(o.bank.mark) : myBank))){
+      why = formatFp(myScored) + ' bankable vs their night';
+      score = 50 + myScored;
+    } else if (myScored != null && theirScored != null && myScored > theirScored + 8
+      && myMean >= theirMean - 2){
+      why = formatFp(myScored) + ' > ' + formatFp(theirScored) + ' tonight';
+      score = myScored - theirScored;
+    }
+    if (why) cands.push({row: o, into: into, why: why, score: score});
+  });
+  cands.sort((a, b) => b.score - a.score);
+  return cands[0] || null;
+}
+
+function switchOutLabel(alt){
   if (!alt || !alt.row) return 'Switch';
   const name = shortPlayerName(alt.row.p);
   return alt.into
@@ -1147,7 +1179,14 @@ function switchRecLabel(alt){
     : ('Switch · ' + name);
 }
 
-/* Actionable recommendation: Lock / Switch / Wait (+ reason). */
+function switchInLabel(over){
+  if (!over || !over.row) return 'Switch in';
+  return 'In · over ' + shortPlayerName(over.row.p)
+    + (over.into ? (' @ ' + over.into) : '');
+}
+
+/* Actionable recommendation: Lock / Switch / Wait (+ reason).
+   Only starting slots score — bench Switch means switch THIS player in. */
 function buildRec(r, pack){
   if (r.locked){
     return {
@@ -1157,6 +1196,7 @@ function buildRec(r, pack){
       cls: 'rec-locked'
     };
   }
+  const bench = isBenchRow(r);
   const injury = r.scout && r.scout.injury;
   const gamesLeft = r.scout && r.scout.gamesLeft != null
     ? r.scout.gamesLeft
@@ -1174,13 +1214,62 @@ function buildRec(r, pack){
   const slot = currentOpen ? currentSlot : preferSlotForPlayer(r.p, open);
   const nextLbl = nextGameLabel(r.scout);
 
+  /* ——— Bench: only Switch when they should come in over a starter ——— */
+  if (bench){
+    if (injury === 'OUT' || injury === 'O' || injury === 'IR'){
+      return {
+        action: 'sit',
+        label: 'Sit',
+        reason: 'Bench · ' + (injury === 'IR' ? 'IR' : 'OUT'),
+        cls: 'rec-sit'
+      };
+    }
+    const over = benchSwitchInOver(r, pack);
+    if (over && over.row){
+      return {
+        action: 'switch',
+        label: switchInLabel(over),
+        reason: over.why || ('better than ' + shortPlayerName(over.row.p)),
+        cls: 'rec-switch'
+      };
+    }
+    if (scored != null && bank != null && scored + 1e-9 >= bank && slot){
+      return {
+        action: 'lock',
+        label: 'Lock · ' + slot.label,
+        reason: formatFp(scored) + ' ≥ Bank ' + bank + ' · move off BN',
+        cls: 'rec-lock'
+      };
+    }
+    if (injury === 'DTD' || injury === 'Q' || injury === 'QUESTIONABLE'){
+      return {
+        action: 'wait',
+        label: 'Wait',
+        reason: 'Bench · questionable',
+        cls: 'rec-wait'
+      };
+    }
+    if (gamesLeft > 0){
+      return {
+        action: 'wait',
+        label: 'Wait',
+        reason: 'Bench'
+          + (bank != null ? (' · Bank ≥' + bank) : '')
+          + (nextLbl ? (' · ' + nextLbl) : ''),
+        cls: 'rec-wait'
+      };
+    }
+    return {action: 'none', label: '—', reason: 'Bench · no start path', cls: 'rec-none'};
+  }
+
+  /* ——— Starters ——— */
   if (injury === 'OUT' || injury === 'O' || injury === 'IR'){
     const alt = betterSwitchTarget(r, pack);
     const tag = injury === 'IR' ? 'IR' : 'OUT';
     if (alt && alt.row){
       return {
         action: 'switch',
-        label: switchRecLabel(alt),
+        label: switchOutLabel(alt),
         reason: tag + ' — use ' + shortPlayerName(alt.row.p)
           + (alt.into ? (' @ ' + alt.into) : ''),
         cls: 'rec-switch'
@@ -1213,7 +1302,7 @@ function buildRec(r, pack){
     if (alt && alt.row && altMean - myMean >= 4){
       return {
         action: 'switch',
-        label: switchRecLabel(alt),
+        label: switchOutLabel(alt),
         reason: formatFp(scored) + ' < Bank ' + bank
           + (alt.into ? (' · ' + alt.into + '-eligible') : ''),
         cls: 'rec-switch'
@@ -1514,7 +1603,8 @@ function render(){
     'Lineup slots mirror Sleeper (PG/SG/G/SF/PF/F/C/UTIL badge on the right; BN on the bench). '
     + 'Under each name: played games show fantasy points (white = locked in); upcoming show the opponent. '
     + 'Bank ≥ rises midweek / with games left / when questionable, and eases on last-game weekends. '
-    + 'Rec says Lock (slot), Switch (for whom), or Wait (why / until when). '
+    + 'Rec says Lock (slot), Switch out / In · over starter (slot-eligible only), or Wait. '
+    + 'Bench Switch only when they should come in over a starter. '
     + 'OCR only matches this matchup’s two rosters.';
 
   document.querySelectorAll('[data-lock-pid]').forEach(btn => {
