@@ -829,36 +829,42 @@
     return Math.round(ggs[idx] * 10) / 10;
   }
 
-  /* Mon–Sun pickiness for banking mid-lock-week (0=Sun … 6=Sat).
-     Early week → hold fringe; weekend → bank sooner so slots fill. */
+  /* Mon–Sun pickiness (0=Sun … 6=Sat). Monday bar is pickiest; Sunday loosest.
+     Same player on Mon vs Thu should not share a Bank ≥ — DOW always moves the mark. */
   function bankDayAdj(style, dow){
     const d = Number(dow);
     if (!Number.isFinite(d)) return 0;
-    const fringe = style === 'fringe' || style === 'stream';
-    const starter = style === 'starter';
-    if (d === 1 || d === 2) return fringe ? 3 : (starter ? 2 : 0); // Mon/Tue
-    if (d === 3 || d === 4) return fringe ? 2 : (starter ? 1 : 0); // Wed/Thu
-    if (d === 5) return fringe ? 1 : 0; // Fri
-    if (d === 0 || d === 6) return fringe ? -1 : 0; // Sat/Sun
-    return 0;
+    /* Base ladder: Mon +5 … Sun −2 */
+    const byDow = {1: 5, 2: 4, 3: 3, 4: 2, 5: 0, 6: -1, 0: -2};
+    let adj = byDow[d] != null ? byDow[d] : 0;
+    if (style === 'star') adj = Math.round(adj * 0.55);
+    else if (style === 'starter') adj = Math.round(adj * 0.85);
+    else if (style === 'fringe' || style === 'stream') adj = Math.round(adj * 1.15);
+    return adj;
   }
 
-  /* Remaining games this week for the player. Many left → hold; last game → ease. */
-  function bankGamesLeftAdj(style, gamesLeft, dow){
+  /* Remaining Mon–Sun logos for this player. Many left → raise bar (can wait);
+     last game → ease so the night can still bank. Scales with week volume. */
+  function bankGamesLeftAdj(style, gamesLeft, dow, gamesThisWeek){
     const g = Number(gamesLeft);
     if (!Number.isFinite(g)) return 0;
-    const fringe = style === 'fringe' || style === 'stream';
-    const starter = style === 'starter';
     const d = Number(dow);
     const weekend = d === 0 || d === 5 || d === 6;
-    if (g >= 3) return fringe ? 4 : (starter ? 2 : 1);
-    if (g === 2) return fringe ? 2 : (starter ? 1 : 0);
-    if (g === 1){
-      if (fringe) return weekend ? -3 : -1;
-      if (starter) return weekend ? -2 : -1;
-      return weekend ? -1 : 0;
-    }
-    return 0;
+    const weekN = Number(gamesThisWeek);
+    let adj = 0;
+    if (g >= 4) adj = 6;
+    else if (g === 3) adj = 4;
+    else if (g === 2) adj = 2;
+    else if (g === 1) adj = weekend ? -4 : -2;
+    else adj = 0;
+    /* Heavy week still mostly ahead → stay picky (e.g. Mon with 3/3 left). */
+    if (Number.isFinite(weekN) && weekN >= 3 && g >= Math.max(2, weekN - 1)) adj += 1;
+    /* Light week already on the last logo → bank sooner. */
+    if (Number.isFinite(weekN) && weekN <= 2 && g === 1) adj -= 1;
+    if (style === 'star') adj = Math.round(adj * 0.6);
+    else if (style === 'starter') adj = Math.round(adj * 0.9);
+    else if (style === 'fringe' || style === 'stream') adj = Math.round(adj * 1.2);
+    return adj;
   }
 
   /* Injury raises the bar (or blocks banking). Returns null mark when OUT/IR. */
@@ -984,7 +990,7 @@
     }
 
     const dayAdj = bankDayAdj(style, options.dow);
-    const gamesLeftAdj = bankGamesLeftAdj(style, options.gamesLeft, options.dow);
+    const gamesLeftAdj = bankGamesLeftAdj(style, options.gamesLeft, options.dow, options.gamesThisWeek);
     const injuryAdj = injuryInfo.adj || 0;
     mark = mark + dayAdj + gamesLeftAdj + injuryAdj;
     /* Do not re-cap at personal ceiling after roster/day lifts — fringe often
@@ -992,6 +998,9 @@
     if (mark < Math.ceil(mean)) mark = Math.ceil(mean);
     rate = rateAt(mark);
 
+    const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dowN = Number(options.dow);
+    const dowLabel = Number.isFinite(dowN) ? dowNames[((dowN % 7) + 7) % 7] : null;
     const whyBits = [];
     if (style === 'star') whyBits.push('Star — bank near Avg, don’t hunt unicorns');
     else if (style === 'starter') whyBits.push('Starter — bank a GG-quality night');
@@ -1004,13 +1013,20 @@
     } else if (rosterFloor != null && (style === 'fringe' || style === 'stream' || style === 'starter')){
       whyBits.push('roster top-' + slots + ' ~' + Math.round(rosterFloor));
     }
-    if (dayAdj > 0) whyBits.push('midweek · hold for better nights');
-    if (dayAdj < 0) whyBits.push('weekend · bank sooner');
+    if (dayAdj !== 0 && dowLabel){
+      whyBits.push(dowLabel + (dayAdj > 0 ? (' · +' + dayAdj + ' hold') : (' · ' + dayAdj + ' bank sooner')));
+    } else if (dayAdj > 0) whyBits.push('midweek · hold for better nights');
+    else if (dayAdj < 0) whyBits.push('weekend · bank sooner');
     const gLeft = Number(options.gamesLeft);
+    const gWeek = Number(options.gamesThisWeek);
     if (Number.isFinite(gLeft)){
-      if (gamesLeftAdj > 0) whyBits.push(gLeft + ' games left · hold');
-      else if (gamesLeftAdj < 0) whyBits.push('last game · bank sooner');
+      const leftTxt = Number.isFinite(gWeek) && gWeek > 0
+        ? (gLeft + '/' + gWeek + ' games left')
+        : (gLeft + ' games left');
+      if (gamesLeftAdj > 0) whyBits.push(leftTxt + ' · +' + gamesLeftAdj + ' hold');
+      else if (gamesLeftAdj < 0) whyBits.push(leftTxt + ' · ' + gamesLeftAdj + ' bank sooner');
       else if (gLeft === 0) whyBits.push('no games left');
+      else whyBits.push(leftTxt);
     }
     if (injuryAdj > 0 && injuryInfo.label) whyBits.push(injuryInfo.label + ' · raise bar');
     whyBits.push('hits ~' + Math.round(rate * 100) + '%');

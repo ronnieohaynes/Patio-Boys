@@ -270,7 +270,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-no-starter-swap';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-bank-dow';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1068,6 +1068,9 @@ function sidePlayerRows(side){
       gamesLeft: r.scout && r.scout.gamesLeft != null
         ? r.scout.gamesLeft
         : ((r.scout && r.scout.slate) || []).filter(s => s.kind === 'opp').length,
+      gamesThisWeek: r.scout && r.scout.gamesThisWeek != null
+        ? r.scout.gamesThisWeek
+        : ((r.scout && r.scout.slate) || []).length,
       injury: r.scout && r.scout.injury
     });
     r.bank = LockInDist.lockBankPlan(r.dist, playerOpts);
