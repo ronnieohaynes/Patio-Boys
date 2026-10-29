@@ -270,7 +270,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-bank-rec';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261029-rec-slot';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1110,8 +1110,12 @@ function nextGameLabel(scout){
   return (day || 'next') + (next.opp ? (' vs ' + next.opp) : '');
 }
 
+/* Alt must be eligible for the same lock slot (never Tatum into PG).
+   BN / no slot → alt must fit at least one currently open lock slot. */
 function betterSwitchTarget(r, pack){
   const myMean = r.dist && Number(r.dist.mean) || 0;
+  const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
+  const open = openLockSlots(pack);
   const cands = (pack.rows || []).filter(o => {
     if (!o || o.pid === r.pid || o.locked) return false;
     const inj = o.scout && o.scout.injury;
@@ -1120,9 +1124,27 @@ function betterSwitchTarget(r, pack){
     if (!(mean > myMean + 2)) return false;
     const left = o.scout && o.scout.gamesLeft || 0;
     const scored = latestScoredFp(o);
-    return left > 0 || scored != null;
+    if (!(left > 0 || scored != null)) return false;
+    if (slotLabel){
+      if (!fitsLockSlot(o.p, slotLabel)) return false;
+    } else if (!preferSlotForPlayer(o.p, open)){
+      return false;
+    }
+    return true;
   }).sort((a, b) => (Number(b.dist && b.dist.mean) || 0) - (Number(a.dist && a.dist.mean) || 0));
-  return cands[0] || null;
+  const best = cands[0] || null;
+  if (!best) return null;
+  const pref = !slotLabel ? preferSlotForPlayer(best.p, open) : null;
+  const into = slotLabel || (pref && pref.label) || null;
+  return {row: best, into: into};
+}
+
+function switchRecLabel(alt){
+  if (!alt || !alt.row) return 'Switch';
+  const name = shortPlayerName(alt.row.p);
+  return alt.into
+    ? ('Switch · ' + name + ' @ ' + alt.into)
+    : ('Switch · ' + name);
 }
 
 /* Actionable recommendation: Lock / Switch / Wait (+ reason). */
@@ -1142,17 +1164,25 @@ function buildRec(r, pack){
   const scored = latestScoredFp(r);
   const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   const open = openLockSlots(pack);
-  const slot = preferSlotForPlayer(r.p, open);
+  /* Prefer locking into the slot they already occupy when it’s still open. */
+  const currentSlot = (r.slot != null && r.slot !== 'BN')
+    ? {index: Number(r.slot), label: String(r.slotLabel || '').toUpperCase()}
+    : null;
+  const currentOpen = currentSlot
+    && open.some(s => s.index === currentSlot.index)
+    && fitsLockSlot(r.p, currentSlot.label);
+  const slot = currentOpen ? currentSlot : preferSlotForPlayer(r.p, open);
   const nextLbl = nextGameLabel(r.scout);
 
   if (injury === 'OUT' || injury === 'O' || injury === 'IR'){
     const alt = betterSwitchTarget(r, pack);
     const tag = injury === 'IR' ? 'IR' : 'OUT';
-    if (alt){
+    if (alt && alt.row){
       return {
         action: 'switch',
-        label: 'Switch · ' + shortPlayerName(alt.p),
-        reason: tag + ' — use ' + shortPlayerName(alt.p),
+        label: switchRecLabel(alt),
+        reason: tag + ' — use ' + shortPlayerName(alt.row.p)
+          + (alt.into ? (' @ ' + alt.into) : ''),
         cls: 'rec-switch'
       };
     }
@@ -1179,12 +1209,13 @@ function buildRec(r, pack){
   if (scored != null && bank != null && scored < bank){
     const alt = betterSwitchTarget(r, pack);
     const myMean = r.dist && Number(r.dist.mean) || 0;
-    const altMean = alt && alt.dist && Number(alt.dist.mean) || 0;
-    if (alt && altMean - myMean >= 4){
+    const altMean = alt && alt.row && alt.row.dist && Number(alt.row.dist.mean) || 0;
+    if (alt && alt.row && altMean - myMean >= 4){
       return {
         action: 'switch',
-        label: 'Switch · ' + shortPlayerName(alt.p),
-        reason: formatFp(scored) + ' < Bank ' + bank,
+        label: switchRecLabel(alt),
+        reason: formatFp(scored) + ' < Bank ' + bank
+          + (alt.into ? (' · ' + alt.into + '-eligible') : ''),
         cls: 'rec-switch'
       };
     }
