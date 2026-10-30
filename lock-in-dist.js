@@ -842,13 +842,13 @@
     return (n > 0 ? '+' : '') + n + 'σ';
   }
 
-  /* Mon–Sun pickiness in σ (0=Sun … 6=Sat). Monday pickiest; Sunday loosest.
-     Same player on Mon vs Thu should not share a Bank ≥ — DOW always moves the mark. */
+  /* Mon–Sun pickiness in σ (0=Sun … 6=Sat). Bell curve peaks at Thu = 0σ;
+     Mon/Sun are the loosest ends. DOW always moves the mark off Thursday. */
   function bankDayAdj(style, dow){
     const d = Number(dow);
     if (!Number.isFinite(d)) return 0;
-    /* Base ladder (σ): Mon +0.55 … Sun −0.55 */
-    const byDow = {1: 0.55, 2: 0.40, 3: 0.25, 4: 0.10, 5: 0, 6: -0.35, 0: -0.55};
+    /* Bell (σ): Thu 0 · Wed/Fri −0.15 · Tue/Sat −0.35 · Mon/Sun −0.55 */
+    const byDow = {1: -0.55, 2: -0.35, 3: -0.15, 4: 0, 5: -0.15, 6: -0.35, 0: -0.55};
     let adj = byDow[d] != null ? byDow[d] : 0;
     return Math.round(adj * bankStyleSigmaScale(style) * 1000) / 1000;
   }
@@ -864,11 +864,11 @@
     let adj = 0;
     if (g >= 4) adj = 0.60;
     else if (g === 3) adj = 0.40;
-    else if (g === 2) adj = 0.20;
+    else if (g === 2) adj = 0; /* flat — neither hold nor ease */
     else if (g === 1) adj = weekend ? -0.70 : -0.45;
     else adj = 0;
-    /* Heavy week still mostly ahead → stay picky (e.g. Mon with 3/3 left). */
-    if (Number.isFinite(weekN) && weekN >= 3 && g >= Math.max(2, weekN - 1)) adj += 0.15;
+    /* Heavy week with 3+ still mostly ahead → stay picky (e.g. Mon 3/3 left). */
+    if (Number.isFinite(weekN) && weekN >= 3 && g >= 3 && g >= weekN - 1) adj += 0.15;
     /* Light week already on the last logo → bank sooner. */
     if (Number.isFinite(weekN) && weekN <= 2 && g === 1) adj -= 0.15;
     return Math.round(adj * bankStyleSigmaScale(style) * 1000) / 1000;
