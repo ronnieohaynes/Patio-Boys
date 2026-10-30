@@ -296,7 +296,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-ocr-giannis';
+    || '20261030-ocr-jt-giannis';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2203,14 +2203,35 @@ function stripEllipsisToken(s){
     .trim();
 }
 
-/* True when OCR token is a prefix of a roster last name (Antetokou → Antetokounmpo). */
+/* True when OCR token is a prefix of a roster last name (Antetokou → Antetokounmpo).
+   Also tolerates one OCR typo / doubled letter (AntetokKOu → Antetokou). */
 function lastNamePrefixHit(token, last){
-  const w = normalizeName(stripEllipsisToken(token));
+  const raw = normalizeName(stripEllipsisToken(token));
   const ln = normalizeName(last || '');
-  if (w.length < 5 || ln.length < 6) return false;
-  if (ln.indexOf(w) !== 0 && w.indexOf(ln) !== 0) return false;
-  /* Require a meaningful chunk of the real last name so “Willi” doesn’t steal. */
-  return w.length >= Math.min(8, Math.max(6, Math.ceil(ln.length * 0.55)));
+  if (raw.length < 5 || ln.length < 6) return false;
+  const minLen = Math.min(8, Math.max(6, Math.ceil(ln.length * 0.55)));
+  const candidates = [raw];
+  /* Collapse doubled letters on long tokens only (Antetokkou → antetokou). */
+  if (raw.length >= 8) candidates.push(raw.replace(/(.)\1+/g, '$1'));
+  for (let c = 0; c < candidates.length; c++){
+    const w = candidates[c];
+    if (w.length < 5) continue;
+    if ((ln.indexOf(w) === 0 || w.indexOf(ln) === 0)
+      && w.length >= Math.min(minLen, 6)) return true;
+    /* One deletion from the OCR token. */
+    if (w.length >= 7){
+      for (let i = 0; i < w.length; i++){
+        const s = w.slice(0, i) + w.slice(i + 1);
+        if (s.length >= 6 && ln.indexOf(s) === 0) return true;
+      }
+    }
+    /* One substitution vs the real last-name prefix of the same length. */
+    if (w.length >= 7 && w.length <= ln.length){
+      const pref = ln.slice(0, w.length);
+      if (editDist(w, pref) <= 1) return true;
+    }
+  }
+  return false;
 }
 
 function buildNameIndex(onlyPids){
@@ -2801,6 +2822,42 @@ async function readMarkChipPts(mark, numWords, options){
   return pts;
 }
 
+/* Focus-team starters top→bottom (PG…UTIL). Used when name OCR fails (e.g. “J. Tatum”
+   reading as garbage) but a cyan lock ring is clearly on that row. */
+function focusStartersInOrder(){
+  const pair = state.selectedPair || state.pairs[0];
+  if (!pair) return [];
+  const side = pair.sides.find(s => s.franchise.team === state.focusTeam) || pair.sides[0];
+  const starters = ((side && side.matchup && side.matchup.starters)
+    || (side && side.franchise && side.franchise.starters)
+    || []).map(String);
+  return starters.filter(id => id && id !== '0');
+}
+
+function estimateStarterIndexFromY(markY, anchors){
+  const list = (anchors || []).filter(a => a && Number.isFinite(a.y) && Number.isFinite(a.slotIndex) && a.slotIndex >= 0)
+    .slice()
+    .sort((a, b) => a.y - b.y);
+  const defaultPitch = 690;
+  if (!list.length) return null;
+  let pitch = defaultPitch;
+  if (list.length >= 2){
+    let sum = 0, n = 0;
+    for (let i = 1; i < list.length; i++){
+      const dy = list[i].y - list[i - 1].y;
+      const ds = list[i].slotIndex - list[i - 1].slotIndex;
+      if (ds > 0 && dy > 220){ sum += dy / ds; n++; }
+    }
+    if (n) pitch = sum / n;
+  }
+  let best = list[0], bestD = Math.abs(markY - list[0].y);
+  list.forEach(a => {
+    const d = Math.abs(markY - a.y);
+    if (d < bestD){ best = a; bestD = d; }
+  });
+  return Math.round(best.slotIndex + (markY - best.y) / pitch);
+}
+
 async function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords, opts){
   const options = opts || {};
   const rosterPids = matchupRosterPids();
@@ -2809,6 +2866,7 @@ async function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords, opts
   const bothIdx = buildNameIndex(rosterPids);
   const hits = [];
   const seen = {};
+  const claimedMarks = {};
   const allWords = filterOcrWords(ocrWords);
   const words = allWords.filter(w => /[A-Za-z]{2,}/.test(w.t));
   const numWords = allWords.filter(w => /\d/.test(w.t));
@@ -2823,6 +2881,7 @@ async function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords, opts
     return lockInYs.some(ly => Math.abs(ly - y) < 160);
   }
 
+  const starters = focusStartersInOrder();
   const marks = lockedMarks || [];
   for (let i = 0; i < marks.length; i++){
     const b = marks[i];
@@ -2836,13 +2895,75 @@ async function matchLockedLogosToPlayers(lockedMarks, lockInBtns, ocrWords, opts
     const pts = await readMarkChipPts(b, numWords, options);
     if (pts == null || !Number.isFinite(pts)) continue;
     seen[match.pid] = 1;
+    claimedMarks[i] = 1;
     hits.push({
       pid: match.pid,
       name: match.name,
       pts: Number(pts),
       slot,
-      slotLabel: slotDisplayLabel(slot)
+      slotLabel: slotDisplayLabel(slot),
+      markY: b.y
     });
+  }
+
+  /* Fallback: name OCR often blanks “J. Tatum” while the cyan ring + 55.00 chip
+     are clear. Map leftover rings to focus starters by vertical lineup order. */
+  if (starters.length){
+    const anchors = hits.map(h => ({
+      y: h.markY,
+      slotIndex: starters.indexOf(String(h.pid))
+    })).filter(a => a.slotIndex >= 0);
+    const pending = [];
+    for (let i = 0; i < marks.length; i++){
+      if (claimedMarks[i] || nearLockIn(marks[i].y)) continue;
+      pending.push({i: i, b: marks[i]});
+    }
+    pending.sort((a, c) => a.b.y - c.b.y);
+    for (let p = 0; p < pending.length; p++){
+      const b = pending[p].b;
+      let slotIdx = estimateStarterIndexFromY(b.y, anchors);
+      if (slotIdx == null && !anchors.length && pending.length){
+        /* No named anchors — assume topmost leftover ring ≈ earliest unmarked starter. */
+        const unmarked = starters.map((pid, idx) => ({pid, idx})).filter(s => !seen[s.pid]);
+        if (!unmarked.length) break;
+        const pitch = 690;
+        const topY = pending[0].b.y;
+        slotIdx = unmarked[0].idx + Math.round((b.y - topY) / pitch);
+      }
+      if (slotIdx == null || slotIdx < 0) continue;
+      /* Snap to nearest unmarked starter within ±1 slot. */
+      let pid = null;
+      for (const delta of [0, -1, 1, -2, 2]){
+        const j = slotIdx + delta;
+        if (j < 0 || j >= starters.length) continue;
+        const cand = String(starters[j]);
+        if (seen[cand]) continue;
+        if (!focusPids.size || focusPids.has(cand) || rosterPids.has(cand)){
+          pid = cand;
+          slotIdx = j;
+          break;
+        }
+      }
+      if (!pid || seen[pid]) continue;
+      const pts = await readMarkChipPts(b, numWords, options);
+      if (pts == null || !Number.isFinite(pts)) continue;
+      const side = sideForPid(pid);
+      const slot = slotKeyForPidOnSide(side, pid);
+      const p = state.players[pid] || {};
+      seen[pid] = 1;
+      claimedMarks[pending[p].i] = 1;
+      hits.push({
+        pid: pid,
+        name: playerName(p),
+        pts: Number(pts),
+        slot,
+        slotLabel: slotDisplayLabel(slot),
+        markY: b.y,
+        via: 'lineup-order'
+      });
+      anchors.push({y: b.y, slotIndex: slotIdx});
+      anchors.sort((a, c) => a.y - c.y);
+    }
   }
   return hits;
 }
