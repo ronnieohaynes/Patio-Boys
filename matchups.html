@@ -29,6 +29,11 @@
   .topbar .brand{display:flex;align-items:baseline;gap:10px}
   .topbar .brand .gm{font-family:'Anton',sans-serif;font-size:18px;color:var(--ink);letter-spacing:.04em}
   .topbar .brand .gm em{color:var(--gold);font-style:normal}
+  .topbar .clock{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;
+    color:var(--gold);letter-spacing:.06em;text-transform:uppercase;
+    font-variant-numeric:tabular-nums;white-space:nowrap;
+  }
   body.embed .topbar{padding:10px 0}
   .status{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--gold);margin:16px 0 0}
   .status.error{color:var(--coral)}
@@ -253,6 +258,7 @@
 <div class="wrap">
   <div class="topbar">
     <div class="brand"><span class="gm">Patio Boys · <em>Matchups</em></span></div>
+    <time class="clock" id="liveClock" datetime="">—</time>
     <span id="tag">Loading…</span>
   </div>
   <p class="status" id="status">Loading weekly matchups…</p>
@@ -298,7 +304,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-manual-lock';
+    || '20261030-lock-clock';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1390,6 +1396,26 @@ function weekdayLabel(ymdStr){
   return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
 }
 
+function formatClockParts(d){
+  const date = d instanceof Date ? d : new Date(d);
+  if (!Number.isFinite(date.getTime())) return null;
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+  let h = date.getHours();
+  const m = date.getMinutes();
+  const s = date.getSeconds();
+  const ampm = h >= 12 ? 'pm' : 'am';
+  h = h % 12;
+  if (!h) h = 12;
+  const time = h + ':' + String(m).padStart(2, '0') + ampm;
+  const timeWithSec = h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + ampm;
+  return {day: day, time: time, timeWithSec: timeWithSec, label: day + ' ' + time};
+}
+
+function formatNowClock(now){
+  const parts = formatClockParts(now || new Date());
+  return parts ? parts.label : '—';
+}
+
 function formatTipLabel(tipIso, ymdStr){
   if (tipIso){
     const d = new Date(tipIso);
@@ -1406,6 +1432,39 @@ function formatTipLabel(tipIso, ymdStr){
   return weekdayLabel(ymdStr);
 }
 
+/* Relative tip timing vs the live clock — used in Rec / Advice copy. */
+function tipRelativePhrase(tipMs, nowMs){
+  if (tipMs == null || !Number.isFinite(Number(tipMs))) return null;
+  const now = nowMs != null ? Number(nowMs) : Date.now();
+  const tip = Number(tipMs);
+  const delta = tip - now;
+  const absMin = Math.round(Math.abs(delta) / 60000);
+  const tipDate = new Date(tip);
+  const nowDate = new Date(now);
+  const sameDay = tipDate.getFullYear() === nowDate.getFullYear()
+    && tipDate.getMonth() === nowDate.getMonth()
+    && tipDate.getDate() === nowDate.getDate();
+  if (delta >= 0){
+    if (absMin <= 1) return 'tips now';
+    if (absMin < 60) return 'in ' + absMin + 'm';
+    if (absMin < 6 * 60){
+      const h = Math.floor(absMin / 60);
+      const m = absMin % 60;
+      return m ? ('in ' + h + 'h ' + m + 'm') : ('in ' + h + 'h');
+    }
+    if (sameDay) return 'later today';
+    return null;
+  }
+  if (absMin <= 1) return 'just tipped';
+  if (absMin < 60) return 'tipped ' + absMin + 'm ago';
+  if (absMin < 4 * 60){
+    const h = Math.floor(absMin / 60);
+    return 'tipped ' + h + 'h ago';
+  }
+  if (sameDay) return 'already tipped today';
+  return null;
+}
+
 function nextGameLabel(scout){
   const next = scout && scout.nextGame;
   if (next){
@@ -1416,6 +1475,24 @@ function nextGameLabel(scout){
   const row = slate.find(s => s.kind === 'opp');
   if (!row) return null;
   return formatTipLabel(row.tipIso, row.date) || weekdayLabel(row.date) || 'next';
+}
+
+/* Tip label + relative clock when the window is close (Rec / Advice). */
+function nextGamePhrase(scout, nowMs){
+  const lbl = nextGameLabel(scout);
+  const ms = nextTipMs(scout);
+  const rel = tipRelativePhrase(ms, nowMs);
+  if (lbl && rel) return lbl + ' · ' + rel;
+  return lbl || rel || null;
+}
+
+function dowBankHint(nowMs){
+  const d = new Date(nowMs != null ? nowMs : Date.now()).getDay();
+  /* Matches lock-in-dist bankDayAdj: Thu hold · weekend bank sooner. */
+  if (d === 4) return 'Thu · stay picky';
+  if (d === 0 || d === 1) return 'weekend · bank sooner';
+  if (d === 5 || d === 6) return 'weekend slate · bank quality nights';
+  return null;
 }
 
 /* Next tip timestamp for tip-order lineup (earlier tip wins the start slot). */
@@ -1492,7 +1569,7 @@ function tipOrderSwitchTarget(r, pack){
   return {
     row: best,
     into: slotLabel,
-    why: 'tip order · start before next ' + (nextGameLabel(r.scout) || 'game'),
+    why: 'tip order · start before ' + (nextGamePhrase(r.scout) || nextGameLabel(r.scout) || 'next tip'),
     kind: 'tip'
   };
 }
@@ -1589,8 +1666,10 @@ function switchInLabel(over){
 }
 
 /* Actionable recommendation: Lock / Switch / Wait (+ reason).
-   Only starting slots score — bench Switch means switch THIS player in. */
+   Only starting slots score — bench Switch means switch THIS player in.
+   Reasons cite the live clock when tip timing matters. */
 function buildRec(r, pack){
+  const nowMs = Date.now();
   if (isImmovable(r)){
     return {
       action: 'locked',
@@ -1611,6 +1690,8 @@ function buildRec(r, pack){
   /* Position locks first; UTIL last (even if they’re currently sitting in UTIL). */
   const slot = lockSlotForPlayer(r, open);
   const nextLbl = nextGameLabel(r.scout);
+  const nextPhrase = nextGamePhrase(r.scout, nowMs);
+  const dayHint = dowBankHint(nowMs);
 
   /* ——— Bench: only Switch when they should come in over a starter ——— */
   if (bench){
@@ -1624,10 +1705,16 @@ function buildRec(r, pack){
     }
     const over = benchSwitchInOver(r, pack);
     if (over && over.row){
+      const overTip = nextGamePhrase(r.scout, nowMs);
+      const theirTip = nextGamePhrase(over.row.scout, nowMs);
+      let why = over.why || ('better than ' + shortPlayerName(over.row.p));
+      if (over.why && over.why.indexOf('earlier tip') === 0 && overTip){
+        why = 'tips ' + overTip + ' before their ' + (theirTip || 'later tip');
+      }
       return {
         action: 'switch',
         label: switchInLabel(over),
-        reason: over.why || ('better than ' + shortPlayerName(over.row.p)),
+        reason: why,
         cls: 'rec-switch'
       };
     }
@@ -1636,8 +1723,9 @@ function buildRec(r, pack){
         action: 'lock',
         label: 'Lock · ' + slot.label,
         reason: formatFp(scored) + ' ≥ Bank ' + bank
-          + ' · move off BN'
-          + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : (' · ' + slot.label)),
+          + ' · move off BN now'
+          + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : (' · ' + slot.label))
+          + (dayHint ? (' · ' + dayHint) : ''),
         cls: 'rec-lock'
       };
     }
@@ -1645,7 +1733,8 @@ function buildRec(r, pack){
       return {
         action: 'wait',
         label: 'Wait',
-        reason: 'Bench · questionable',
+        reason: 'Bench · questionable'
+          + (nextPhrase ? (' · check by ' + nextPhrase) : ''),
         cls: 'rec-wait'
       };
     }
@@ -1655,7 +1744,7 @@ function buildRec(r, pack){
         label: 'Wait',
         reason: 'Bench'
           + (bank != null ? (' · Bank ≥' + bank) : '')
-          + (nextLbl ? (' · ' + nextLbl) : ''),
+          + (nextPhrase ? (' · ' + nextPhrase) : ''),
         cls: 'rec-wait'
       };
     }
@@ -1667,11 +1756,13 @@ function buildRec(r, pack){
     const alt = betterSwitchTarget(r, pack);
     const tag = injury === 'IR' ? 'IR' : 'OUT';
     if (alt && alt.row){
+      const altTip = nextGamePhrase(alt.row.scout, nowMs);
       return {
         action: 'switch',
         label: switchOutLabel(alt),
         reason: tag + ' — use ' + shortPlayerName(alt.row.p)
-          + (alt.into ? (' @ ' + alt.into) : ''),
+          + (alt.into ? (' @ ' + alt.into) : '')
+          + (altTip ? (' · tips ' + altTip) : ''),
         cls: 'rec-switch'
       };
     }
@@ -1681,6 +1772,7 @@ function buildRec(r, pack){
   /* Bankable night in a start slot — lock before anything else.
      Prefer a position slot over UTIL when recommending where to bank. */
   if (scored != null && bank != null && scored + 1e-9 >= bank){
+    const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
     if (slot){
       const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
       const moved = curLab && slot.label !== curLab;
@@ -1689,14 +1781,14 @@ function buildRec(r, pack){
       return {
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: formatFp(scored) + ' ≥ Bank ' + bank + moveBit + utilLast,
+        reason: formatFp(scored) + ' ≥ Bank ' + bank + moveBit + utilLast + urgency,
         cls: 'rec-lock'
       };
     }
     return {
       action: 'lock',
       label: 'Lock',
-      reason: formatFp(scored) + ' ≥ Bank ' + bank + ' · no open slot',
+      reason: formatFp(scored) + ' ≥ Bank ' + bank + ' · no open slot' + urgency,
       cls: 'rec-lock'
     };
   }
@@ -1707,10 +1799,11 @@ function buildRec(r, pack){
   const tipAlt = tipOrderSwitchTarget(r, pack);
   if (tipAlt && tipAlt.row){
     const inName = shortPlayerName(tipAlt.row.p);
-    const inTip = nextGameLabel(tipAlt.row.scout);
+    const inTip = nextGamePhrase(tipAlt.row.scout, nowMs);
+    const holdUntil = nextPhrase || nextLbl || 'later';
     const bits = [];
     if (scored != null && bank != null) bits.push(formatFp(scored) + ' < Bank ' + bank);
-    bits.push('free slot until ' + (nextLbl || 'later'));
+    bits.push('free slot until ' + holdUntil);
     bits.push('start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first');
     return {
       action: 'switch',
@@ -1725,11 +1818,13 @@ function buildRec(r, pack){
     const myMean = r.dist && Number(r.dist.mean) || 0;
     const altMean = alt && alt.row && alt.row.dist && Number(alt.row.dist.mean) || 0;
     if (alt && alt.row && alt.kind !== 'tip' && altMean - myMean >= 4){
+      const altTip = nextGamePhrase(alt.row.scout, nowMs);
       return {
         action: 'switch',
         label: switchOutLabel(alt),
         reason: formatFp(scored) + ' < Bank ' + bank
-          + (alt.into ? (' · ' + alt.into + '-eligible') : ''),
+          + (alt.into ? (' · ' + alt.into + '-eligible') : '')
+          + (altTip ? (' · ' + shortPlayerName(alt.row.p) + ' ' + altTip) : ''),
         cls: 'rec-switch'
       };
     }
@@ -1738,7 +1833,7 @@ function buildRec(r, pack){
         action: 'wait',
         label: 'Wait',
         reason: formatFp(scored) + ' < ' + bank
-          + (nextLbl ? (' · next ' + nextLbl) : (' · ' + gamesLeft + ' left')),
+          + (nextPhrase ? (' · next ' + nextPhrase) : (' · ' + gamesLeft + ' left')),
         cls: 'rec-wait'
       };
     }
@@ -1754,7 +1849,7 @@ function buildRec(r, pack){
     return {
       action: 'wait',
       label: 'Wait',
-      reason: 'Questionable' + (nextLbl ? (' · confirm by ' + nextLbl) : ''),
+      reason: 'Questionable' + (nextPhrase ? (' · confirm by ' + nextPhrase) : ''),
       cls: 'rec-wait'
     };
   }
@@ -1762,8 +1857,9 @@ function buildRec(r, pack){
   if (gamesLeft > 0){
     const bits = [];
     if (bank != null) bits.push('Bank ≥' + bank);
-    if (nextLbl) bits.push('hold for ' + nextLbl);
+    if (nextPhrase) bits.push('hold for ' + nextPhrase);
     else bits.push(gamesLeft + ' game' + (gamesLeft > 1 ? 's' : '') + ' left');
+    if (dayHint && !nextPhrase) bits.push(dayHint);
     return {action: 'wait', label: 'Wait', reason: bits.join(' · '), cls: 'rec-wait'};
   }
 
@@ -1791,9 +1887,25 @@ function renderAdvice(pair, leftPack, rightPack){
   const lockedN = focusPack.lockedScores.length;
   const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
   const leftSlots = Math.max(0, slots - lockedN);
+  const lockedSum = Math.round(lockedFpTotal(focusPack));
+  const goal = LOCK_FP_GOAL;
+  const gap = Math.max(0, goal - lockedSum);
+  const nowMs = Date.now();
+  const nowLbl = formatNowClock(nowMs);
+  const dayHint = dowBankHint(nowMs);
+  tips.push('<li><span class="tag lock">Clock</span>As of <strong>'
+    + escapeHtml(nowLbl) + '</strong>'
+    + (dayHint ? (' · ' + escapeHtml(dayHint)) : '')
+    + '. Tip-order Recs and Bank floors use this clock'
+    + (gap > 0 ? (' · still <strong>' + gap + '</strong> locked FP short of ' + goal) : '')
+    + '.</li>');
+
   tips.push('<li><span class="tag lock">Banked</span><strong>'
-    + escapeHtml(focusSide.franchise.team) + '</strong> has <strong>' + lockedN + '/' + slots
-    + '</strong> green <strong>LOCKED</strong> nights'
+    + escapeHtml(focusSide.franchise.team) + '</strong> has <strong>' + lockedSum + ' / ' + goal
+    + '</strong> locked FP'
+    + (gap > 0 ? (' · <strong>' + gap + '</strong> short of the weekly floor') : ' · weekly goal hit')
+    + ' · <strong>' + lockedN + '/' + slots
+    + '</strong> locked nights'
     + (focusPack.lockedScores.length
       ? (' (' + focusPack.lockedScores.map(x => Math.round(x)).join(', ') + ')')
       : '')
@@ -1817,7 +1929,8 @@ function renderAdvice(pair, leftPack, rightPack){
 
   const lockNow = focusPack.rows.filter(r => r.rec && r.rec.action === 'lock').slice(0, 4);
   if (lockNow.length){
-    tips.push('<li><span class="tag lock">Bank now</span>'
+    tips.push('<li><span class="tag lock">Bank now</span>As of '
+      + escapeHtml(nowLbl) + ' — '
       + lockNow.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> '
         + escapeHtml(r.rec.label)
         + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.rec.reason) + ')</span>')
@@ -1830,7 +1943,8 @@ function renderAdvice(pair, leftPack, rightPack){
     return true;
   }).slice(0, 4);
   if (switches.length){
-    tips.push('<li><span class="tag bust">Switch</span>'
+    tips.push('<li><span class="tag bust">Switch</span>Before the next tip ('
+      + escapeHtml(nowLbl) + ') — '
       + switches.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> '
         + escapeHtml(r.rec.label)
         + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.rec.reason) + ')</span>')
@@ -2003,6 +2117,15 @@ function playerRowHtml(r){
     + '</tr>';
 }
 
+const LOCK_FP_GOAL = 400; /* Weekly locked-in FP floor — bank toward this every week. */
+
+function lockedFpTotal(pack){
+  return (pack && pack.lockedScores || []).reduce((s, x) => {
+    const n = Number(x);
+    return s + (Number.isFinite(n) ? n : 0);
+  }, 0);
+}
+
 function renderSide(side, pack){
   const fr = side.franchise;
   const starters = pack.starters || [];
@@ -2016,9 +2139,18 @@ function renderSide(side, pack){
 
   const lockedN = pack.lockedScores.length;
   const slots = lockSlotLabels().length;
+  const lockedSum = Math.round(lockedFpTotal(pack));
+  const goal = LOCK_FP_GOAL;
+  const gap = Math.max(0, goal - lockedSum);
+  const ptsTitle = lockedN
+    ? (lockedSum + ' locked FP toward ' + goal
+      + (gap > 0 ? (' · ' + gap + ' short') : ' · goal hit')
+      + ' · ' + lockedN + '/' + slots + ' nights locked')
+    : ('0 locked FP · weekly goal ' + goal + ' · ' + lockedN + '/' + slots + ' locked');
   return '<div class="side" style="--team-color:' + escapeHtml(fr.color) + '">'
     + '<div class="side-head"><h3>' + escapeHtml(fr.team) + '</h3>'
-    + '<span class="pts">' + Math.round(side.points) + ' FP · '
+    + '<span class="pts" title="' + escapeHtml(ptsTitle) + '">'
+    + lockedSum + ' / ' + goal + ' FP · '
     + lockedN + '/' + slots + ' locked</span></div>'
     + '<table><thead><tr>'
     + '<th>Player</th>'
@@ -2078,6 +2210,8 @@ function render(){
     + 'Lineup slots mirror Sleeper (read-only). Click a lock pill to manually lock / edit / clear a night’s FP when OCR misses. '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Under each name: locked players show the lock chip; unlocked show last score, next tip, and games left. '
+    + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
+    + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Locks come from screenshots (locked chip or LOCK-IN) or manual override — never Sleeper/ESPN API week points. '
     + 'A transparent slash through a schedule logo means they weren’t in the starting lineup that night and that game can’t be locked. '
     + 'Bank column lists Avg, Bank ≥ (frozen at lock time), and Lock. '
@@ -3467,6 +3601,46 @@ async function load(){
   }
 }
 
+/* Live day + time at the top; soft-rerender so tip-relative Recs stay fresh. */
+function paintLiveClock(){
+  const el = document.getElementById('liveClock');
+  if (!el) return;
+  const now = new Date();
+  const parts = formatClockParts(now);
+  if (!parts){
+    el.textContent = '—';
+    el.removeAttribute('datetime');
+    return;
+  }
+  el.dateTime = now.toISOString();
+  el.innerHTML = escapeHtml(parts.day) + ' '
+    + escapeHtml(parts.time)
+    + ' <span class="sec">' + escapeHtml(String(now.getSeconds()).padStart(2, '0') + 's') + '</span>';
+  el.title = 'Local time · Recs reference tip windows vs this clock';
+}
+
+function startLiveClock(){
+  paintLiveClock();
+  if (state._clockTimer) clearInterval(state._clockTimer);
+  if (state._recTimer) clearInterval(state._recTimer);
+  state._clockTimer = setInterval(paintLiveClock, 1000);
+  /* Rebuild Rec reasons every minute so “in 45m” / day hints stay honest. */
+  state._recTimer = setInterval(() => {
+    if (!state.pairs || !state.pairs.length) return;
+    if (document.hidden) return;
+    try { render(); } catch (e) { /* keep clock ticking */ }
+  }, 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden){
+      paintLiveClock();
+      if (state.pairs && state.pairs.length){
+        try { render(); } catch (e) { /* ignore */ }
+      }
+    }
+  });
+}
+
+startLiveClock();
 load();
 </script>
 </body>
