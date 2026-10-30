@@ -298,7 +298,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-manual-lock';
+    || '20261030-lock-fp-goal';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1791,9 +1791,15 @@ function renderAdvice(pair, leftPack, rightPack){
   const lockedN = focusPack.lockedScores.length;
   const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
   const leftSlots = Math.max(0, slots - lockedN);
+  const lockedSum = Math.round(lockedFpTotal(focusPack));
+  const goal = LOCK_FP_GOAL;
+  const gap = Math.max(0, goal - lockedSum);
   tips.push('<li><span class="tag lock">Banked</span><strong>'
-    + escapeHtml(focusSide.franchise.team) + '</strong> has <strong>' + lockedN + '/' + slots
-    + '</strong> green <strong>LOCKED</strong> nights'
+    + escapeHtml(focusSide.franchise.team) + '</strong> has <strong>' + lockedSum + ' / ' + goal
+    + '</strong> locked FP'
+    + (gap > 0 ? (' · <strong>' + gap + '</strong> short of the weekly floor') : ' · weekly goal hit')
+    + ' · <strong>' + lockedN + '/' + slots
+    + '</strong> locked nights'
     + (focusPack.lockedScores.length
       ? (' (' + focusPack.lockedScores.map(x => Math.round(x)).join(', ') + ')')
       : '')
@@ -2003,6 +2009,15 @@ function playerRowHtml(r){
     + '</tr>';
 }
 
+const LOCK_FP_GOAL = 400; /* Weekly locked-in FP floor — bank toward this every week. */
+
+function lockedFpTotal(pack){
+  return (pack && pack.lockedScores || []).reduce((s, x) => {
+    const n = Number(x);
+    return s + (Number.isFinite(n) ? n : 0);
+  }, 0);
+}
+
 function renderSide(side, pack){
   const fr = side.franchise;
   const starters = pack.starters || [];
@@ -2016,9 +2031,18 @@ function renderSide(side, pack){
 
   const lockedN = pack.lockedScores.length;
   const slots = lockSlotLabels().length;
+  const lockedSum = Math.round(lockedFpTotal(pack));
+  const goal = LOCK_FP_GOAL;
+  const gap = Math.max(0, goal - lockedSum);
+  const ptsTitle = lockedN
+    ? (lockedSum + ' locked FP toward ' + goal
+      + (gap > 0 ? (' · ' + gap + ' short') : ' · goal hit')
+      + ' · ' + lockedN + '/' + slots + ' nights locked')
+    : ('0 locked FP · weekly goal ' + goal + ' · ' + lockedN + '/' + slots + ' locked');
   return '<div class="side" style="--team-color:' + escapeHtml(fr.color) + '">'
     + '<div class="side-head"><h3>' + escapeHtml(fr.team) + '</h3>'
-    + '<span class="pts">' + Math.round(side.points) + ' FP · '
+    + '<span class="pts" title="' + escapeHtml(ptsTitle) + '">'
+    + lockedSum + ' / ' + goal + ' FP · '
     + lockedN + '/' + slots + ' locked</span></div>'
     + '<table><thead><tr>'
     + '<th>Player</th>'
@@ -2078,6 +2102,7 @@ function render(){
     + 'Lineup slots mirror Sleeper (read-only). Click a lock pill to manually lock / edit / clear a night’s FP when OCR misses. '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Under each name: locked players show the lock chip; unlocked show last score, next tip, and games left. '
+    + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Locks come from screenshots (locked chip or LOCK-IN) or manual override — never Sleeper/ESPN API week points. '
     + 'A transparent slash through a schedule logo means they weren’t in the starting lineup that night and that game can’t be locked. '
     + 'Bank column lists Avg, Bank ≥ (frozen at lock time), and Lock. '
