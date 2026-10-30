@@ -296,7 +296,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-ocr-george-35';
+    || '20261030-ocr-giannis';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2194,6 +2194,25 @@ function stripNameSuffix(s){
   return String(s || '').replace(/\b(jr|sr|ii|iii|iv|v)\.?\s*$/i, '').trim();
 }
 
+/* Sleeper truncates long names: "G. Antetokou..." / "Antetokou…" */
+function stripEllipsisToken(s){
+  return String(s || '')
+    .replace(/\u2026/g, ' ')
+    .replace(/\.{2,}/g, ' ')
+    .replace(/\.+$/g, '')
+    .trim();
+}
+
+/* True when OCR token is a prefix of a roster last name (Antetokou → Antetokounmpo). */
+function lastNamePrefixHit(token, last){
+  const w = normalizeName(stripEllipsisToken(token));
+  const ln = normalizeName(last || '');
+  if (w.length < 5 || ln.length < 6) return false;
+  if (ln.indexOf(w) !== 0 && w.indexOf(ln) !== 0) return false;
+  /* Require a meaningful chunk of the real last name so “Willi” doesn’t steal. */
+  return w.length >= Math.min(8, Math.max(6, Math.ceil(ln.length * 0.55)));
+}
+
 function buildNameIndex(onlyPids){
   const allow = onlyPids || null;
   const idx = [];
@@ -2258,34 +2277,39 @@ function isTeamAbbrevToken(w){
 function matchPlayerOnLine(lnOrRaw, idx, opts){
   const options = opts || {};
   const strict = !!options.strict; /* exact / prefix only — no edit-distance */
-  const ln = normalizeName(stripNameSuffix(lnOrRaw));
-  const soft = softNorm(stripNameSuffix(lnOrRaw));
+  const cleaned = stripEllipsisToken(stripNameSuffix(lnOrRaw));
+  const ln = normalizeName(cleaned);
+  const soft = softNorm(cleaned);
   /* Strip ellipsis from Sleeper truncations: “Antetokou...” */
-  const words = soft.split(/\s+/).map(w => w.replace(/\.+$/g, '')).filter(w => {
+  const words = soft.split(/\s+/).map(w => stripEllipsisToken(w)).filter(w => {
     if (w.length < 3) return false;
     if (isTeamAbbrevToken(w)) return false;
     if (/^(jr|sr|ii|iii|iv)$/i.test(w)) return false;
+    /* Nickname noise under the name: "(10 Freaky Girls)", "(Podcast Pee)". */
+    if (/^(podcast|pee|freaky|girls|the|and|boy|boys|king|queen)$/i.test(w)) return false;
     return true;
   });
-  let best = null, bestScore = 99;
+  let best = null, bestScore = 99, bestPrefixLen = 0;
   idx.forEach(f => {
     let score = 99;
+    let prefixLen = 0;
     if (ln.indexOf(f.key) >= 0) score = 0;
     else if (f.abbr && f.abbr.length >= 4 && ln.indexOf(f.abbr) >= 0) score = 1;
     /* Exact last name — allow Fox (3) and Smith; never fuzzy 3-letter names. */
     else if (f.last.length >= 3 && ln.indexOf(f.last) >= 0) score = 2;
-    else if (!strict && f.last.length >= 4){
+    else {
       words.forEach(w => {
-        /* Long Sleeper names often truncate mid-lastname. */
-        if (w.length >= 5 && f.last.length >= 6){
-          if (f.last.indexOf(w) === 0 || w.indexOf(f.last) === 0){
-            score = Math.min(score, 2);
-            return;
-          }
+        /* Long Sleeper names truncate mid-lastname — allow in strict too. */
+        if (lastNamePrefixHit(w, f.last)){
+          score = Math.min(score, 2);
+          prefixLen = Math.max(prefixLen, normalizeName(w).length);
+          return;
         }
+        if (strict) return;
         /* “Smith” vs last “smithjr” before suffix strip — keep prefix hit. */
         if (w.length >= 4 && f.last.indexOf(w) === 0){
           score = Math.min(score, 2);
+          prefixLen = Math.max(prefixLen, w.length);
           return;
         }
         /* Short last names (Bane) need a near-exact token — d≤2 made BKN→Bane. */
@@ -2295,12 +2319,18 @@ function matchPlayerOnLine(lnOrRaw, idx, opts){
         if (d <= maxD && d > 0) score = Math.min(score, 3 + d);
       });
     }
-    if (score < bestScore){ bestScore = score; best = f; }
+    if (score < bestScore || (score === bestScore && prefixLen > bestPrefixLen)){
+      bestScore = score;
+      bestPrefixLen = prefixLen;
+      best = f;
+    }
   });
   return bestScore <= (strict ? 2 : 4) ? best : null;
 }
 
-/* Closest roster name above a cyan mark — don’t let opponent abbrevs / far bench text win. */
+/* Closest roster name above a cyan mark — don’t let opponent abbrevs / nicknames /
+   far bench text win. Prefer tokens that look like roster last-name prefixes
+   (so “Freaky Girls” under Giannis doesn’t beat “Antetokou...”). */
 function matchPlayerAboveMark(mark, words, focusIdx, bothIdx){
   const above = (words || [])
     .filter(n => n.y < mark.y && mark.y - n.y < 340 && mark.y - n.y > 6)
@@ -2308,16 +2338,33 @@ function matchPlayerAboveMark(mark, words, focusIdx, bothIdx){
       const t = String(n.t || '');
       if (!/[A-Za-z]{3,}/.test(t)) return false;
       if (/^(lock|lockin|not|yet|play|vs|at|fri|sat|sun|mon|tue|wed|thu|today)$/i.test(t)) return false;
+      if (/^(podcast|pee|freaky|girls|chat|fantasy|scores|picks|feed|account)$/i.test(t)) return false;
       if (isTeamAbbrevToken(t)) return false;
       return true;
     })
     .sort((a, c) => c.y - a.y);
 
-  /* Pass 1: exact last-name on nearest tokens (Tatum before any fuzzy noise). */
+  function tryTok(tok, strict){
+    let match = matchPlayerOnLine(tok, focusIdx, {strict: strict});
+    if (!match) match = matchPlayerOnLine(tok, bothIdx, {strict: strict});
+    return match;
+  }
+
+  /* Pass 0: roster-like tokens only (truncations + exact last names). */
+  const rosterLike = above.filter(n => {
+    const w = normalizeName(stripEllipsisToken(n.t));
+    if (w.length < 5) return false;
+    const pool = (focusIdx && focusIdx.length) ? focusIdx.concat(bothIdx || []) : (bothIdx || []);
+    return pool.some(f => f.last === w || lastNamePrefixHit(w, f.last) || (f.key && f.key.indexOf(w) >= 0));
+  });
+  for (let i = 0; i < Math.min(10, rosterLike.length); i++){
+    const match = tryTok(rosterLike[i].t, true);
+    if (match) return match;
+  }
+
+  /* Pass 1: exact / truncation last-name on nearest tokens. */
   for (let i = 0; i < Math.min(10, above.length); i++){
-    const tok = above[i].t;
-    let match = matchPlayerOnLine(tok, focusIdx, {strict: true});
-    if (!match) match = matchPlayerOnLine(tok, bothIdx, {strict: true});
+    const match = tryTok(above[i].t, true);
     if (match) return match;
   }
   /* Pass 2: small joined window with tight fuzzy rules. */
@@ -2339,6 +2386,29 @@ function focusRosterPids(){
   const side = pair.sides.find(s => s.franchise.team === state.focusTeam) || pair.sides[0];
   (side && side.franchise.players || []).forEach(id => set.add(String(id)));
   return set;
+}
+
+/* Roster names visible in OCR (incl. Sleeper truncations like Antetokou...) that
+   never got a lock/LOCK-IN hit — usually the chip is below Chat / off-screen. */
+function findUnmarkedRosterNamesInOcr(ocrWords, seenPids){
+  const focus = focusRosterPids();
+  const roster = matchupRosterPids();
+  const idx = buildNameIndex(focus.size ? focus : roster);
+  const found = [];
+  const seenName = {};
+  (ocrWords || []).forEach(w => {
+    const t = w && (w.text || w.t);
+    if (!t || !/[A-Za-z]{5,}/.test(t)) return;
+    const match = matchPlayerOnLine(t, idx, {strict: true});
+    if (!match) return;
+    const pid = String(match.pid);
+    if (seenPids && seenPids.has(pid)) return;
+    if (seenName[pid]) return;
+    seenName[pid] = 1;
+    const p = state.players[pid];
+    found.push((p && shortPlayerName(p)) || match.name || pid);
+  });
+  return found.slice(0, 4);
 }
 
 /* Sleeper lock states (from matchup / player Lock-In SC):
@@ -2878,6 +2948,7 @@ async function runOcrOnImage(file){
 
     const worker = await Tesseract.createWorker('eng');
     let words = [];
+    let scaledWords = [];
     let textSample = '';
     let hits = [];
     let openLockIns = [];
@@ -2896,7 +2967,7 @@ async function runOcrOnImage(file){
       const colorH = packs.color.canvas.height || 1;
       const yScale = colorH / ocrH;
       const xScale = packs.color.canvas.width / (packs.ocrLeft.width || 1);
-      const scaledWords = words.map(w => ({
+      scaledWords = words.map(w => ({
         text: w.text,
         confidence: w.confidence,
         bbox: w.bbox ? {
@@ -2986,22 +3057,34 @@ async function runOcrOnImage(file){
       : (marks.lockInBtns.length
         ? (' · ' + marks.lockInBtns.length + ' LOCK-IN button(s) still unlocked')
         : '');
+    /* Names OCR’d (incl. “G. Antetokou...”) but with no lock/LOCK-IN in-frame —
+       usually Chat/nav covering the bottom of the matchup shot. */
+    const seenPids = new Set(
+      hits.map(h => String(h.pid)).concat(openLockIns.map(h => String(h.pid)))
+    );
+    const missingNamed = findUnmarkedRosterNamesInOcr(scaledWords, seenPids);
+    const cropNote = missingNamed.length
+      ? (' · saw ' + missingNamed.join(', ')
+        + ' but no lock chip — scroll so their logo-lock / LOCK-IN isn’t under Chat')
+      : '';
     if (!hits.length){
       status.className = openLockIns.length ? 'shot-status ok' : 'shot-status';
       status.textContent = marks.locked.length
         ? ('Found ' + marks.locked.length + ' logo-lock(s) but couldn’t read a lock chip score '
           + 'next to them (API scores are never used). Re-upload a sharper shot or scroll so the '
-          + 'score + lock logo are visible.' + openNote)
+          + 'score + lock logo are visible.' + openNote + cropNote)
         : ('No locked logo nights in that shot'
           + (openNote || '.')
-          + ' Only screenshot lock chips count — never API week FP.');
+          + cropNote
+          + (cropNote ? '' : ' Only screenshot lock chips count — never API week FP.'));
       console.warn('matchup locks', marks, 'openLockIns', openLockIns, 'roster pool', rosterN, 'ocr sample', textSample.slice(0, 600));
       render();
     } else {
       status.className = 'shot-status ok';
       status.textContent = 'LOCKED from screenshot: '
         + hits.map(fmtLockHit).join(', ')
-        + openNote;
+        + openNote
+        + cropNote;
       render();
     }
   } catch (e){
