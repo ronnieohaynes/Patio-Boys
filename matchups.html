@@ -229,24 +229,24 @@
   .lock-pill{
     display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:9px;
     letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:999px;
-    margin-left:6px;vertical-align:middle;border:1px solid transparent;cursor:pointer;
+    margin-left:6px;vertical-align:middle;border:1px solid transparent;cursor:default;
+    pointer-events:none;
   }
   .lock-pill.locked{color:#0b2; border-color:var(--green); background:color-mix(in srgb, var(--green) 18%, transparent)}
   .lock-pill.open{color:#6ec8ff; border-color:#3A8FC9; background:color-mix(in srgb, #3A8FC9 14%, transparent)}
   .lock-pill.none{color:var(--ink-dim); border-color:var(--hairline)}
-  .lock-pill:hover{filter:brightness(1.15)}
-  /* Sleeper-style lineup: name left, slot badge right */
+  /* Sleeper-style lineup: name left, slot badge right (read-only — mirrors Sleeper). */
   .player-row{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
   .player-main{min-width:0;flex:1}
   tr.bench td.player .player-main{font-weight:500;color:var(--ink-dim)}
   .slot-badge{
-    -webkit-appearance:none;appearance:none;flex:0 0 auto;align-self:center;
+    flex:0 0 auto;align-self:center;
     font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;
     letter-spacing:.04em;text-transform:uppercase;text-align:center;
-    border:none;border-radius:6px;padding:5px 8px;min-width:2.75rem;cursor:pointer;
+    border:none;border-radius:6px;padding:5px 8px;min-width:2.75rem;cursor:default;
     line-height:1;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+    pointer-events:none;user-select:none;
   }
-  .slot-badge:focus{outline:1px solid var(--gold)}
   .slot-badge.pg{background:#2E3A66;color:#F0718A}
   .slot-badge.sg{background:#2E3A66;color:#F5A15C}
   .slot-badge.sf{background:#2E3A66;color:#E8C34A}
@@ -324,7 +324,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261030-refresh-reset';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261030-ocr-readonly';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -372,7 +372,7 @@ const state = {
   /* pid -> [{eventId, date, opp, fp}] scored box scores for played games. */
   gameFpByPid: {},
   /* Only green LOCKED nights — never inferred from “starter with points”. */
-  lockMarks: {}, /* pid -> {pts, source:'ocr'|'manual', name, slot} */
+  lockMarks: {}, /* pid -> {pts, source:'ocr', name, slot} — OCR screenshot only */
   tesseractLoading: null
 };
 
@@ -949,8 +949,8 @@ function scoutPlayer(pid, dist){
   };
 }
 
-/* True lock-in nights = green LOCKED only (OCR / manual). Scored starters with
-   blue UNLOCKED can still be swapped — never treat API starters_points as locked. */
+/* True lock-in nights = green LOCKED only (screenshot OCR). Scored starters with
+   blue UNLOCKED can still be swapped in Sleeper — never treat API starters_points as locked. */
 function lockedPtsFor(pid){
   const id = String(pid);
   const marks = state.lockMarks || (state.lockMarks = {});
@@ -981,10 +981,9 @@ function isLocked(pid){
   return lockedPtsFor(pid) != null;
 }
 
+/* Lineup slots always mirror Sleeper starters — never local/manual overrides. */
 function slotKeyForPidOnSide(side, pid){
   const id = String(pid);
-  const mark = state.lockMarks && state.lockMarks[id];
-  if (mark && mark.slot != null && mark.slot !== '') return mark.slot;
   const starters = (side && side.matchup && side.matchup.starters)
     || (side && side.franchise && side.franchise.starters)
     || [];
@@ -997,33 +996,6 @@ function sideForPid(pid){
   const pair = state.selectedPair || state.pairs[0];
   if (!pair) return null;
   return pair.sides.find(s => (s.franchise.players || []).map(String).includes(String(pid))) || null;
-}
-
-/* Locks only come from screenshot OCR. Manual click can unmark; never invent
-   pts from Sleeper/ESPN week scoring. */
-function toggleLockMark(pid){
-  const id = String(pid);
-  const marks = state.lockMarks || (state.lockMarks = {});
-  if (!marks[id]) return; /* cannot bank without a screenshot score */
-  delete marks[id];
-  saveLockMarks();
-  render();
-}
-
-function setPlayerSlot(pid, slotKey){
-  const id = String(pid);
-  const marks = state.lockMarks || (state.lockMarks = {});
-  if (!marks[id]){
-    /* Slot badge alone does not create a lock — need OCR chip pts. */
-    return;
-  }
-  if (slotKey === 'BN'){
-    delete marks[id];
-  } else {
-    marks[id].slot = slotKey;
-  }
-  saveLockMarks();
-  render();
 }
 
 function buildPairs(matchupRows, franchisesByRoster){
@@ -1636,7 +1608,7 @@ function renderAdvice(pair, leftPack, rightPack){
     + (focusPack.lockedScores.length
       ? (' (' + focusPack.lockedScores.map(x => Math.round(x)).join(', ') + ')')
       : '')
-    + '. Blue/cyan <strong>UNLOCKED</strong> can still move. Bench stays <strong>BN</strong> until you set Pos. <strong>'
+    + '. Blue/cyan <strong>UNLOCKED</strong> nights are still open on Sleeper. Lineup slots here mirror Sleeper (read-only). <strong>'
     + leftSlots + '</strong> slots left'
     + (focusPack.opts.rosterFloor != null
       ? (' · remaining top-' + leftSlots + ' bar ~' + Math.round(focusPack.opts.rosterFloor))
@@ -1708,19 +1680,10 @@ function renderAdvice(pair, leftPack, rightPack){
 }
 
 function slotBadgeHtml(pid, slotKey){
-  const labels = lockSlotLabels();
   const label = slotDisplayLabel(slotKey);
   const cls = slotBadgeClass(label);
-  const opts = labels.map((lab, i) => {
-    const sel = String(slotKey) === String(i) ? ' selected' : '';
-    return '<option value="' + i + '"' + sel + '>' + escapeHtml(lab) + '</option>';
-  }).join('');
-  const bnSel = (slotKey == null || slotKey === 'BN') ? ' selected' : '';
-  return '<select class="slot-badge ' + cls + '" data-slot-pid="' + escapeHtml(String(pid))
-    + '" title="Lineup slot (same as Sleeper)">'
-    + opts
-    + '<option value="BN"' + bnSel + '>BN</option>'
-    + '</select>';
+  return '<span class="slot-badge ' + cls + '" title="Sleeper lineup slot (read-only)">'
+    + escapeHtml(label) + '</span>';
 }
 
 function formatFp(v){
@@ -1834,14 +1797,13 @@ function playerRowHtml(r){
     || (r.pts != null && Number(r.pts) > 0);
   const pillCls = r.locked ? 'locked' : (hasFp ? 'open' : 'none');
   const pillTxt = r.locked ? 'Locked' : (hasFp ? 'Unlocked' : 'Not lock');
-  /* Lock pts only from screenshot OCR — never seed from API FP. */
-  const lockPtsAttr = r.lockPts != null ? r.lockPts : '';
+  /* Lock status only from screenshot OCR — display-only, never click-to-edit. */
   const pillTitle = r.locked
     ? ('Screenshot LOCKED at ' + (r.slotLabel || 'slot') + ' · ' + formatFp(r.lockPts)
-      + ' — click to unmark.')
+      + ' — re-upload the Sleeper shot to change.')
     : (hasFp
-      ? 'Scored but not locked. Upload a matchup screenshot to bank the logo-lock chip.'
-      : 'No screenshot lock yet. Upload a Sleeper matchup shot to lock.');
+      ? 'Scored but not locked on the Sleeper screenshot. Upload a matchup shot to sync.'
+      : 'No screenshot lock yet. Upload a Sleeper matchup shot to sync locks.');
   const trCls = (r.locked ? 'locked' : '') + (!r.starter ? ' bench' : '');
   const elig = eligHtml(r.p);
   const meta = (r.p.team ? (' · ' + escapeHtml(r.p.team)) : '')
@@ -1849,10 +1811,8 @@ function playerRowHtml(r){
   return '<tr class="' + trCls.trim() + '">'
     + '<td class="player"><div class="player-row"><div class="player-main">'
     + escapeHtml(playerName(r.p))
-    + '<button type="button" class="lock-pill ' + pillCls + '" data-lock-pid="' + escapeHtml(r.pid)
-    + '" data-lock-pts="' + (lockPtsAttr != null ? lockPtsAttr : '') + '" data-lock-slot="'
-    + escapeHtml(String(r.slot == null ? 'BN' : r.slot)) + '" title="' + escapeHtml(pillTitle) + '">'
-    + pillTxt + '</button>'
+    + '<span class="lock-pill ' + pillCls + '" title="' + escapeHtml(pillTitle) + '">'
+    + pillTxt + '</span>'
     + '<span class="sub">' + elig + meta + '</span>'
     + slateHtml(r)
     + '</div>' + slotBadgeHtml(r.pid, r.slot) + '</div></td>'
@@ -1928,30 +1888,13 @@ function render(){
   renderAdvice(pair, leftPack, rightPack);
 
   document.getElementById('footNote').textContent =
-    'Lineup slots mirror Sleeper (PG/SG/G/SF/PF/F/C/UTIL badge on the right; BN on the bench). '
+    'Lineup slots and lock status are read-only mirrors of Sleeper (upload a matchup screenshot to sync locks). '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Under each name: locked players show only the screenshot chip; unlocked show last score, next tip, and games left. '
-    + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points. '
+    + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points, and never manual edits here. '
     + 'Bank column is a 0–65 sliding scale marking Avg and Today\'s Bank (weekday + games left + injury). '
-    + 'You can only lock a night from a starting slot before tip — if a starter isn’t banking, Rec frees the slot for a bench player who tips sooner (even lower Avg). '
+    + 'Rec suggests Lock / tip-order Switch / Wait for what to do in Sleeper — this screen does not move players. '
     + 'Rec = Lock / tip-order Switch / Wait.';
-
-  document.querySelectorAll('[data-lock-pid]').forEach(btn => {
-    btn.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      const pid = btn.getAttribute('data-lock-pid');
-      if (!isLocked(pid)) return; /* only unmark OCR locks — never invent API pts */
-      toggleLockMark(pid);
-    });
-  });
-  document.querySelectorAll('[data-slot-pid]').forEach(sel => {
-    sel.addEventListener('change', () => {
-      const pid = sel.getAttribute('data-slot-pid');
-      const raw = sel.value;
-      const slot = raw === 'BN' ? 'BN' : Number(raw);
-      setPlayerSlot(pid, slot);
-    });
-  });
 }
 
 async function loadMatchups(week, opts){
