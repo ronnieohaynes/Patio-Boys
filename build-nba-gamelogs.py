@@ -8,6 +8,11 @@ counting-stat rows. The site scores those rows live under league settings.
 Refresh:
   python3 build-nba-gamelogs.py
   python3 build-nba-gamelogs.py --seasons 2025 2024
+
+Scheduled:
+  .github/workflows/update-nba-gamelogs.yml runs daily (~6am PT) and on
+  manual workflow_dispatch, committing nba-gamelogs-snapshot.js when
+  season box-score rows change.
 """
 from __future__ import annotations
 

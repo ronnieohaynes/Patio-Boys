@@ -1,0 +1,99 @@
+# Rebuild Lock OVR / smash samples from ESPN box scores on a schedule.
+# Writes nba-gamelogs-snapshot.js and commits when season game rows change.
+name: Update NBA gamelogs snapshot
+
+on:
+  schedule:
+    # ~6:00am America/Los_Angeles (14:00 UTC). Overnight finals are usually in.
+    - cron: '0 14 * * *'
+  workflow_dispatch:
+    inputs:
+      seasons:
+        description: 'Sleeper season years (space-separated), e.g. "2025 2024"'
+        required: false
+        default: '2025 2024'
+      workers:
+        description: 'Parallel ESPN fetch workers'
+        required: false
+        default: '12'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-nba-gamelogs
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Rebuild gamelog snapshot
+        env:
+          SEASONS: ${{ github.event.inputs.seasons || '2025 2024' }}
+          WORKERS: ${{ github.event.inputs.workers || '12' }}
+        run: |
+          set -euo pipefail
+          cp nba-gamelogs-snapshot.js /tmp/nba-gamelogs-snapshot.prev.js
+          echo "Building seasons: $SEASONS (workers=$WORKERS)"
+          # shellcheck disable=SC2086
+          python3 build-nba-gamelogs.py --seasons $SEASONS --workers "$WORKERS"
+
+      - name: Commit if season data changed
+        run: |
+          set -euo pipefail
+          CHANGED=$(python3 - <<'PY'
+          import json, pathlib, re, sys
+
+          def seasons(path):
+              text = pathlib.Path(path).read_text(encoding='utf-8')
+              m = re.search(r'window\.NBA_GAMELOGS\s*=\s*(\{.*\});\s*$', text, re.S)
+              if not m:
+                  raise SystemExit(f'could not parse {path}')
+              data = json.loads(m.group(1))
+              return data.get('seasons') or {}, data.get('captured')
+
+          old, _ = seasons('/tmp/nba-gamelogs-snapshot.prev.js')
+          new, captured = seasons('nba-gamelogs-snapshot.js')
+          same = json.dumps(old, sort_keys=True, separators=(',', ':')) == json.dumps(
+              new, sort_keys=True, separators=(',', ':')
+          )
+          players = sum(len(v) for v in new.values())
+          print(f'captured={captured} players={players} changed={0 if same else 1}', file=sys.stderr)
+          print('0' if same else '1')
+          PY
+          )
+
+          if [ "$CHANGED" = '0' ]; then
+            echo 'No season data change — skipping commit (timestamp-only rebuild).'
+            git checkout -- nba-gamelogs-snapshot.js
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add nba-gamelogs-snapshot.js
+          if git diff --cached --quiet; then
+            echo 'Nothing to commit.'
+            exit 0
+          fi
+          CAPTURED=$(python3 - <<'PY'
+          import pathlib, re
+          text = pathlib.Path('nba-gamelogs-snapshot.js').read_text(encoding='utf-8')
+          m = re.search(r'"captured":"([^"]+)"', text)
+          print(m.group(1) if m else 'unknown')
+          PY
+          )
+          git commit -m "chore: refresh NBA gamelogs snapshot (${CAPTURED})"
+          git push
