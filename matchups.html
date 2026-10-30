@@ -278,7 +278,7 @@
         <button type="button" class="btn" id="shotPaste">Paste</button>
         <button type="button" class="btn" id="shotClear" hidden>Clear OCR</button>
       </div>
-      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot. <strong>Locked</strong> scores come only from the chip next to a logo + small closed lock — never from Sleeper/ESPN API points. <strong>LOCK-IN</strong> button = scored night still open to bank before tip.</p>
+      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot. <strong>Locked</strong> scores come only from the chip next to a logo + small closed lock — never from Sleeper/ESPN API points. <strong>LOCK-IN</strong> button = scored night still open to bank (must have been in your starting lineup). Schedule logos with a transparent slash = wasn’t started that night — can’t lock it.</p>
       <img class="shot-preview" id="shotPreview" alt="" hidden>
     </div>
 
@@ -296,7 +296,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-bank-thu-bell';
+    || '20261030-slash-not-started';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -346,6 +346,9 @@ const state = {
   gameFpByPid: {},
   /* Only green LOCKED nights — never inferred from “starter with points”. */
   lockMarks: {}, /* pid -> {pts, source:'ocr', name, slot, bankAtLock} — OCR only */
+  /* Scored nights still open on Sleeper (LOCK-IN button). Not ESPN boxscore FP —
+     a schedule-logo slash means they weren’t started that night and can’t lock it. */
+  openLockMarks: {}, /* pid -> {pts, source:'ocr-open', name, slot} */
   tesseractLoading: null
 };
 
@@ -400,15 +403,31 @@ function lockStorageKey(){
 function loadLockMarks(){
   try {
     const raw = localStorage.getItem(lockStorageKey());
-    state.lockMarks = raw ? (JSON.parse(raw) || {}) : {};
-  } catch (e){ state.lockMarks = {}; }
+    const parsed = raw ? (JSON.parse(raw) || {}) : {};
+    /* New shape: {locks, open}. Legacy: flat pid → lock mark. */
+    if (parsed && (parsed.locks || parsed.open)){
+      state.lockMarks = parsed.locks || {};
+      state.openLockMarks = parsed.open || {};
+    } else {
+      state.lockMarks = parsed || {};
+      state.openLockMarks = {};
+    }
+  } catch (e){
+    state.lockMarks = {};
+    state.openLockMarks = {};
+  }
 }
 function saveLockMarks(){
-  try { localStorage.setItem(lockStorageKey(), JSON.stringify(state.lockMarks || {})); }
-  catch (e){ /* ignore quota */ }
+  try {
+    localStorage.setItem(lockStorageKey(), JSON.stringify({
+      locks: state.lockMarks || {},
+      open: state.openLockMarks || {}
+    }));
+  } catch (e){ /* ignore quota */ }
 }
 function clearLockMarks(){
   state.lockMarks = {};
+  state.openLockMarks = {};
   try { localStorage.removeItem(lockStorageKey()); }
   catch (e){ /* ignore */ }
 }
@@ -423,7 +442,7 @@ function clearShotUi(){
   if (clearBtn) clearBtn.hidden = true;
   if (status){
     status.className = 'shot-status';
-    status.innerHTML = 'Upload a Sleeper matchup screenshot. <strong>Locked</strong> scores come only from the chip next to a logo + small closed lock — never from Sleeper/ESPN API points. <strong>LOCK-IN</strong> button = scored night still open to bank before tip.';
+    status.innerHTML = 'Upload a Sleeper matchup screenshot. <strong>Locked</strong> scores come only from the chip next to a logo + small closed lock — never from Sleeper/ESPN API points. <strong>LOCK-IN</strong> button = scored night still open to bank (must have been in your starting lineup). Schedule logos with a transparent slash = wasn’t started that night — can’t lock it.';
   }
 }
 
@@ -923,7 +942,9 @@ function scoutPlayer(pid, dist){
 }
 
 /* True lock-in nights = green LOCKED only (screenshot OCR). Scored starters with
-   blue UNLOCKED can still be swapped in Sleeper — never treat API starters_points as locked. */
+   blue UNLOCKED can still be swapped in Sleeper — never treat API starters_points as locked.
+   ESPN boxscore FP is NOT lockable: Sleeper schedule logos with a transparent slash mean
+   the player wasn’t in the starting lineup that night, so that game can’t be locked. */
 function lockedPtsFor(pid){
   const id = String(pid);
   const marks = state.lockMarks || (state.lockMarks = {});
@@ -931,6 +952,24 @@ function lockedPtsFor(pid){
     return Number(marks[id].pts);
   }
   return null;
+}
+
+/* Chip beside an open LOCK-IN button on the screenshot — the only unlocked score
+   that is still bankable. Never fall back to ESPN/Sleeper week FP. */
+function openLockPtsFor(pid){
+  const id = String(pid);
+  const marks = state.openLockMarks || (state.openLockMarks = {});
+  if (marks[id] && marks[id].pts != null && Number.isFinite(Number(marks[id].pts))){
+    return Number(marks[id].pts);
+  }
+  return null;
+}
+
+/* FP that can still be banked (or was banked) — screenshot only. */
+function lockableFpFor(pid){
+  const locked = lockedPtsFor(pid);
+  if (locked != null) return locked;
+  return openLockPtsFor(pid);
 }
 
 function weekPtsFor(pid, matchupRow){
@@ -1130,6 +1169,16 @@ function latestScoredFp(r){
   return null;
 }
 
+/* Lockable scored night only — OCR locked chip or open LOCK-IN chip. ESPN last-game
+   FP can be from a non-start (transparent slash on that logo) and is not bankable. */
+function latestLockableFp(r){
+  if (!r) return null;
+  if (r.lockPts != null && Number.isFinite(Number(r.lockPts))) return Number(r.lockPts);
+  const open = openLockPtsFor(r.pid);
+  if (open != null) return open;
+  return null;
+}
+
 function openLockSlots(pack){
   const labels = lockSlotLabels();
   const taken = new Set();
@@ -1250,7 +1299,7 @@ function nextTipMs(scout){
 }
 
 function isBankableNow(r){
-  const scored = latestScoredFp(r);
+  const scored = latestLockableFp(r);
   const bank = r && r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   return scored != null && bank != null && scored + 1e-9 >= bank;
 }
@@ -1336,6 +1385,7 @@ function betterSwitchTarget(r, pack){
    Tip order: if starter isn’t banking and you tip sooner, take the slot. */
 function benchSwitchInOver(r, pack){
   const myMean = r.dist && Number(r.dist.mean) || 0;
+  const myLockable = latestLockableFp(r);
   const myScored = latestScoredFp(r);
   const myBank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   const myNext = nextTipMs(r.scout);
@@ -1346,6 +1396,7 @@ function benchSwitchInOver(r, pack){
     if (!into || !fitsLockSlot(r.p, into)) return;
     const theirInj = o.scout && o.scout.injury;
     const theirMean = o.dist && Number(o.dist.mean) || 0;
+    const theirLockable = latestLockableFp(o);
     const theirScored = latestScoredFp(o);
     const theirNext = nextTipMs(o.scout);
     let why = null;
@@ -1361,10 +1412,10 @@ function benchSwitchInOver(r, pack){
     } else if (myMean > theirMean + 4){
       why = 'higher Avg';
       score = (myMean - theirMean) * 10;
-    } else if (myScored != null && myBank != null && myScored + 1e-9 >= myBank
-      && (theirScored == null || theirScored + 1e-9 < (o.bank && o.bank.mark != null ? Number(o.bank.mark) : myBank))){
-      why = formatFp(myScored) + ' bankable vs their night';
-      score = 50 + myScored;
+    } else if (myLockable != null && myBank != null && myLockable + 1e-9 >= myBank
+      && (theirLockable == null || theirLockable + 1e-9 < (o.bank && o.bank.mark != null ? Number(o.bank.mark) : myBank))){
+      why = formatFp(myLockable) + ' bankable vs their night';
+      score = 50 + myLockable;
     } else if (myScored != null && theirScored != null && myScored > theirScored + 8
       && myMean >= theirMean - 2){
       why = formatFp(myScored) + ' > ' + formatFp(theirScored) + ' tonight';
@@ -1408,7 +1459,8 @@ function buildRec(r, pack){
   const gamesLeft = r.scout && r.scout.gamesLeft != null
     ? r.scout.gamesLeft
     : ((r.scout && r.scout.slate) || []).filter(s => s.kind === 'opp').length;
-  const scored = latestScoredFp(r);
+  /* Only screenshot LOCK-IN / locked chips — ESPN FP from a non-start (slashed logo) isn’t bankable. */
+  const scored = latestLockableFp(r);
   const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   const open = openLockSlots(pack);
   /* Prefer locking into the slot they already occupy when it’s still open. */
@@ -1737,12 +1789,13 @@ function lockGradeClass(lockN, avgN, bankN){
 function bankStackHtml(r){
   const avgN = r.dist && r.dist.mean != null ? Number(r.dist.mean) : null;
   const bankN = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
-  /* Lock row = screenshot banked chip, else last scored night still open. */
+  /* Lock row = screenshot banked chip, else open LOCK-IN chip — never ESPN FP
+     (slashed schedule logos = wasn’t started → can’t lock that night). */
   let lockN = null;
   if (r.locked && r.lockPts != null && Number.isFinite(Number(r.lockPts))){
     lockN = Number(r.lockPts);
   } else {
-    const scored = latestScoredFp(r);
+    const scored = latestLockableFp(r);
     if (scored != null && Number.isFinite(scored)) lockN = scored;
   }
   const grade = lockGradeClass(lockN, avgN, bankN);
@@ -1764,18 +1817,21 @@ function bankStackHtml(r){
 
 function playerRowHtml(r){
   const rec = r.rec || {label: '—', reason: '', cls: 'rec-none'};
-  const hasFp = (r.scout.slate || []).some(s => s.kind === 'fp' && s.fp != null)
-    || (r.lockPts != null && Number(r.lockPts) > 0)
-    || (r.pts != null && Number(r.pts) > 0);
-  const pillCls = r.locked ? 'locked' : (hasFp ? 'open' : 'none');
-  const pillTxt = r.locked ? 'Locked' : (hasFp ? 'Unlocked' : 'Not lock');
-  /* Lock status only from screenshot OCR — display-only, never click-to-edit. */
+  const openPts = openLockPtsFor(r.pid);
+  const canLock = r.locked || openPts != null;
+  const pillCls = r.locked ? 'locked' : (canLock ? 'open' : 'none');
+  const pillTxt = r.locked ? 'Locked' : (canLock ? 'Unlocked' : 'Not lock');
+  /* Lock status only from screenshot OCR — display-only, never click-to-edit.
+     Unlocked = Sleeper LOCK-IN button (started that night). ESPN boxscore alone
+     is Not lock — schedule slash means they weren’t started and can’t bank it. */
   const pillTitle = r.locked
     ? ('Screenshot LOCKED at ' + (r.slotLabel || 'slot') + ' · ' + formatFp(r.lockPts)
       + ' — re-upload the Sleeper shot to change.')
-    : (hasFp
-      ? 'Scored but not locked on the Sleeper screenshot. Upload a matchup shot to sync.'
-      : 'No screenshot lock yet. Upload a Sleeper matchup shot to sync locks.');
+    : (canLock
+      ? ('Screenshot LOCK-IN still open'
+        + (openPts != null ? (' @ ' + formatFp(openPts)) : '')
+        + ' — tap Lock-In in Sleeper before tip.')
+      : 'Not lockable from the screenshot (no LOCK-IN / locked chip). A transparent slash on a schedule logo means they weren’t started that night and can’t be locked.');
   const trCls = (r.locked ? 'locked' : '') + (!r.starter ? ' bench' : '');
   const elig = eligHtml(r.p);
   const meta = (r.p.team ? (' · ' + escapeHtml(r.p.team)) : '')
@@ -1864,8 +1920,9 @@ function render(){
     + 'Lineup slots and lock status are read-only mirrors of Sleeper (upload a matchup screenshot to sync locks). '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Under each name: locked players show only the screenshot chip; unlocked show last score, next tip, and games left. '
-    + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points, and never manual edits here. '
-    + 'Bank column lists Avg, Bank ≥ (frozen at lock time for LOCKED nights), and Lock (screenshot chip or last scored night). '
+    + 'Locked / Unlocked scores come only from uploaded screenshots (locked chip or LOCK-IN button) — never Sleeper/ESPN API week points. '
+    + 'A transparent slash through a schedule logo means they weren’t in the starting lineup that night and that game can’t be locked. '
+    + 'Bank column lists Avg, Bank ≥ (frozen at lock time for LOCKED nights), and Lock (screenshot chip only). '
     + 'Lock color: red below Avg, yellow between Avg and Bank, green at/above Bank. '
     + 'Rec suggests Lock / tip-order Switch / Wait for what to do in Sleeper — this screen does not move players.';
 }
@@ -2245,11 +2302,15 @@ function focusRosterPids(){
   return set;
 }
 
-/* Sleeper lock states (from matchup SC):
+/* Sleeper lock states (from matchup / player Lock-In SC):
    1) LOCKED — scored night’s team logo with cyan ring + small closed lock (no LOCK-IN button)
    2) Eligible unlocked — large solid cyan open-lock button labeled “LOCK-IN”
-   3) Can’t lock — grey slash + “NOT LOCK”
-   Never treat LOCK-IN text/button as locked. */
+      (player was in the starting lineup for that night)
+   3) Can’t lock (control) — grey slash + “NOT LOCK” on the lock control
+   4) Can’t lock (schedule) — transparent diagonal slash through a week schedule
+      opponent logo = wasn’t in the starting lineup that night → that game can’t be locked
+      (even if ESPN has a boxscore FP). Never treat those nights as Unlocked/bankable.
+   Never treat LOCK-IN text/button as locked. Never invent locks from API week FP. */
 function rgbToHsv(r, g, b){
   r /= 255; g /= 255; b /= 255;
   const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
@@ -2708,6 +2769,7 @@ async function runOcrOnImage(file){
           delete state.lockMarks[pid];
         }
       });
+      state.openLockMarks = {};
       if (marks.locked.length){
         status.textContent = 'Reading lock chip scores beside logo-locks…';
       }
@@ -2725,6 +2787,17 @@ async function runOcrOnImage(file){
     } finally {
       await worker.terminate();
     }
+    openLockIns.forEach(h => {
+      const pid = String(h.pid);
+      /* Skip anyone we’re about to mark LOCKED from a logo-ring. */
+      if (hits.some(x => String(x.pid) === pid)) return;
+      state.openLockMarks[pid] = {
+        pts: h.pts != null && Number.isFinite(Number(h.pts)) ? Number(h.pts) : null,
+        source: 'ocr-open',
+        name: h.name,
+        slot: h.slot == null ? 'BN' : h.slot
+      };
+    });
     hits.forEach(h => {
       const pid = String(h.pid);
       const dist = state.lockByPid[pid]
@@ -2818,8 +2891,7 @@ function bindShotUi(){
     }
   });
   document.getElementById('shotClear').addEventListener('click', () => {
-    state.lockMarks = {};
-    saveLockMarks();
+    clearLockMarks();
     document.getElementById('shotPreview').hidden = true;
     document.getElementById('shotClear').hidden = true;
     document.getElementById('shotStatus').className = 'shot-status';
