@@ -324,7 +324,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261030-tip-order-bank';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261030-ocr-jabari';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -2140,6 +2140,11 @@ function matchupRosterPids(){
   return set;
 }
 
+/* Drop Jr/Sr/II/III… so “Jabari Smith Jr.” indexes as last=smith, not jr/smithjr. */
+function stripNameSuffix(s){
+  return String(s || '').replace(/\b(jr|sr|ii|iii|iv|v)\.?\s*$/i, '').trim();
+}
+
 function buildNameIndex(onlyPids){
   const allow = onlyPids || null;
   const idx = [];
@@ -2152,9 +2157,12 @@ function buildNameIndex(onlyPids){
     const name = playerName(p);
     const key = normalizeName(name);
     if (key.length < 4) return;
-    const last = normalizeName(p.last_name || name.split(' ').slice(-1)[0]);
-    const first = normalizeName(p.first_name || name.split(' ')[0] || '');
-    const abbr = first ? (first.charAt(0) + last) : '';
+    const rawLast = stripNameSuffix(p.last_name || '');
+    const nameParts = stripNameSuffix(name).split(/\s+/).filter(Boolean);
+    const last = normalizeName(rawLast || nameParts.slice(-1)[0] || '');
+    const first = normalizeName(p.first_name || nameParts[0] || '');
+    const abbr = first && last ? (first.charAt(0) + last) : '';
+    if (last.length < 3) return;
     idx.push({pid: id, name, key, last, abbr});
   });
   return idx;
@@ -2201,12 +2209,13 @@ function isTeamAbbrevToken(w){
 function matchPlayerOnLine(lnOrRaw, idx, opts){
   const options = opts || {};
   const strict = !!options.strict; /* exact / prefix only — no edit-distance */
-  const ln = normalizeName(lnOrRaw);
-  const soft = softNorm(lnOrRaw);
+  const ln = normalizeName(stripNameSuffix(lnOrRaw));
+  const soft = softNorm(stripNameSuffix(lnOrRaw));
   /* Strip ellipsis from Sleeper truncations: “Antetokou...” */
   const words = soft.split(/\s+/).map(w => w.replace(/\.+$/g, '')).filter(w => {
     if (w.length < 3) return false;
     if (isTeamAbbrevToken(w)) return false;
+    if (/^(jr|sr|ii|iii|iv)$/i.test(w)) return false;
     return true;
   });
   let best = null, bestScore = 99;
@@ -2214,7 +2223,8 @@ function matchPlayerOnLine(lnOrRaw, idx, opts){
     let score = 99;
     if (ln.indexOf(f.key) >= 0) score = 0;
     else if (f.abbr && f.abbr.length >= 4 && ln.indexOf(f.abbr) >= 0) score = 1;
-    else if (f.last.length >= 4 && ln.indexOf(f.last) >= 0) score = 2;
+    /* Exact last name — allow Fox (3) and Smith; never fuzzy 3-letter names. */
+    else if (f.last.length >= 3 && ln.indexOf(f.last) >= 0) score = 2;
     else if (!strict && f.last.length >= 4){
       words.forEach(w => {
         /* Long Sleeper names often truncate mid-lastname. */
@@ -2223,6 +2233,11 @@ function matchPlayerOnLine(lnOrRaw, idx, opts){
             score = Math.min(score, 2);
             return;
           }
+        }
+        /* “Smith” vs last “smithjr” before suffix strip — keep prefix hit. */
+        if (w.length >= 4 && f.last.indexOf(w) === 0){
+          score = Math.min(score, 2);
+          return;
         }
         /* Short last names (Bane) need a near-exact token — d≤2 made BKN→Bane. */
         const maxD = f.last.length <= 5 ? 1 : 2;
@@ -2259,7 +2274,7 @@ function matchPlayerAboveMark(mark, words, focusIdx, bothIdx){
   /* Pass 2: small joined window with tight fuzzy rules. */
   for (let n = 2; n <= Math.min(6, above.length); n++){
     const nearText = above.slice(0, n).map(w => w.t).join(' ');
-    if (/not\s*lock/i.test(nearText) || normalizeName(nearText).indexOf('notlock') >= 0) return null;
+    if (/not\s*lock/i.test(nearText) || normalizeName(nearText).indexOf('notlock') >= 0) continue;
     let match = matchPlayerOnLine(nearText, focusIdx);
     if (!match) match = matchPlayerOnLine(nearText, bothIdx);
     if (match) return match;
