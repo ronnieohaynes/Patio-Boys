@@ -296,7 +296,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-noslider';
+    || '20261030-freeze-bank';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -345,7 +345,7 @@ const state = {
   /* pid -> [{eventId, date, opp, fp}] scored box scores for played games. */
   gameFpByPid: {},
   /* Only green LOCKED nights — never inferred from “starter with points”. */
-  lockMarks: {}, /* pid -> {pts, source:'ocr', name, slot} — OCR screenshot only */
+  lockMarks: {}, /* pid -> {pts, source:'ocr', name, slot, bankAtLock} — OCR only */
   tesseractLoading: null
 };
 
@@ -1068,18 +1068,10 @@ function sidePlayerRows(side){
   });
 
   const opts = bankOptsForSide(distList, lockedScores);
+  let freezeDirty = false;
   rows.forEach(r => {
     if (!r.dist || !window.LockInDist || typeof LockInDist.lockBankPlan !== 'function'){
       r.bank = null;
-      return;
-    }
-    if (r.locked){
-      r.bank = {
-        mark: Math.round(r.lockPts != null ? r.lockPts : r.pts),
-        rate: 1,
-        why: 'Green LOCKED into ' + (r.slotLabel || 'slot'),
-        style: 'locked'
-      };
       return;
     }
     const playerOpts = Object.assign({}, opts, {
@@ -1091,8 +1083,34 @@ function sidePlayerRows(side){
         : ((r.scout && r.scout.slate) || []).length,
       injury: r.scout && r.scout.injury
     });
-    r.bank = LockInDist.lockBankPlan(r.dist, playerOpts);
+    const plan = LockInDist.lockBankPlan(r.dist, playerOpts);
+    if (r.locked){
+      /* Bank stays the threshold from lock time — never rewrite it to lockPts. */
+      const mark = state.lockMarks && state.lockMarks[r.pid];
+      let frozen = mark && mark.bankAtLock != null ? Number(mark.bankAtLock) : null;
+      if (!(frozen != null && Number.isFinite(frozen))){
+        frozen = plan && plan.mark != null ? Number(plan.mark) : null;
+        if (frozen != null && Number.isFinite(frozen) && mark){
+          mark.bankAtLock = Math.round(frozen);
+          freezeDirty = true;
+        }
+      }
+      const frozenMark = frozen != null && Number.isFinite(frozen) ? Math.round(frozen) : null;
+      r.bank = {
+        mark: frozenMark,
+        rate: plan && plan.rate != null ? plan.rate : 1,
+        why: (frozenMark != null
+          ? ('Bank ≥' + frozenMark + ' frozen at lock')
+          : 'Green LOCKED')
+          + ' · ' + (r.slotLabel || 'slot'),
+        style: 'locked',
+        frozen: frozenMark != null
+      };
+      return;
+    }
+    r.bank = plan;
   });
+  if (freezeDirty) saveLockMarks();
 
   const pack = {
     rows,
@@ -1847,7 +1865,7 @@ function render(){
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Under each name: locked players show only the screenshot chip; unlocked show last score, next tip, and games left. '
     + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points, and never manual edits here. '
-    + 'Bank column lists Avg, today’s Bank ≥, and Lock (screenshot chip or last scored night). '
+    + 'Bank column lists Avg, Bank ≥ (frozen at lock time for LOCKED nights), and Lock (screenshot chip or last scored night). '
     + 'Lock color: red below Avg, yellow between Avg and Bank, green at/above Bank. '
     + 'Rec suggests Lock / tip-order Switch / Wait for what to do in Sleeper — this screen does not move players.';
 }
@@ -2699,11 +2717,35 @@ async function runOcrOnImage(file){
       await worker.terminate();
     }
     hits.forEach(h => {
-      state.lockMarks[h.pid] = {
+      const pid = String(h.pid);
+      const dist = state.lockByPid[pid]
+        ? Object.assign({pid: pid}, state.lockByPid[pid])
+        : null;
+      const scout = scoutPlayer(pid, dist);
+      let bankAtLock = null;
+      if (dist && window.LockInDist && typeof LockInDist.lockBankPlan === 'function'){
+        const plan = LockInDist.lockBankPlan(dist, {
+          week: state.week,
+          seasonWeeks: Number(state.league && state.league.settings
+            && state.league.settings.playoff_week_start) > 1
+            ? Number(state.league.settings.playoff_week_start) - 1
+            : 21,
+          slots: (window.LockInDist && LockInDist.LOCK_SLOTS) || 10,
+          dow: (new Date()).getDay(),
+          gamesLeft: scout && scout.gamesLeft,
+          gamesThisWeek: scout && scout.gamesThisWeek,
+          injury: scout && scout.injury
+        });
+        if (plan && plan.mark != null && Number.isFinite(Number(plan.mark))){
+          bankAtLock = Math.round(Number(plan.mark));
+        }
+      }
+      state.lockMarks[pid] = {
         pts: h.pts,
         source: 'ocr',
         name: h.name,
-        slot: h.slot == null ? 'BN' : h.slot
+        slot: h.slot == null ? 'BN' : h.slot,
+        bankAtLock: bankAtLock
       };
     });
     saveLockMarks();

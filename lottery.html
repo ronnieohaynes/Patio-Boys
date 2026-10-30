@@ -2378,7 +2378,7 @@ const HQ_NAV = {
     defaultTab: 'matchup',
     hideSecondary: true,
     tabs: {
-      matchup: { panel: 'tabMatchup', btn: 'tabBtnMatchup', frame: 'matchupsFrame', src: 'matchups.html?embed=1&v=20261030-noslider', loaded: 'matchupFrameLoaded' }
+      matchup: { panel: 'tabMatchup', btn: 'tabBtnMatchup', frame: 'matchupsFrame', src: 'matchups.html?embed=1&v=20261030-freeze-bank', loaded: 'matchupFrameLoaded' }
     }
   },
   league: {
@@ -2866,7 +2866,7 @@ function flashNavButton(btn){
 }
 
 /* Stamp iframe URLs so Refresh / nocache also busts nested script caches. */
-const HQ_BUILD = '20261030-noslider';
+const HQ_BUILD = '20261030-freeze-bank';
 function hqCacheToken(){
   return new URLSearchParams(location.search).get('nocache') || '';
 }
