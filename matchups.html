@@ -296,7 +296,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-lock-pos-first';
+    || '20261030-lock-pg-c';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1234,8 +1234,13 @@ function isUtilSlotLabel(lab){
   return String(lab || '').toUpperCase() === 'UTIL';
 }
 
-/* Where Rec should bank this player: keep a real position slot they’re already in,
-   otherwise pick the best open position (PG…F) before falling back to UTIL. */
+function isPrimaryPosSlotLabel(lab){
+  const s = String(lab || '').toUpperCase();
+  return s === 'PG' || s === 'SG' || s === 'SF' || s === 'PF' || s === 'C';
+}
+
+/* Where Rec should bank this player: keep a PG–C slot they’re already in,
+   otherwise pick the best open PG–C, then G/F, then UTIL last. */
 function lockSlotForPlayer(r, openSlots){
   const open = openSlots || [];
   const currentSlot = (r && r.slot != null && r.slot !== 'BN')
@@ -1244,11 +1249,11 @@ function lockSlotForPlayer(r, openSlots){
   const currentOpen = currentSlot
     && open.some(s => s.index === currentSlot.index)
     && fitsLockSlot(r.p, currentSlot.label);
-  /* Already in an open position slot (not UTIL) — lock there. */
-  if (currentOpen && !isUtilSlotLabel(currentSlot.label)) return currentSlot;
+  /* Already in an open PG–C slot — lock there. */
+  if (currentOpen && isPrimaryPosSlotLabel(currentSlot.label)) return currentSlot;
   const preferred = preferSlotForPlayer(r && r.p, open);
   if (preferred) return preferred;
-  /* Last resort: their current UTIL if that’s all that’s left. */
+  /* Last resort: their current G/F/UTIL if that’s all that’s left. */
   if (currentOpen) return currentSlot;
   return null;
 }
@@ -1949,7 +1954,7 @@ function render(){
     + 'A transparent slash through a schedule logo means they weren’t in the starting lineup that night and that game can’t be locked. '
     + 'Bank column lists Avg, Bank ≥ (frozen at lock time for LOCKED nights), and Lock (screenshot chip only). '
     + 'Lock color: red below Avg, yellow between Avg and Bank, green at/above Bank. '
-    + 'Rec Lock prefers real position slots (PG–F) before UTIL — UTIL is locked last. '
+    + 'Rec Lock prefers real position slots (PG–C) before UTIL — UTIL is locked last. '
     + 'Rec also suggests tip-order Switch / Wait for what to do in Sleeper — this screen does not move players.';
 }
 
