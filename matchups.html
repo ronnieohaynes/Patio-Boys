@@ -324,7 +324,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261030-ocr-jabari';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261030-refresh-reset';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -433,6 +433,25 @@ function loadLockMarks(){
 function saveLockMarks(){
   try { localStorage.setItem(lockStorageKey(), JSON.stringify(state.lockMarks || {})); }
   catch (e){ /* ignore quota */ }
+}
+function clearLockMarks(){
+  state.lockMarks = {};
+  try { localStorage.removeItem(lockStorageKey()); }
+  catch (e){ /* ignore */ }
+}
+function clearShotUi(){
+  const preview = document.getElementById('shotPreview');
+  const clearBtn = document.getElementById('shotClear');
+  const status = document.getElementById('shotStatus');
+  if (preview){
+    preview.hidden = true;
+    preview.removeAttribute('src');
+  }
+  if (clearBtn) clearBtn.hidden = true;
+  if (status){
+    status.className = 'shot-status';
+    status.innerHTML = 'Upload a Sleeper matchup screenshot. <strong>Locked</strong> scores come only from the chip next to a logo + small closed lock — never from Sleeper/ESPN API points. <strong>LOCK-IN</strong> button = scored night still open to bank before tip.';
+  }
 }
 
 function normalizeName(name){
@@ -1941,17 +1960,26 @@ async function loadMatchups(week, opts){
      posts pb-progress which unhides the parent overlay at 100% (pct never drops)
      and nothing called signalReady again, so Refresh slate froze forever. */
   const quiet = !!options.quiet;
+  /* Refresh slate: drop OCR/manual lock marks + shot UI so local edits don't stick. */
+  const resetLocal = !!options.resetLocal;
   if (!quiet) progress(55, 'Loading matchups…');
   const status = document.getElementById('status');
   if (quiet && status){
     status.classList.remove('error');
-    status.textContent = 'Refreshing week ' + week + '…';
+    status.textContent = resetLocal
+      ? ('Refreshing week ' + week + ' · clearing local locks…')
+      : ('Refreshing week ' + week + '…');
   }
   try {
     const rows = await fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/matchups/' + week)
       .then(r => r.ok ? r.json() : []).catch(() => []);
     state.week = week;
-    loadLockMarks();
+    if (resetLocal){
+      clearLockMarks();
+      clearShotUi();
+    } else {
+      loadLockMarks();
+    }
     state.matchups = rows || [];
     const franchisesByRoster = {};
     state.rosters.forEach(r => {
@@ -2931,7 +2959,7 @@ async function load(){
       render();
     });
     document.getElementById('refreshBtn').addEventListener('click', () => {
-      loadMatchups(state.week, {quiet: true});
+      loadMatchups(state.week, {quiet: true, resetLocal: true});
     });
     bindShotUi();
 
