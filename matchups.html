@@ -265,7 +265,7 @@
         <label for="focusTeam">Focus team</label>
         <select id="focusTeam"></select>
       </div>
-      <button type="button" class="btn" id="refreshBtn">Refresh slate</button>
+      <button type="button" class="btn" id="refreshBtn" title="Reload Sleeper lineups/matchups — keeps screenshot locks">Refresh slate</button>
     </div>
 
     <div class="slate" id="slate"></div>
@@ -296,7 +296,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-freeze-bank';
+    || '20261030-refresh-lineups';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1876,26 +1876,35 @@ async function loadMatchups(week, opts){
      posts pb-progress which unhides the parent overlay at 100% (pct never drops)
      and nothing called signalReady again, so Refresh slate froze forever. */
   const quiet = !!options.quiet;
-  /* Refresh slate: drop OCR/manual lock marks + shot UI so local edits don't stick. */
-  const resetLocal = !!options.resetLocal;
+  /* Refresh slate: re-pull Sleeper lineups/matchups — never touch OCR lock status. */
+  const refreshLineups = !!options.refreshLineups;
   if (!quiet) progress(55, 'Loading matchups…');
   const status = document.getElementById('status');
   if (quiet && status){
     status.classList.remove('error');
-    status.textContent = resetLocal
-      ? ('Refreshing week ' + week + ' · clearing local locks…')
+    status.textContent = refreshLineups
+      ? ('Refreshing week ' + week + ' · syncing Sleeper lineups…')
       : ('Refreshing week ' + week + '…');
   }
   try {
-    const rows = await fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/matchups/' + week)
-      .then(r => r.ok ? r.json() : []).catch(() => []);
-    state.week = week;
-    if (resetLocal){
-      clearLockMarks();
-      clearShotUi();
-    } else {
-      loadLockMarks();
+    const fetchJobs = [
+      fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/matchups/' + week)
+        .then(r => r.ok ? r.json() : []).catch(() => [])
+    ];
+    if (refreshLineups){
+      fetchJobs.push(
+        fetch('https://api.sleeper.app/v1/league/' + LEAGUE_ID + '/rosters')
+          .then(r => r.ok ? r.json() : null).catch(() => null)
+      );
     }
+    const fetched = await Promise.all(fetchJobs);
+    const rows = fetched[0];
+    if (refreshLineups && Array.isArray(fetched[1])){
+      state.rosters = fetched[1];
+    }
+    state.week = week;
+    /* Always keep screenshot lock marks — Refresh only updates lineup slots. */
+    loadLockMarks();
     state.matchups = rows || [];
     const franchisesByRoster = {};
     state.rosters.forEach(r => {
@@ -2899,7 +2908,7 @@ async function load(){
       render();
     });
     document.getElementById('refreshBtn').addEventListener('click', () => {
-      loadMatchups(state.week, {quiet: true, resetLocal: true});
+      loadMatchups(state.week, {quiet: true, refreshLineups: true});
     });
     bindShotUi();
 
