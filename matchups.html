@@ -296,7 +296,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-refresh-lineups';
+    || '20261030-bank-band10';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1249,10 +1249,29 @@ function nextTipMs(scout){
   return fromTip(row.tipIso, row.date);
 }
 
+/* Lock Rec fires at/above Bank, or within 10% under (soft band). */
+const BANK_NEAR_FRAC = 0.9;
+function bankClearMark(bank){
+  const b = Number(bank);
+  if (!Number.isFinite(b) || b <= 0) return null;
+  return b * BANK_NEAR_FRAC;
+}
+function clearsBankBand(scored, bank){
+  const s = Number(scored);
+  const floor = bankClearMark(bank);
+  return Number.isFinite(s) && floor != null && s + 1e-9 >= floor;
+}
+function bankLockReason(scored, bank){
+  const s = Number(scored);
+  const b = Number(bank);
+  if (!Number.isFinite(s) || !Number.isFinite(b)) return formatFp(scored) + ' vs Bank ' + bank;
+  if (s + 1e-9 >= b) return formatFp(s) + ' ≥ Bank ' + b;
+  return formatFp(s) + ' within 10% of Bank ' + b + ' (band ≥' + formatFp(bankClearMark(b)) + ')';
+}
 function isBankableNow(r){
   const scored = latestScoredFp(r);
   const bank = r && r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
-  return scored != null && bank != null && scored + 1e-9 >= bank;
+  return clearsBankBand(scored, bank);
 }
 
 function isBenchRow(r){
@@ -1361,8 +1380,8 @@ function benchSwitchInOver(r, pack){
     } else if (myMean > theirMean + 4){
       why = 'higher Avg';
       score = (myMean - theirMean) * 10;
-    } else if (myScored != null && myBank != null && myScored + 1e-9 >= myBank
-      && (theirScored == null || theirScored + 1e-9 < (o.bank && o.bank.mark != null ? Number(o.bank.mark) : myBank))){
+    } else if (clearsBankBand(myScored, myBank)
+      && !clearsBankBand(theirScored, o.bank && o.bank.mark != null ? Number(o.bank.mark) : myBank)){
       why = formatFp(myScored) + ' bankable vs their night';
       score = 50 + myScored;
     } else if (myScored != null && theirScored != null && myScored > theirScored + 8
@@ -1440,11 +1459,11 @@ function buildRec(r, pack){
         cls: 'rec-switch'
       };
     }
-    if (scored != null && bank != null && scored + 1e-9 >= bank && slot){
+    if (clearsBankBand(scored, bank) && slot){
       return {
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: formatFp(scored) + ' ≥ Bank ' + bank + ' · move off BN',
+        reason: bankLockReason(scored, bank) + ' · move off BN',
         cls: 'rec-lock'
       };
     }
@@ -1485,20 +1504,20 @@ function buildRec(r, pack){
     return {action: 'sit', label: 'Sit', reason: 'ruled ' + tag, cls: 'rec-sit'};
   }
 
-  /* Bankable night in a start slot — lock before anything else. */
-  if (scored != null && bank != null && scored + 1e-9 >= bank){
+  /* Bankable night in a start slot — Lock at Bank or within 10% under. */
+  if (clearsBankBand(scored, bank)){
     if (slot){
       return {
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: formatFp(scored) + ' ≥ Bank ' + bank,
+        reason: bankLockReason(scored, bank),
         cls: 'rec-lock'
       };
     }
     return {
       action: 'lock',
       label: 'Lock',
-      reason: formatFp(scored) + ' ≥ Bank ' + bank + ' · no open slot',
+      reason: bankLockReason(scored, bank) + ' · no open slot',
       cls: 'rec-lock'
     };
   }
@@ -1511,7 +1530,7 @@ function buildRec(r, pack){
     const inName = shortPlayerName(tipAlt.row.p);
     const inTip = nextGameLabel(tipAlt.row.scout);
     const bits = [];
-    if (scored != null && bank != null) bits.push(formatFp(scored) + ' < Bank ' + bank);
+    if (scored != null && bank != null) bits.push(formatFp(scored) + ' < 90% of Bank ' + bank);
     bits.push('free slot until ' + (nextLbl || 'later'));
     bits.push('start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first');
     return {
@@ -1522,7 +1541,7 @@ function buildRec(r, pack){
     };
   }
 
-  if (scored != null && bank != null && scored < bank){
+  if (scored != null && bank != null && !clearsBankBand(scored, bank)){
     const alt = betterSwitchTarget(r, pack);
     const myMean = r.dist && Number(r.dist.mean) || 0;
     const altMean = alt && alt.row && alt.row.dist && Number(alt.row.dist.mean) || 0;
@@ -1530,7 +1549,7 @@ function buildRec(r, pack){
       return {
         action: 'switch',
         label: switchOutLabel(alt),
-        reason: formatFp(scored) + ' < Bank ' + bank
+        reason: formatFp(scored) + ' < 90% of Bank ' + bank
           + (alt.into ? (' · ' + alt.into + '-eligible') : ''),
         cls: 'rec-switch'
       };
@@ -1539,7 +1558,7 @@ function buildRec(r, pack){
       return {
         action: 'wait',
         label: 'Wait',
-        reason: formatFp(scored) + ' < ' + bank
+        reason: formatFp(scored) + ' < 90% of ' + bank
           + (nextLbl ? (' · next ' + nextLbl) : (' · ' + gamesLeft + ' left')),
         cls: 'rec-wait'
       };
@@ -1547,7 +1566,7 @@ function buildRec(r, pack){
     return {
       action: 'sit',
       label: 'Pass',
-      reason: formatFp(scored) + ' below Bank ' + bank + ' · no games left',
+      reason: formatFp(scored) + ' below 90% of Bank ' + bank + ' · no games left',
       cls: 'rec-sit'
     };
   }
@@ -1572,7 +1591,7 @@ function buildRec(r, pack){
   if (scored != null){
     return {
       action: 'sit',
-      label: bank != null && scored < bank ? 'Pass' : '—',
+      label: bank != null && !clearsBankBand(scored, bank) ? 'Pass' : '—',
       reason: 'No games left this window',
       cls: 'rec-sit'
     };
@@ -1723,12 +1742,12 @@ function slateHtml(r){
   return chips.length ? ('<div class="slate">' + chips.join('') + '</div>') : '';
 }
 
-/* Lock score vs Avg / Bank: red < Avg, yellow Avg..Bank, green ≥ Bank. */
+/* Lock score vs Avg / Bank: red < Avg, yellow Avg..(Bank−10%), green within 10% of Bank or above. */
 function lockGradeClass(lockN, avgN, bankN){
   if (lockN == null || !Number.isFinite(lockN)) return 'lock-muted';
   if (avgN != null && Number.isFinite(avgN) && lockN + 1e-9 < avgN) return 'lock-red';
+  if (clearsBankBand(lockN, bankN)) return 'lock-green';
   if (bankN != null && Number.isFinite(bankN) && lockN + 1e-9 < bankN) return 'lock-yellow';
-  if (bankN != null && Number.isFinite(bankN) && lockN + 1e-9 >= bankN) return 'lock-green';
   /* No bank bar — treat Avg+ as yellow, else muted. */
   if (avgN != null && Number.isFinite(avgN) && lockN + 1e-9 >= avgN) return 'lock-yellow';
   return 'lock-muted';
@@ -1866,7 +1885,7 @@ function render(){
     + 'Under each name: locked players show only the screenshot chip; unlocked show last score, next tip, and games left. '
     + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points, and never manual edits here. '
     + 'Bank column lists Avg, Bank ≥ (frozen at lock time for LOCKED nights), and Lock (screenshot chip or last scored night). '
-    + 'Lock color: red below Avg, yellow between Avg and Bank, green at/above Bank. '
+    + 'Lock Rec / green grade: at Bank or within 10% under (band ≥ 90% of Bank). Red below Avg; yellow Avg..(band). '
     + 'Rec suggests Lock / tip-order Switch / Wait for what to do in Sleeper — this screen does not move players.';
 }
 
