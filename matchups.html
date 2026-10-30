@@ -304,7 +304,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-lock-clock';
+    || '20261030-tip-opportunity';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1602,15 +1602,61 @@ function betterSwitchTarget(r, pack){
   return {row: best, into: slotLabel, kind: 'avg'};
 }
 
+/* Keep a starter’s tip opportunity open until tip + short watch window.
+   Don’t yank them for a later higher-Avg bench night before we see if
+   their score banks — that burns opportunity cost (e.g. Matas 4:30 → wait
+   ~4:55 before subbing Harden/LaMelo who tip after). */
+const STARTER_TIP_WATCH_MS = 25 * 60 * 1000;
+
+function starterTipOpportunityOpen(starter, nowMs){
+  if (!starter || isImmovable(starter)) return true;
+  if (isBankableNow(starter)) return true;
+  const now = nowMs != null ? Number(nowMs) : Date.now();
+  const scored = latestLockableFp(starter);
+  const bank = starter.bank && starter.bank.mark != null ? Number(starter.bank.mark) : null;
+  /* Scored night already missed Bank — opportunity decided, slot free. */
+  if (scored != null && bank != null && scored + 1e-9 < bank) return false;
+  const tip = nextTipMs(starter.scout);
+  if (tip == null) return false;
+  /* Before tip, and for ~25m after tip while the night settles, keep them. */
+  return now < tip + STARTER_TIP_WATCH_MS;
+}
+
+function laterBenchBehindStarter(starter, pack, nowMs){
+  if (!starter || !pack) return null;
+  const tip = nextTipMs(starter.scout);
+  if (tip == null) return null;
+  const slotLabel = starter.slotLabel && starter.slotLabel !== 'BN'
+    ? String(starter.slotLabel).toUpperCase() : null;
+  if (!slotLabel) return null;
+  const myMean = starter.dist && Number(starter.dist.mean) || 0;
+  const cands = (pack.rows || []).filter(o => {
+    if (!o || o.pid === starter.pid || isImmovable(o) || !isBenchRow(o)) return false;
+    const inj = o.scout && o.scout.injury;
+    if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
+    if (inj === 'DTD' || inj === 'Q' || inj === 'QUESTIONABLE') return false;
+    if (!fitsLockSlot(o.p, slotLabel)) return false;
+    const theirTip = nextTipMs(o.scout);
+    if (theirTip == null || theirTip <= tip) return false;
+    const mean = o.dist && Number(o.dist.mean) || 0;
+    return mean > myMean + 4;
+  }).sort((a, b) => (Number(b.dist && b.dist.mean) || 0) - (Number(a.dist && a.dist.mean) || 0));
+  return cands[0] || null;
+}
+
 /* Bench player → starter they should replace (slot they fit).
    Locked starters cannot be moved — never “In · over” them.
-   Tip order: if starter isn’t banking and you tip sooner, take the slot. */
+   Tip order: if starter isn’t banking and you tip sooner, take the slot.
+   Higher Avg / later tip: only after the starter’s tip opportunity closes. */
 function benchSwitchInOver(r, pack){
+  const nowMs = Date.now();
   const myMean = r.dist && Number(r.dist.mean) || 0;
   const myLockable = latestLockableFp(r);
   const myScored = latestScoredFp(r);
   const myBank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   const myNext = nextTipMs(r.scout);
+  const myInj = r.scout && r.scout.injury;
+  const myQ = myInj === 'DTD' || myInj === 'Q' || myInj === 'QUESTIONABLE';
   const cands = [];
   (pack.rows || []).forEach(o => {
     if (!o || o.pid === r.pid || isImmovable(o) || isBenchRow(o)) return;
@@ -1621,6 +1667,7 @@ function benchSwitchInOver(r, pack){
     const theirLockable = latestLockableFp(o);
     const theirScored = latestScoredFp(o);
     const theirNext = nextTipMs(o.scout);
+    const oppOpen = starterTipOpportunityOpen(o, nowMs);
     let why = null;
     let score = 0;
     if (theirInj === 'OUT' || theirInj === 'O' || theirInj === 'IR'){
@@ -1628,17 +1675,25 @@ function benchSwitchInOver(r, pack){
       score = 1000 + myMean;
     } else if (myNext != null && theirNext != null && myNext < theirNext && !isBankableNow(o)){
       /* Free a non-lock night for an earlier tip — Avg can be lower. */
-      const theirLbl = nextGameLabel(o.scout) || 'later tip';
+      const theirLbl = nextGamePhrase(o.scout, nowMs) || nextGameLabel(o.scout) || 'later tip';
       why = 'earlier tip before their ' + theirLbl;
       score = 800 + Math.max(0, (theirNext - myNext) / 3600000);
-    } else if (myMean > theirMean + 4){
-      why = 'higher Avg';
+    } else if (!oppOpen && !myQ && myMean > theirMean + 4){
+      /* Later / higher-Avg only after starter’s tip window — don’t burn Matas’s night. */
+      const decideBy = theirNext != null
+        ? formatTipLabel(
+            (o.scout && o.scout.nextGame && o.scout.nextGame.tipIso) || null,
+            o.scout && o.scout.nextGame && o.scout.nextGame.date
+          )
+        : null;
+      why = 'higher Avg'
+        + (decideBy ? (' · after their ' + decideBy + ' window') : ' · their tip window closed');
       score = (myMean - theirMean) * 10;
-    } else if (myLockable != null && myBank != null && myLockable + 1e-9 >= myBank
+    } else if (!oppOpen && myLockable != null && myBank != null && myLockable + 1e-9 >= myBank
       && (theirLockable == null || theirLockable + 1e-9 < (o.bank && o.bank.mark != null ? Number(o.bank.mark) : myBank))){
       why = formatFp(myLockable) + ' bankable vs their night';
       score = 50 + myLockable;
-    } else if (myScored != null && theirScored != null && myScored > theirScored + 8
+    } else if (!oppOpen && myScored != null && theirScored != null && myScored > theirScored + 8
       && myMean >= theirMean - 2){
       why = formatFp(myScored) + ' > ' + formatFp(theirScored) + ' tonight';
       score = myScored - theirScored;
@@ -1739,12 +1794,37 @@ function buildRec(r, pack){
       };
     }
     if (gamesLeft > 0){
+      /* Higher-Avg path blocked while a starter tip is still open — explain wait. */
+      let holdBit = nextPhrase ? (' · ' + nextPhrase) : '';
+      const myMeanNow = r.dist && Number(r.dist.mean) || 0;
+      const blocked = (pack.rows || []).filter(o => {
+        if (!o || isBenchRow(o) || isImmovable(o)) return false;
+        if (!starterTipOpportunityOpen(o, nowMs)) return false;
+        const into = o.slotLabel && o.slotLabel !== 'BN' ? String(o.slotLabel).toUpperCase() : null;
+        if (!into || !fitsLockSlot(r.p, into)) return false;
+        const theirTip = nextTipMs(o.scout);
+        const myTip = nextTipMs(r.scout);
+        /* Only the later higher-Avg case (not earlier-tip, which still Switch). */
+        if (myTip != null && theirTip != null && myTip < theirTip) return false;
+        const theirMean = o.dist && Number(o.dist.mean) || 0;
+        return myMeanNow > theirMean + 4;
+      }).sort((a, b) => (nextTipMs(a.scout) || 0) - (nextTipMs(b.scout) || 0));
+      if (blocked.length && !myQ){
+        const hold = blocked[0];
+        const tip = nextTipMs(hold.scout);
+        const decideLbl = tip != null ? formatClockParts(new Date(tip + STARTER_TIP_WATCH_MS)) : null;
+        const starterLbl = nextGamePhrase(hold.scout, nowMs) || nextGameLabel(hold.scout);
+        holdBit = ' · wait out '
+          + shortPlayerName(hold.p)
+          + (starterLbl ? (' ' + starterLbl) : '')
+          + (decideLbl ? (' · recheck ~' + decideLbl.time) : '');
+      }
       return {
         action: 'wait',
         label: 'Wait',
         reason: 'Bench'
           + (bank != null ? (' · Bank ≥' + bank) : '')
-          + (nextPhrase ? (' · ' + nextPhrase) : ''),
+          + holdBit,
         cls: 'rec-wait'
       };
     }
@@ -1859,6 +1939,16 @@ function buildRec(r, pack){
     if (bank != null) bits.push('Bank ≥' + bank);
     if (nextPhrase) bits.push('hold for ' + nextPhrase);
     else bits.push(gamesLeft + ' game' + (gamesLeft > 1 ? 's' : '') + ' left');
+    /* If a later higher-Avg bench exists, say so — don’t Switch them in yet. */
+    if (starterTipOpportunityOpen(r, nowMs)){
+      const later = laterBenchBehindStarter(r, pack, nowMs);
+      if (later){
+        const laterTip = nextGamePhrase(later.scout, nowMs) || nextGameLabel(later.scout);
+        bits.push('see night before subbing '
+          + shortPlayerName(later.p)
+          + (laterTip ? (' (' + laterTip + ')') : ''));
+      }
+    }
     if (dayHint && !nextPhrase) bits.push(dayHint);
     return {action: 'wait', label: 'Wait', reason: bits.join(' · '), cls: 'rec-wait'};
   }
@@ -2212,6 +2302,7 @@ function render(){
     + 'Under each name: locked players show the lock chip; unlocked show last score, next tip, and games left. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
+    + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
     + 'Locks come from screenshots (locked chip or LOCK-IN) or manual override — never Sleeper/ESPN API week points. '
     + 'A transparent slash through a schedule logo means they weren’t in the starting lineup that night and that game can’t be locked. '
     + 'Bank column lists Avg, Bank ≥ (frozen at lock time), and Lock. '
