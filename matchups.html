@@ -155,60 +155,27 @@
   }
   td.num{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;color:var(--gold)}
   td.num.lock-score{color:#fff}
-  /* Bank 0–65 sliding scale: Avg + Today's Bank on one track. */
-  td.bank-cell{min-width:11rem;width:42%;padding-top:10px;padding-bottom:10px}
-  .bank-scale{
-    position:relative;width:100%;height:2.55rem;
+  /* Bank stack: Avg / Bank / Lock — Lock tinted vs Avg+Bank. */
+  td.bank-cell{min-width:6.5rem;padding-top:6px;padding-bottom:6px;vertical-align:middle}
+  .bank-stack{
+    display:flex;flex-direction:column;gap:2px;
     font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;
+    line-height:1.2;
   }
-  .bank-scale .ends{
-    position:absolute;left:0;right:0;top:0;
-    display:flex;justify-content:space-between;
-    font-size:9px;font-weight:500;color:var(--ink-dim);letter-spacing:.04em;
-    line-height:1;pointer-events:none;
+  .bank-stack .row{
+    display:flex;justify-content:space-between;align-items:baseline;gap:8px;
   }
-  .bank-scale .track{
-    position:absolute;left:0;right:0;top:1.15rem;height:6px;
-    border-radius:999px;
-    background:
-      linear-gradient(90deg,
-        color-mix(in srgb, var(--ink-dim) 18%, transparent) 0%,
-        color-mix(in srgb, var(--gold) 28%, var(--surface-2)) 100%);
-    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--hairline) 90%, transparent);
+  .bank-stack .k{
+    font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--ink-dim);
   }
-  .bank-scale .fill{
-    position:absolute;left:0;top:0;bottom:0;border-radius:999px;
-    background:color-mix(in srgb, var(--gold) 55%, transparent);
-    max-width:100%;
-  }
-  .bank-scale .mark{
-    position:absolute;top:1.15rem;transform:translate(-50%,-50%);
-    z-index:2;pointer-events:none;
-  }
-  .bank-scale .mark .tick{
-    display:block;width:2px;height:14px;margin:0 auto;border-radius:1px;
-    background:var(--ink-dim);
-  }
-  .bank-scale .mark.bank .tick{
-    width:3px;height:16px;background:var(--gold);
-    box-shadow:0 0 0 1px color-mix(in srgb, var(--gold) 35%, transparent);
-  }
-  .bank-scale .mark.locked .tick{
-    background:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.35);
-  }
-  .bank-scale .mark .lbl{
-    position:absolute;left:50%;bottom:calc(100% + 3px);transform:translateX(-50%);
-    white-space:nowrap;font-size:9px;font-weight:600;letter-spacing:.02em;
-    color:var(--ink-dim);line-height:1;
-  }
-  .bank-scale .mark.bank .lbl{color:var(--gold)}
-  .bank-scale .mark.locked .lbl{color:#fff}
-  .bank-scale .mark.avg .lbl{color:#A8B0C0}
-  .bank-scale .mark.edge-left .lbl{transform:translateX(0);left:0}
-  .bank-scale .mark.edge-right .lbl{transform:translateX(-100%);left:0}
-  .bank-scale .empty{
-    font-size:11px;color:var(--ink-dim);padding-top:8px;
-  }
+  .bank-stack .v{font-size:12px;font-weight:600;color:var(--ink)}
+  .bank-stack .row.avg .v{color:#A8B0C0}
+  .bank-stack .row.bank .v{color:var(--gold)}
+  .bank-stack .row.lock .v.lock-red{color:var(--coral)}
+  .bank-stack .row.lock .v.lock-yellow{color:var(--gold)}
+  .bank-stack .row.lock .v.lock-green{color:var(--green)}
+  .bank-stack .row.lock .v.lock-muted{color:var(--ink-dim);font-weight:500}
   td.lean.smash{color:var(--green);font-weight:600}
   td.lean.bust{color:var(--coral);font-weight:600}
   td.rec{font-size:12px;line-height:1.35;min-width:7.5rem}
@@ -324,7 +291,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261030-ocr-readonly';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261030-bank-stack';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1732,61 +1699,42 @@ function slateHtml(r){
   return chips.length ? ('<div class="slate">' + chips.join('') + '</div>') : '';
 }
 
-/* Visual Bank track: 0 ←――――――――→ 65 with Avg + Today's Bank markers. */
-const BANK_SCALE_MAX = 65;
-function bankScalePct(v){
-  const n = Number(v);
-  if (!Number.isFinite(n)) return null;
-  return Math.max(0, Math.min(100, (n / BANK_SCALE_MAX) * 100));
+/* Lock score vs Avg / Bank: red < Avg, yellow Avg..Bank, green ≥ Bank. */
+function lockGradeClass(lockN, avgN, bankN){
+  if (lockN == null || !Number.isFinite(lockN)) return 'lock-muted';
+  if (avgN != null && Number.isFinite(avgN) && lockN + 1e-9 < avgN) return 'lock-red';
+  if (bankN != null && Number.isFinite(bankN) && lockN + 1e-9 < bankN) return 'lock-yellow';
+  if (bankN != null && Number.isFinite(bankN) && lockN + 1e-9 >= bankN) return 'lock-green';
+  /* No bank bar — treat Avg+ as yellow, else muted. */
+  if (avgN != null && Number.isFinite(avgN) && lockN + 1e-9 >= avgN) return 'lock-yellow';
+  return 'lock-muted';
 }
-function bankScaleMarkHtml(kind, value, pct){
-  if (pct == null) return '';
-  const edge = pct <= 8 ? ' edge-left' : (pct >= 92 ? ' edge-right' : '');
-  const prefix = kind === 'avg' ? 'Avg ' : (kind === 'locked' ? 'Locked ' : 'Bank ');
-  return '<span class="mark ' + kind + edge + '" style="left:' + pct.toFixed(2) + '%">'
-    + '<span class="lbl">' + prefix + escapeHtml(formatFp(value)) + '</span>'
-    + '<span class="tick"></span>'
-    + '</span>';
-}
-function bankScaleHtml(r){
+
+function bankStackHtml(r){
   const avgN = r.dist && r.dist.mean != null ? Number(r.dist.mean) : null;
   const bankN = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
-  const title = (r.bank && r.bank.why) || 'Bank scale 0–' + BANK_SCALE_MAX;
-  if (avgN == null && bankN == null){
-    return '<td class="bank-cell" title="' + escapeHtml(title) + '">'
-      + '<div class="bank-scale"><div class="empty">—</div></div></td>';
-  }
-  const avgPct = bankScalePct(avgN);
-  const bankPct = bankScalePct(bankN);
-  const bankKind = r.locked ? 'locked' : 'bank';
-  let fillStyle = 'width:0';
-  if (avgPct != null && bankPct != null){
-    const lo = Math.min(avgPct, bankPct);
-    const hi = Math.max(avgPct, bankPct);
-    fillStyle = 'left:' + lo.toFixed(2) + '%;width:' + Math.max(1.5, hi - lo).toFixed(2) + '%';
+  /* Lock row = screenshot banked chip, else last scored night still open. */
+  let lockN = null;
+  if (r.locked && r.lockPts != null && Number.isFinite(Number(r.lockPts))){
+    lockN = Number(r.lockPts);
   } else {
-    const alone = bankPct != null ? bankPct : avgPct;
-    fillStyle = 'width:' + (alone != null ? alone.toFixed(2) : '0') + '%';
+    const scored = latestScoredFp(r);
+    if (scored != null && Number.isFinite(scored)) lockN = scored;
   }
-  /* Prefer Bank label on top when markers nearly overlap. */
-  let marks = '';
-  if (avgPct != null && bankPct != null && Math.abs(avgPct - bankPct) < 6){
-    marks = bankScaleMarkHtml(bankKind, bankN, bankPct);
-  } else {
-    if (avgPct != null) marks += bankScaleMarkHtml('avg', avgN, avgPct);
-    if (bankPct != null) marks += bankScaleMarkHtml(bankKind, bankN, bankPct);
-  }
+  const grade = lockGradeClass(lockN, avgN, bankN);
+  const title = (r.bank && r.bank.why)
+    || 'Avg · Bank ≥ · Lock (red < Avg, yellow < Bank, green ≥ Bank)';
+  const avgTxt = avgN != null ? formatFp(avgN) : '—';
+  const bankTxt = bankN != null ? formatFp(bankN) : '—';
+  const lockTxt = lockN != null ? formatFp(lockN) : '—';
   return '<td class="bank-cell" title="' + escapeHtml(title) + '">'
-    + '<div class="bank-scale" role="img" aria-label="'
-    + escapeHtml(
-      (avgN != null ? ('Avg ' + formatFp(avgN)) : '')
-      + (avgN != null && bankN != null ? ', ' : '')
-      + (bankN != null ? ((r.locked ? 'Locked ' : 'Today\'s Bank ') + formatFp(bankN)) : '')
-    )
-    + '">'
-    + '<div class="ends"><span>0</span><span>65</span></div>'
-    + '<div class="track"><div class="fill" style="' + fillStyle + '"></div></div>'
-    + marks
+    + '<div class="bank-stack">'
+    + '<div class="row avg"><span class="k">Avg</span><span class="v">'
+    + escapeHtml(avgTxt) + '</span></div>'
+    + '<div class="row bank"><span class="k">Bank</span><span class="v">'
+    + escapeHtml(bankTxt) + '</span></div>'
+    + '<div class="row lock"><span class="k">Lock</span><span class="v '
+    + grade + '">' + escapeHtml(lockTxt) + '</span></div>'
     + '</div></td>';
 }
 
@@ -1816,7 +1764,7 @@ function playerRowHtml(r){
     + '<span class="sub">' + elig + meta + '</span>'
     + slateHtml(r)
     + '</div>' + slotBadgeHtml(r.pid, r.slot) + '</div></td>'
-    + bankScaleHtml(r)
+    + bankStackHtml(r)
     + '<td class="rec ' + escapeHtml(rec.cls) + '" title="' + escapeHtml(rec.reason || '') + '">'
     + '<span class="rec-act">' + escapeHtml(rec.label) + '</span>'
     + (rec.reason ? ('<span class="rec-why">' + escapeHtml(rec.reason) + '</span>') : '')
@@ -1843,7 +1791,7 @@ function renderSide(side, pack){
     + lockedN + '/' + slots + ' locked</span></div>'
     + '<table><thead><tr>'
     + '<th>Player</th>'
-    + '<th>Bank <span style="font-weight:500;color:var(--ink-dim)">0–65 · Avg</span></th><th>Rec</th>'
+    + '<th>Bank</th><th>Rec</th>'
     + '</tr></thead><tbody>' + body + '</tbody></table></div>';
 }
 
@@ -1882,7 +1830,7 @@ function render(){
   document.getElementById('detailSub').textContent =
     'Week ' + state.week
     + (state.nbaWeek && state.nbaWeek.weekLabel ? (' · ' + state.nbaWeek.weekLabel + ' Mon–Sun') : ' · Mon–Sun')
-    + ' · Bank scale 0–65 (Avg + Today’s Bank) · Rec = Lock / tip-order Switch / Wait';
+    + ' · Bank = Avg / Bank / Lock · Rec = Lock / tip-order Switch / Wait';
   document.getElementById('sides').innerHTML =
     renderSide(pair.sides[0], leftPack) + renderSide(pair.sides[1], rightPack);
   renderAdvice(pair, leftPack, rightPack);
@@ -1892,9 +1840,9 @@ function render(){
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Under each name: locked players show only the screenshot chip; unlocked show last score, next tip, and games left. '
     + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points, and never manual edits here. '
-    + 'Bank column is a 0–65 sliding scale marking Avg and Today\'s Bank (weekday + games left + injury). '
-    + 'Rec suggests Lock / tip-order Switch / Wait for what to do in Sleeper — this screen does not move players. '
-    + 'Rec = Lock / tip-order Switch / Wait.';
+    + 'Bank column lists Avg, today’s Bank ≥, and Lock (screenshot chip or last scored night). '
+    + 'Lock color: red below Avg, yellow between Avg and Bank, green at/above Bank. '
+    + 'Rec suggests Lock / tip-order Switch / Wait for what to do in Sleeper — this screen does not move players.';
 }
 
 async function loadMatchups(week, opts){
