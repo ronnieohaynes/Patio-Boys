@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Patio Boys — Matchups</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -291,7 +294,10 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261030-bank-stack';
+  var v = new URLSearchParams(location.search).get('nocache')
+    || new URLSearchParams(location.search).get('v')
+    || '20261030-noslider';
+  window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1830,13 +1836,14 @@ function render(){
   document.getElementById('detailSub').textContent =
     'Week ' + state.week
     + (state.nbaWeek && state.nbaWeek.weekLabel ? (' · ' + state.nbaWeek.weekLabel + ' Mon–Sun') : ' · Mon–Sun')
-    + ' · Bank = Avg / Bank / Lock · Rec = Lock / tip-order Switch / Wait';
+    + ' · Bank = Avg / Bank / Lock · build ' + (window.MATCHUP_BUILD || '—');
   document.getElementById('sides').innerHTML =
     renderSide(pair.sides[0], leftPack) + renderSide(pair.sides[1], rightPack);
   renderAdvice(pair, leftPack, rightPack);
 
   document.getElementById('footNote').textContent =
-    'Lineup slots and lock status are read-only mirrors of Sleeper (upload a matchup screenshot to sync locks). '
+    'Build ' + (window.MATCHUP_BUILD || '—') + '. '
+    + 'Lineup slots and lock status are read-only mirrors of Sleeper (upload a matchup screenshot to sync locks). '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Under each name: locked players show only the screenshot chip; unlocked show last score, next tip, and games left. '
     + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points, and never manual edits here. '

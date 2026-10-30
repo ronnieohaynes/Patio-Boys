@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Patio Boys — HQ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2375,7 +2378,7 @@ const HQ_NAV = {
     defaultTab: 'matchup',
     hideSecondary: true,
     tabs: {
-      matchup: { panel: 'tabMatchup', btn: 'tabBtnMatchup', frame: 'matchupsFrame', src: 'matchups.html?embed=1&v=20261030-bank-stack', loaded: 'matchupFrameLoaded' }
+      matchup: { panel: 'tabMatchup', btn: 'tabBtnMatchup', frame: 'matchupsFrame', src: 'matchups.html?embed=1&v=20261030-noslider', loaded: 'matchupFrameLoaded' }
     }
   },
   league: {
@@ -2638,14 +2641,25 @@ function setMainTab(tab){
     const panel = document.getElementById(conf.panel);
     const frame = document.getElementById(conf.frame);
     if (frame && panel){
+      const src = confFrameSrc(conf);
+      /* If HQ_BUILD / nocache changed, remount the iframe even if previously loaded. */
+      let needLoad = !hqFrameLoaded[conf.loaded];
+      try {
+        const cur = frame.getAttribute('src') || '';
+        if (cur && cur !== 'about:blank' && src && cur.split('?')[0] === src.split('?')[0]){
+          const curQ = cur.indexOf('?') >= 0 ? cur.slice(cur.indexOf('?') + 1) : '';
+          const nextQ = src.indexOf('?') >= 0 ? src.slice(src.indexOf('?') + 1) : '';
+          if (curQ !== nextQ) needLoad = true;
+        }
+      } catch (e){ /* ignore */ }
       /* Show loader + % immediately so the click is acknowledged. */
-      if (!hqFrameLoaded[conf.loaded]){
+      if (needLoad){
         const label = conf.teamKey
           ? ('Loading ' + (conf.label || 'team') + '…')
           : tabLoaderLabel(tab);
         showHqPanelLoader(panel, label, 0);
-        const src = confFrameSrc(conf);
         hqFrameLoaded[conf.loaded] = true;
+        hqFrameReady[conf.frame] = false;
         syncFrameLoadedFlags();
         requestAnimationFrame(function(){
           setTimeout(function(){ frame.src = src; }, 0);
@@ -2852,11 +2866,14 @@ function flashNavButton(btn){
 }
 
 /* Stamp iframe URLs so Refresh / nocache also busts nested script caches. */
+const HQ_BUILD = '20261030-noslider';
 function hqCacheToken(){
   return new URLSearchParams(location.search).get('nocache') || '';
 }
 function hqFrameSrc(src){
   const url = new URL(src, location.href);
+  /* Always pin embed build id so a fresh lottery.html cannot keep an old iframe. */
+  url.searchParams.set('v', HQ_BUILD);
   const token = hqCacheToken();
   if (token) url.searchParams.set('nocache', token);
   const file = url.pathname.split('/').pop();
