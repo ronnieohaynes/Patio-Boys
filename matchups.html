@@ -324,7 +324,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261029-bank-scale-noavg';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261030-tip-order-bank';
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
   });
@@ -1242,6 +1242,37 @@ function nextGameLabel(scout){
   return formatTipLabel(row.tipIso, row.date) || weekdayLabel(row.date) || 'next';
 }
 
+/* Next tip timestamp for tip-order lineup (earlier tip wins the start slot). */
+function nextTipMs(scout){
+  function fromTip(tipIso, ymd){
+    if (tipIso){
+      const t = Date.parse(tipIso);
+      if (Number.isFinite(t)) return t;
+    }
+    if (ymd && String(ymd).length >= 8){
+      const s = String(ymd);
+      const t = Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8), 23, 59);
+      if (Number.isFinite(t)) return t;
+    }
+    return null;
+  }
+  const next = scout && scout.nextGame;
+  if (next){
+    const t = fromTip(next.tipIso, next.date);
+    if (t != null) return t;
+  }
+  const slate = (scout && scout.slate) || [];
+  const row = slate.find(s => s.kind === 'opp');
+  if (!row) return null;
+  return fromTip(row.tipIso, row.date);
+}
+
+function isBankableNow(r){
+  const scored = latestScoredFp(r);
+  const bank = r && r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  return scored != null && bank != null && scored + 1e-9 >= bank;
+}
+
 function isBenchRow(r){
   return !r.starter || r.slot === 'BN' || r.slotLabel === 'BN';
 }
@@ -1255,11 +1286,49 @@ function isImmovable(r){
   return false;
 }
 
+/* You can only lock a night from a starting slot before tip. If this starter
+   isn’t banking now, free the slot for a bench player who tips sooner — even
+   with a lower Avg. A non-locked score costs nothing to sit. */
+function tipOrderSwitchTarget(r, pack){
+  if (isImmovable(r) || isBenchRow(r)) return null;
+  if (isBankableNow(r)) return null;
+  const myNext = nextTipMs(r.scout);
+  if (myNext == null) return null;
+  const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
+  if (!slotLabel) return null;
+  const cands = (pack.rows || []).filter(o => {
+    if (!o || o.pid === r.pid || isImmovable(o)) return false;
+    if (!isBenchRow(o)) return false;
+    const inj = o.scout && o.scout.injury;
+    if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
+    if (!fitsLockSlot(o.p, slotLabel)) return false;
+    const theirNext = nextTipMs(o.scout);
+    if (theirNext == null) return false;
+    return theirNext < myNext;
+  }).sort((a, b) => {
+    const ta = nextTipMs(a.scout) || 0;
+    const tb = nextTipMs(b.scout) || 0;
+    if (ta !== tb) return ta - tb;
+    return (Number(b.dist && b.dist.mean) || 0) - (Number(a.dist && a.dist.mean) || 0);
+  });
+  const best = cands[0] || null;
+  if (!best) return null;
+  return {
+    row: best,
+    into: slotLabel,
+    why: 'tip order · start before next ' + (nextGameLabel(r.scout) || 'game'),
+    kind: 'tip'
+  };
+}
+
 /* Starter → bench player eligible for the SAME lock slot.
    Never recommend swapping one starter for another starter.
-   Never recommend moving a locked starter. */
+   Never recommend moving a locked starter.
+   Prefer tip-order (earlier tip) when not locking; else higher Avg. */
 function betterSwitchTarget(r, pack){
   if (isImmovable(r)) return null;
+  const tipAlt = tipOrderSwitchTarget(r, pack);
+  if (tipAlt) return tipAlt;
   const myMean = r.dist && Number(r.dist.mean) || 0;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null; /* starters only — bench uses switch-in */
@@ -1277,15 +1346,17 @@ function betterSwitchTarget(r, pack){
   }).sort((a, b) => (Number(b.dist && b.dist.mean) || 0) - (Number(a.dist && a.dist.mean) || 0));
   const best = cands[0] || null;
   if (!best) return null;
-  return {row: best, into: slotLabel};
+  return {row: best, into: slotLabel, kind: 'avg'};
 }
 
-/* Bench player → starter they should replace (slot they fit, clearly better).
-   Locked starters cannot be moved — never “In · over” them. */
+/* Bench player → starter they should replace (slot they fit).
+   Locked starters cannot be moved — never “In · over” them.
+   Tip order: if starter isn’t banking and you tip sooner, take the slot. */
 function benchSwitchInOver(r, pack){
   const myMean = r.dist && Number(r.dist.mean) || 0;
   const myScored = latestScoredFp(r);
   const myBank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const myNext = nextTipMs(r.scout);
   const cands = [];
   (pack.rows || []).forEach(o => {
     if (!o || o.pid === r.pid || isImmovable(o) || isBenchRow(o)) return;
@@ -1294,11 +1365,17 @@ function benchSwitchInOver(r, pack){
     const theirInj = o.scout && o.scout.injury;
     const theirMean = o.dist && Number(o.dist.mean) || 0;
     const theirScored = latestScoredFp(o);
+    const theirNext = nextTipMs(o.scout);
     let why = null;
     let score = 0;
     if (theirInj === 'OUT' || theirInj === 'O' || theirInj === 'IR'){
       why = (theirInj === 'IR' ? 'IR' : 'OUT') + ' starter';
       score = 1000 + myMean;
+    } else if (myNext != null && theirNext != null && myNext < theirNext && !isBankableNow(o)){
+      /* Free a non-lock night for an earlier tip — Avg can be lower. */
+      const theirLbl = nextGameLabel(o.scout) || 'later tip';
+      why = 'earlier tip before their ' + theirLbl;
+      score = 800 + Math.max(0, (theirNext - myNext) / 3600000);
     } else if (myMean > theirMean + 4){
       why = 'higher Avg';
       score = (myMean - theirMean) * 10;
@@ -1426,6 +1503,7 @@ function buildRec(r, pack){
     return {action: 'sit', label: 'Sit', reason: 'ruled ' + tag, cls: 'rec-sit'};
   }
 
+  /* Bankable night in a start slot — lock before anything else. */
   if (scored != null && bank != null && scored + 1e-9 >= bank){
     if (slot){
       return {
@@ -1443,11 +1521,30 @@ function buildRec(r, pack){
     };
   }
 
+  /* Not locking this night → don’t park the slot until their next tip.
+     Start whoever tips sooner (even lower Avg); you lose nothing if the
+     current score isn’t being banked. */
+  const tipAlt = tipOrderSwitchTarget(r, pack);
+  if (tipAlt && tipAlt.row){
+    const inName = shortPlayerName(tipAlt.row.p);
+    const inTip = nextGameLabel(tipAlt.row.scout);
+    const bits = [];
+    if (scored != null && bank != null) bits.push(formatFp(scored) + ' < Bank ' + bank);
+    bits.push('free slot until ' + (nextLbl || 'later'));
+    bits.push('start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first');
+    return {
+      action: 'switch',
+      label: switchOutLabel(tipAlt),
+      reason: bits.join(' · '),
+      cls: 'rec-switch'
+    };
+  }
+
   if (scored != null && bank != null && scored < bank){
     const alt = betterSwitchTarget(r, pack);
     const myMean = r.dist && Number(r.dist.mean) || 0;
     const altMean = alt && alt.row && alt.row.dist && Number(alt.row.dist.mean) || 0;
-    if (alt && alt.row && altMean - myMean >= 4){
+    if (alt && alt.row && alt.kind !== 'tip' && altMean - myMean >= 4){
       return {
         action: 'switch',
         label: switchOutLabel(alt),
@@ -1806,7 +1903,7 @@ function render(){
   document.getElementById('detailSub').textContent =
     'Week ' + state.week
     + (state.nbaWeek && state.nbaWeek.weekLabel ? (' · ' + state.nbaWeek.weekLabel + ' Mon–Sun') : ' · Mon–Sun')
-    + ' · Bank scale 0–65 (Avg + Today’s Bank) · Rec = Lock / Switch / Wait';
+    + ' · Bank scale 0–65 (Avg + Today’s Bank) · Rec = Lock / tip-order Switch / Wait';
   document.getElementById('sides').innerHTML =
     renderSide(pair.sides[0], leftPack) + renderSide(pair.sides[1], rightPack);
   renderAdvice(pair, leftPack, rightPack);
@@ -1817,7 +1914,8 @@ function render(){
     + 'Under each name: locked players show only the screenshot chip; unlocked show last score, next tip, and games left. '
     + 'Locked scores come only from uploaded screenshots — never Sleeper/ESPN API week points. '
     + 'Bank column is a 0–65 sliding scale marking Avg and Today\'s Bank (weekday + games left + injury). '
-    + 'Rec = Lock / Switch / Wait.';
+    + 'You can only lock a night from a starting slot before tip — if a starter isn’t banking, Rec frees the slot for a bench player who tips sooner (even lower Avg). '
+    + 'Rec = Lock / tip-order Switch / Wait.';
 
   document.querySelectorAll('[data-lock-pid]').forEach(btn => {
     btn.addEventListener('click', (ev) => {
