@@ -296,7 +296,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-slash-not-started';
+    || '20261030-lock-pos-first';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1210,6 +1210,7 @@ function fitsLockSlot(p, slotLabel){
 }
 
 function preferSlotForPlayer(p, openSlots){
+  /* Position locks before UTIL — UTIL is the last place to bank a night. */
   const order = ['PG', 'SG', 'SF', 'PF', 'C', 'G', 'F', 'UTIL'];
   const ranked = (openSlots || []).slice().sort((a, b) =>
     order.indexOf(a.label) - order.indexOf(b.label));
@@ -1226,6 +1227,29 @@ function preferSlotForPlayer(p, openSlots){
   for (let i = 0; i < ranked.length; i++){
     if (fitsLockSlot(p, ranked[i].label)) return ranked[i];
   }
+  return null;
+}
+
+function isUtilSlotLabel(lab){
+  return String(lab || '').toUpperCase() === 'UTIL';
+}
+
+/* Where Rec should bank this player: keep a real position slot they’re already in,
+   otherwise pick the best open position (PG…F) before falling back to UTIL. */
+function lockSlotForPlayer(r, openSlots){
+  const open = openSlots || [];
+  const currentSlot = (r && r.slot != null && r.slot !== 'BN')
+    ? {index: Number(r.slot), label: String(r.slotLabel || '').toUpperCase()}
+    : null;
+  const currentOpen = currentSlot
+    && open.some(s => s.index === currentSlot.index)
+    && fitsLockSlot(r.p, currentSlot.label);
+  /* Already in an open position slot (not UTIL) — lock there. */
+  if (currentOpen && !isUtilSlotLabel(currentSlot.label)) return currentSlot;
+  const preferred = preferSlotForPlayer(r && r.p, open);
+  if (preferred) return preferred;
+  /* Last resort: their current UTIL if that’s all that’s left. */
+  if (currentOpen) return currentSlot;
   return null;
 }
 
@@ -1463,14 +1487,8 @@ function buildRec(r, pack){
   const scored = latestLockableFp(r);
   const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   const open = openLockSlots(pack);
-  /* Prefer locking into the slot they already occupy when it’s still open. */
-  const currentSlot = (r.slot != null && r.slot !== 'BN')
-    ? {index: Number(r.slot), label: String(r.slotLabel || '').toUpperCase()}
-    : null;
-  const currentOpen = currentSlot
-    && open.some(s => s.index === currentSlot.index)
-    && fitsLockSlot(r.p, currentSlot.label);
-  const slot = currentOpen ? currentSlot : preferSlotForPlayer(r.p, open);
+  /* Position locks first; UTIL last (even if they’re currently sitting in UTIL). */
+  const slot = lockSlotForPlayer(r, open);
   const nextLbl = nextGameLabel(r.scout);
 
   /* ——— Bench: only Switch when they should come in over a starter ——— */
@@ -1496,7 +1514,9 @@ function buildRec(r, pack){
       return {
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: formatFp(scored) + ' ≥ Bank ' + bank + ' · move off BN',
+        reason: formatFp(scored) + ' ≥ Bank ' + bank
+          + ' · move off BN'
+          + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : (' · ' + slot.label)),
         cls: 'rec-lock'
       };
     }
@@ -1537,13 +1557,18 @@ function buildRec(r, pack){
     return {action: 'sit', label: 'Sit', reason: 'ruled ' + tag, cls: 'rec-sit'};
   }
 
-  /* Bankable night in a start slot — lock before anything else. */
+  /* Bankable night in a start slot — lock before anything else.
+     Prefer a position slot over UTIL when recommending where to bank. */
   if (scored != null && bank != null && scored + 1e-9 >= bank){
     if (slot){
+      const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
+      const moved = curLab && slot.label !== curLab;
+      const utilLast = isUtilSlotLabel(slot.label) ? ' · UTIL last' : '';
+      const moveBit = moved ? (' · use ' + slot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : '')) : '';
       return {
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: formatFp(scored) + ' ≥ Bank ' + bank,
+        reason: formatFp(scored) + ' ≥ Bank ' + bank + moveBit + utilLast,
         cls: 'rec-lock'
       };
     }
@@ -1924,7 +1949,8 @@ function render(){
     + 'A transparent slash through a schedule logo means they weren’t in the starting lineup that night and that game can’t be locked. '
     + 'Bank column lists Avg, Bank ≥ (frozen at lock time for LOCKED nights), and Lock (screenshot chip only). '
     + 'Lock color: red below Avg, yellow between Avg and Bank, green at/above Bank. '
-    + 'Rec suggests Lock / tip-order Switch / Wait for what to do in Sleeper — this screen does not move players.';
+    + 'Rec Lock prefers real position slots (PG–F) before UTIL — UTIL is locked last. '
+    + 'Rec also suggests tip-order Switch / Wait for what to do in Sleeper — this screen does not move players.';
 }
 
 async function loadMatchups(week, opts){
