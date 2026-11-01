@@ -286,7 +286,7 @@
         <button type="button" class="btn" id="shotPaste">Paste</button>
         <button type="button" class="btn" id="shotClear" hidden>Clear OCR</button>
       </div>
-      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot. <strong>Locked</strong> = logo + small closed lock chip. <strong>LOCK-IN</strong> = still open to bank. Or <strong>click a lock pill</strong> to manually lock / edit the FP. Schedule-logo slash = wasn’t started — can’t lock that night.</p>
+      <p class="shot-status" id="shotStatus">Upload a Sleeper matchup screenshot. <strong>Locked</strong> = logo + small closed lock chip. <strong>LOCK-IN</strong> = still open to bank — only from a <strong>starting slot</strong> (bench can’t lock). Or <strong>click a lock pill</strong> on a starter to manually lock / edit the FP. Schedule-logo slash = wasn’t started — can’t lock that night.</p>
       <img class="shot-preview" id="shotPreview" alt="" hidden>
     </div>
 
@@ -304,7 +304,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261030-myq-fix';
+    || '20261101-lock-starters';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -510,11 +510,33 @@ function clearManualLock(pid){
   return true;
 }
 
+/* Lock-in only scores from a starting slot — BN nights cannot bank. */
+function isPidOnBenchNow(pid){
+  const id = String(pid);
+  const pair = state.selectedPair || (state.pairs && state.pairs[0]);
+  if (!pair) return false;
+  for (let i = 0; i < (pair.sides || []).length; i++){
+    const side = pair.sides[i];
+    const fr = side && side.franchise;
+    if (!fr) continue;
+    const roster = (fr.players || []).map(String);
+    if (roster.indexOf(id) < 0) continue;
+    const starters = ((side.matchup && side.matchup.starters) || fr.starters || []).map(String);
+    return starters.indexOf(id) < 0;
+  }
+  return false;
+}
+
 function promptManualLock(pid){
   const id = String(pid);
   const p = state.players[id] || {};
   const name = playerName(p);
   const existing = lockedPtsFor(id);
+  /* New locks only from a start slot — edit/clear of an existing lock still OK. */
+  if (existing == null && isPidOnBenchNow(id)){
+    window.alert(name + ' is on the bench. Move them into a starting slot in Sleeper before locking — only starters’ nights bank.');
+    return;
+  }
   const openPts = openLockPtsFor(id);
   const scored = (() => {
     const scout = scoutPlayer(id, state.lockByPid[id]
@@ -1774,15 +1796,25 @@ function buildRec(r, pack){
         cls: 'rec-switch'
       };
     }
-    if (scored != null && bank != null && scored + 1e-9 >= bank && slot){
+    /* Bench can’t lock — only starting slots bank. Point them at a start slot. */
+    if (scored != null && bank != null && scored + 1e-9 >= bank){
+      if (slot){
+        return {
+          action: 'switch',
+          label: 'Start · ' + slot.label + ' then Lock',
+          reason: formatFp(scored) + ' ≥ Bank ' + bank
+            + ' · can’t lock from BN · start @ ' + slot.label + ' first'
+            + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : '')
+            + (dayHint ? (' · ' + dayHint) : ''),
+          cls: 'rec-switch'
+        };
+      }
       return {
-        action: 'lock',
-        label: 'Lock · ' + slot.label,
+        action: 'wait',
+        label: 'Wait',
         reason: formatFp(scored) + ' ≥ Bank ' + bank
-          + ' · move off BN now'
-          + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : (' · ' + slot.label))
-          + (dayHint ? (' · ' + dayHint) : ''),
-        cls: 'rec-lock'
+          + ' · can’t lock from BN · no open start slot',
+        cls: 'rec-wait'
       };
     }
     if (injury === 'DTD' || injury === 'Q' || injury === 'QUESTIONABLE'){
@@ -2304,6 +2336,7 @@ function render(){
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
+    + 'Only starting-slot nights can lock — BN never banks (Start then Lock). '
     + 'Locks come from screenshots (locked chip or LOCK-IN) or manual override — never Sleeper/ESPN API week points. '
     + 'A transparent slash through a schedule logo means they weren’t in the starting lineup that night and that game can’t be locked. '
     + 'Bank column lists Avg, Bank ≥ (frozen at lock time), and Lock. '
