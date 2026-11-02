@@ -1903,12 +1903,15 @@ function renderLockIn(t){
         : ('Empirical ' + pct1(emp));
       return '<td class="num' + hot + '" title="' + title + '">' + (d.n ? pct1(emp) : '—') + '</td>';
     }).join('');
-    const avgTitle = d.avgSource === 'season'
-      ? ('Full-season FP/G over ' + d.seasonGp + ' games (Sleeper-aligned)'
-        + (d.sampleMean != null ? '; sample mean of N games was ' + Number(d.sampleMean).toFixed(1) : ''))
-      : d.projOnly
-        ? 'Projection stub (no game samples yet)'
-        : ('Mean of ' + d.n + ' game samples (season totals unavailable)');
+    const winN = d.sampleWindow != null
+      ? Number(d.sampleWindow)
+      : (window.LockInDist && LockInDist.LAST_N_GAMES) || 25;
+    const avgTitle = d.projOnly
+      ? 'Projection stub (no game samples yet)'
+      : ('Last ' + winN + ' games'
+        + (d.avgSource === 'live' ? ' · live refresh' : '')
+        + ' · mean of ' + d.n + ' samples'
+        + (d.sampleSource ? (' · ' + d.sampleSource) : ''));
     const w = (window.LockInDist && LockInDist.SMASH_WEIGHTS) || {avg:0.5, ceil:0.25, hit:0.25};
     const floor = (window.LockInDist && LockInDist.LOCK_OVR_FLOOR) || 50;
     const ceilO = (window.LockInDist && LockInDist.LOCK_OVR_CEIL) || 99;
@@ -2114,7 +2117,7 @@ function renderLockIn(t){
     : '';
 
   const note = basic
-    ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Age, Trade ★, season Avg, '
+    ? ('<p class="lineup-foot"><strong>Basic</strong> view: Lock OVR, Age, Trade ★, last-25 Avg, '
       + '<strong>Smash</strong> = % of games at/above <strong>GG</strong>, '
       + '<strong>GG</strong> = good game line (Avg+0.5σ), '
       + '<strong>Bank ≥</strong> = FP floor to lock this player tonight (roster top-' + slots

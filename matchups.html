@@ -307,7 +307,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261102-live-stats';
+    || '20261102-last25';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2355,13 +2355,15 @@ function bankStackHtml(r){
   const liveN = r.dist && r.dist.avgSource === 'live' ? Number(r.dist.liveSampleN || r.dist.seasonGp) : null;
   const priorN = r.dist && r.dist.priorAvg != null ? Number(r.dist.priorAvg) : null;
   const srcBit = r.dist && r.dist.sampleSource ? String(r.dist.sampleSource) : null;
-  const avgWhy = r.dist && r.dist.avgSource === 'live'
-    ? ('Live '
-      + (state.league && state.league.season ? String(state.league.season) : '')
-      + ' Avg/Bank'
-      + (liveN != null && Number.isFinite(liveN) ? (' · ' + liveN + ' wk') : '')
-      + (srcBit ? (' · samples ' + srcBit) : '')
-      + (priorN != null && Number.isFinite(priorN) ? (' · prior Avg ' + formatFp(priorN)) : ''))
+  const winN = r.dist && r.dist.sampleWindow != null
+    ? Number(r.dist.sampleWindow)
+    : (window.LockInDist && LockInDist.LAST_N_GAMES) || 25;
+  const avgWhy = r.dist
+    ? ('Last ' + winN + ' games'
+      + (r.dist.avgSource === 'live' ? ' · live refresh' : '')
+      + (liveN != null && Number.isFinite(liveN) ? (' · ' + liveN + ' new wk') : '')
+      + (srcBit ? (' · ' + srcBit) : '')
+      + (priorN != null && Number.isFinite(priorN) ? (' · was ' + formatFp(priorN)) : ''))
     : null;
   const title = [avgWhy, (r.bank && r.bank.why) || null]
     .filter(Boolean).join(' · ')
@@ -2561,7 +2563,7 @@ function render(){
     + 'IR = injured only. Taxi (TX) = swap with BN players in year ≤' + (leagueTaxiYears() + 1) + '. '
     + 'Locks come from screenshots (locked chip or LOCK-IN) or manual override — never Sleeper/ESPN API week points. '
     + 'A transparent slash through a schedule logo means they weren’t in the starting lineup that night and that game can’t be locked. '
-    + 'Bank column lists Avg / Bank / Lock from live season games (σ pads with prior until enough weeks). '
+    + 'Bank column Avg / Bank / Lock use each player’s last 25 games. '
     + 'Bank ≥ freezes at lock time. '
     + 'Lock color: red below Avg, yellow between Avg and Bank, green at/above Bank. '
     + 'Rec Lock prefers PG–C before UTIL. Rec suggests tip-order Switch / Wait — this screen does not move players.';

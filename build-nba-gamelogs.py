@@ -260,25 +260,32 @@ def build_season(
     matched_games = 0
     athlete_lines = 0
 
+    # Fetch in parallel, then append in event-list order so each player's
+    # rows stay chronological (required for last-N game windows).
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {pool.submit(fetch_game_rows, gid): gid for gid in event_ids}
+        by_event: dict[str, list[tuple[str, str, list]]] = {}
         done = 0
         for fut in concurrent.futures.as_completed(futs):
             done += 1
             if done % 200 == 0 or done == len(futs):
                 print(f"  boxscores {done}/{len(futs)}")
-            rows = fut.result()
-            if not rows:
+            gid = futs[fut]
+            by_event[gid] = fut.result() or []
+
+    for gid in event_ids:
+        rows = by_event.get(gid) or []
+        if not rows:
+            continue
+        matched_games += 1
+        for _espn_id, name, row in rows:
+            athlete_lines += 1
+            key = normalize_name(name)
+            pid = name_map.get(key)
+            if not pid:
+                unmatched_names[name] = unmatched_names.get(name, 0) + 1
                 continue
-            matched_games += 1
-            for _espn_id, name, row in rows:
-                athlete_lines += 1
-                key = normalize_name(name)
-                pid = name_map.get(key)
-                if not pid:
-                    unmatched_names[name] = unmatched_names.get(name, 0) + 1
-                    continue
-                by_pid.setdefault(pid, []).append(row)
+            by_pid.setdefault(pid, []).append(row)
 
     meta = {
         "sleeperSeason": str(sleeper_season),

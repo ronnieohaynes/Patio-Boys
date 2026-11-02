@@ -56,7 +56,7 @@
 <div class="wrap hero">
   <p class="eyebrow">Pulled live from Sleeper, in your browser</p>
   <h1 class="display">Who's Actually<br>Up For Grabs</h1>
-  <p>No forced cutdown, no keeper checkboxes, this is the pool exactly as it stands today. Combines everyone already a free agent (rookies included, once Sleeper's player list has them) with every player on jaysonarban's and Jeff's (thehyphypnw's) rosters. Capped to the top 75 by value. Value is each player's average over their last 50 actually-played games under your league's scoring settings. Nothing here saves between visits.</p>
+  <p>No forced cutdown, no keeper checkboxes, this is the pool exactly as it stands today. Combines everyone already a free agent (rookies included, once Sleeper's player list has them) with every player on jaysonarban's and Jeff's (thehyphypnw's) rosters. Capped to the top 75 by value. Value is each player's average over their last 25 actually-played games under your league's scoring settings. Nothing here saves between visits.</p>
 </div>
 
 <div class="wrap">
@@ -96,7 +96,7 @@
             <th data-key="number">#</th>
             <th data-key="pos">Pos</th>
             <th data-key="team">NBA Team</th>
-            <th data-key="value">Value (last 50 GP)</th>
+            <th data-key="value">Value (last 25 GP)</th>
             <th data-key="gamesUsed">GP Used</th>
             <th data-key="projPick">Proj. Pick</th>
             <th data-key="projTeam">Proj. Team</th>
@@ -114,7 +114,7 @@
 const LEAGUE_ID = '1350649177381552128';
 const DEPARTING_USERNAMES = ['jaysonarban', 'thehyphypnw'];
 const POOL_CAP = 75;
-const GAMES_TARGET = 50;
+const GAMES_TARGET = 25;
 
 const statusEl = document.getElementById('status');
 const statGridEl = document.getElementById('statGrid');
@@ -174,7 +174,7 @@ async function load(){
     const scoring = league.scoring_settings || {};
     const scoringKeys = Object.keys(scoring);
 
-    statusEl.textContent = 'Pulling every week of ' + statsSeason + ' to build a real last-50-games-played average (up to 25 requests, running in parallel)\u2026';
+    statusEl.textContent = 'Pulling every week of ' + statsSeason + ' to build a real last-25-games-played average (up to 25 requests, running in parallel)\u2026';
     const weekNums = Array.from({length: 25}, (_, i) => i + 1);
     const weeklyResults = await Promise.all(weekNums.map(w =>
       fetch('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
