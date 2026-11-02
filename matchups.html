@@ -216,6 +216,7 @@
   .player-row{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
   .player-main{min-width:0;flex:1}
   tr.bench td.player .player-main{font-weight:500;color:var(--ink-dim)}
+  tr.ir td.player .player-main, tr.taxi td.player .player-main{font-weight:500;color:var(--ink-dim)}
   .slot-badge{
     flex:0 0 auto;align-self:center;
     font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;
@@ -239,6 +240,8 @@
   }
   .slot-badge.util{background:#8B64FB;color:#160c2e}
   .slot-badge.bn{background:#3B4364;color:#9AA3BD}
+  .slot-badge.ir{background:#5A2A32;color:#F2A4A4}
+  .slot-badge.tx{background:#2A4A3A;color:#8FD9B0}
   .elig{font-weight:600}
   .elig.pg{color:#F0718A}.elig.sg{color:#F5A15C}.elig.sf{color:#E8C34A}
   .elig.pf{color:#6EC8FF}.elig.c{color:#B8A4FF}.elig.g{color:#FD6483}.elig.f{color:#7ED9B0}
@@ -304,7 +307,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261101-lock-starters';
+    || '20261102-ir-taxi';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -392,6 +395,8 @@ function slotBadgeClass(label){
   if (lab === 'G') return 'g';
   if (lab === 'F') return 'f';
   if (lab === 'UTIL') return 'util';
+  if (lab === 'IR') return 'ir';
+  if (lab === 'TX' || lab === 'TAXI') return 'tx';
   return 'bn';
 }
 
@@ -510,7 +515,7 @@ function clearManualLock(pid){
   return true;
 }
 
-/* Lock-in only scores from a starting slot — BN nights cannot bank. */
+/* Lock-in only scores from a starting slot — BN / IR / TX nights cannot bank. */
 function isPidOnBenchNow(pid){
   const id = String(pid);
   const pair = state.selectedPair || (state.pairs && state.pairs[0]);
@@ -519,8 +524,11 @@ function isPidOnBenchNow(pid){
     const side = pair.sides[i];
     const fr = side && side.franchise;
     if (!fr) continue;
-    const roster = (fr.players || []).map(String);
-    if (roster.indexOf(id) < 0) continue;
+    const taxi = new Set((fr.taxi || []).map(String));
+    const reserve = new Set((fr.reserve || []).map(String));
+    const roster = [].concat(fr.players || [], fr.taxi || [], fr.reserve || []).map(String);
+    if (roster.indexOf(id) < 0 && !taxi.has(id) && !reserve.has(id)) continue;
+    if (taxi.has(id) || reserve.has(id)) return true;
     const starters = ((side.matchup && side.matchup.starters) || fr.starters || []).map(String);
     return starters.indexOf(id) < 0;
   }
@@ -534,7 +542,7 @@ function promptManualLock(pid){
   const existing = lockedPtsFor(id);
   /* New locks only from a start slot — edit/clear of an existing lock still OK. */
   if (existing == null && isPidOnBenchNow(id)){
-    window.alert(name + ' is on the bench. Move them into a starting slot in Sleeper before locking — only starters’ nights bank.');
+    window.alert(name + ' is not in a starting slot (BN / IR / TX). Move them into a starter in Sleeper before locking — only starters’ nights bank.');
     return;
   }
   const openPts = openLockPtsFor(id);
@@ -616,8 +624,32 @@ function franchiseOfRoster(roster){
     manager: (owner && owner.display_name) || '—',
     color: TEAM_COLORS[canonicalTeam(raw)] || '#E8C34A',
     players: (roster.players || []).map(String),
-    starters: (roster.starters || []).map(String)
+    starters: (roster.starters || []).map(String),
+    /* Non-starter stash slots — outside BN. */
+    taxi: (roster.taxi || []).map(String),
+    reserve: (roster.reserve || []).map(String)
   };
+}
+
+/* Sleeper taxi_years = max years_exp on TX (2 → 3rd NBA year or fewer). */
+function leagueTaxiYears(){
+  const y = state.league && state.league.settings && state.league.settings.taxi_years;
+  if (y != null && Number.isFinite(Number(y))) return Number(y);
+  return 2;
+}
+
+function isTaxiEligiblePlayer(p){
+  if (window.TeamNeedsModel && typeof TeamNeedsModel.taxiEligible === 'function'){
+    return !!TeamNeedsModel.taxiEligible(p, leagueTaxiYears());
+  }
+  const n = Number(p && p.years_exp);
+  return Number.isFinite(n) && n >= 0 && n <= leagueTaxiYears();
+}
+
+/* IR is for truly sidelined players — not GTD/DTD stash. */
+function isIrEligibleInjury(injury){
+  const s = String(injury || '').toUpperCase();
+  return s === 'O' || s === 'OUT' || s === 'IR' || s === 'SUS';
 }
 
 function ymd(d){
@@ -1205,27 +1237,48 @@ function bankOptsForSide(sideDists, lockedScores){
   };
 }
 
-function sidePlayerRows(side){
-  const fr = side.franchise;
-  const mrow = side.matchup;
-  const starters = (mrow && mrow.starters || fr.starters || []).map(String);
-  const starterSet = new Set(starters);
-  const labels = lockSlotLabels();
-  /* Lineup order: starter slots first (by index), then bench alphabetically / by lock. */
-  const starterRows = [];
-  for (let i = 0; i < labels.length; i++){
-    const id = starters[i];
-    if (id && id !== '0' && id !== '') starterRows.push(id);
-  }
-  const benchIds = (fr.players || []).map(String).filter(id => !starterSet.has(id));
-  benchIds.sort((a, b) => {
+function sortByLockOvr(ids){
+  return ids.slice().sort((a, b) => {
     const da = state.lockByPid[a] || state.lockByPid[String(a)];
     const db = state.lockByPid[b] || state.lockByPid[String(b)];
     const la = da && (da.lockOvr != null ? da.lockOvr : da.mean);
     const lb = db && (db.lockOvr != null ? db.lockOvr : db.mean);
     return (lb || 0) - (la || 0);
   });
-  const pids = starterRows.concat(benchIds);
+}
+
+function sidePlayerRows(side){
+  const fr = side.franchise;
+  const mrow = side.matchup;
+  const starters = (mrow && mrow.starters || fr.starters || []).map(String);
+  const starterSet = new Set(starters.filter(id => id && id !== '0'));
+  const taxiSet = new Set((fr.taxi || []).map(String));
+  const reserveSet = new Set((fr.reserve || []).map(String));
+  const labels = lockSlotLabels();
+  /* Starters → BN → IR → TX (IR/TX are stash slots, not lockable). */
+  const starterRows = [];
+  for (let i = 0; i < labels.length; i++){
+    const id = starters[i];
+    if (id && id !== '0' && id !== '') starterRows.push(id);
+  }
+  const seen = new Set(starterRows.map(String));
+  const benchIds = sortByLockOvr((fr.players || []).map(String).filter(id => {
+    if (!id || starterSet.has(id) || taxiSet.has(id) || reserveSet.has(id)) return false;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  }));
+  const irIds = sortByLockOvr([].concat(fr.reserve || []).map(String).filter(id => {
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  }));
+  const taxiIds = sortByLockOvr([].concat(fr.taxi || []).map(String).filter(id => {
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  }));
+  const pids = starterRows.concat(benchIds).concat(irIds).concat(taxiIds);
 
   const lockedScores = [];
   const distList = [];
@@ -1238,6 +1291,11 @@ function sidePlayerRows(side){
     const locked = lockPts != null;
     const slot = slotKeyForPidOnSide(side, id);
     const starter = starterSet.has(id);
+    let bucket = 'BN';
+    let slotLabel = slotDisplayLabel(slot);
+    if (starter) bucket = 'ST';
+    else if (reserveSet.has(id)){ bucket = 'IR'; slotLabel = 'IR'; }
+    else if (taxiSet.has(id)){ bucket = 'TX'; slotLabel = 'TX'; }
     if (locked) lockedScores.push(lockPts);
     if (dist){
       dist._locked = locked;
@@ -1246,7 +1304,7 @@ function sidePlayerRows(side){
     const scout = scoutPlayer(id, dist);
     return {
       pid: id, p, dist, pts, lockPts, locked, scout,
-      starter, slot, slotLabel: slotDisplayLabel(slot)
+      starter, slot, slotLabel, bucket
     };
   });
 
@@ -1299,8 +1357,10 @@ function sidePlayerRows(side){
     rows,
     lockedScores,
     opts,
-    starters: rows.filter(r => r.starter),
-    bench: rows.filter(r => !r.starter)
+    starters: rows.filter(r => r.bucket === 'ST'),
+    bench: rows.filter(r => r.bucket === 'BN'),
+    ir: rows.filter(r => r.bucket === 'IR'),
+    taxi: rows.filter(r => r.bucket === 'TX')
   };
   rows.forEach(r => { r.rec = buildRec(r, pack); });
   return pack;
@@ -1549,7 +1609,18 @@ function isBankableNow(r){
 }
 
 function isBenchRow(r){
+  if (!r) return true;
+  if (r.bucket === 'BN') return true;
+  if (r.bucket === 'ST' || r.bucket === 'IR' || r.bucket === 'TX') return false;
   return !r.starter || r.slot === 'BN' || r.slotLabel === 'BN';
+}
+
+function isIrRow(r){
+  return !!(r && r.bucket === 'IR');
+}
+
+function isTaxiRow(r){
+  return !!(r && r.bucket === 'TX');
 }
 
 /* Screenshot-locked nights are stuck — never Switch them out or over them. */
@@ -1756,6 +1827,8 @@ function buildRec(r, pack){
     };
   }
   const bench = isBenchRow(r);
+  const onIr = isIrRow(r);
+  const onTaxi = isTaxiRow(r);
   const injury = r.scout && r.scout.injury;
   const myQ = injury === 'DTD' || injury === 'Q' || injury === 'QUESTIONABLE';
   const gamesLeft = r.scout && r.scout.gamesLeft != null
@@ -1770,10 +1843,86 @@ function buildRec(r, pack){
   const nextLbl = nextGameLabel(r.scout);
   const nextPhrase = nextGamePhrase(r.scout, nowMs);
   const dayHint = dowBankHint(nowMs);
+  const taxiYears = leagueTaxiYears();
+  const yearsExp = r.p && r.p.years_exp != null ? Number(r.p.years_exp) : null;
+
+  /* ——— IR: injured-only stash — never locks ——— */
+  if (onIr){
+    if (!isIrEligibleInjury(injury)){
+      return {
+        action: 'switch',
+        label: 'Activate',
+        reason: 'IR is for injured only'
+          + (injury ? (' · listed ' + injury) : ' · healthy')
+          + ' · move to BN/start',
+        cls: 'rec-switch'
+      };
+    }
+    return {
+      action: 'sit',
+      label: 'IR',
+      reason: 'Injured stash · can’t lock from IR'
+        + (nextPhrase ? (' · ' + nextPhrase) : ''),
+      cls: 'rec-sit'
+    };
+  }
+
+  /* ——— Taxi (TX): ≤ taxi_years NBA seasons — never locks ——— */
+  if (onTaxi){
+    if (!isTaxiEligiblePlayer(r.p)){
+      return {
+        action: 'switch',
+        label: 'Activate',
+        reason: 'Taxi is for year ≤' + (taxiYears + 1)
+          + ' players'
+          + (Number.isFinite(yearsExp) ? (' · yr ' + (yearsExp + 1)) : '')
+          + ' · move to BN/start',
+        cls: 'rec-switch'
+      };
+    }
+    if (scored != null && bank != null && scored + 1e-9 >= bank){
+      if (slot){
+        return {
+          action: 'switch',
+          label: 'Start · ' + slot.label + ' then Lock',
+          reason: formatFp(scored) + ' ≥ Bank ' + bank
+            + ' · can’t lock from TX · start @ ' + slot.label + ' first',
+          cls: 'rec-switch'
+        };
+      }
+      return {
+        action: 'wait',
+        label: 'Wait',
+        reason: formatFp(scored) + ' ≥ Bank ' + bank
+          + ' · can’t lock from TX · no open start slot',
+        cls: 'rec-wait'
+      };
+    }
+    return {
+      action: 'wait',
+      label: 'Taxi',
+      reason: 'TX stash · yr ≤' + (taxiYears + 1)
+        + (Number.isFinite(yearsExp) ? (' · yr ' + (yearsExp + 1)) : '')
+        + ' · swap only with BN (same cap)'
+        + (nextPhrase ? (' · ' + nextPhrase) : ''),
+      cls: 'rec-wait'
+    };
+  }
 
   /* ——— Bench: only Switch when they should come in over a starter ——— */
   if (bench){
     if (injury === 'OUT' || injury === 'O' || injury === 'IR'){
+      const irOpen = Math.max(0,
+        ((state.league && state.league.settings && Number(state.league.settings.reserve_slots)) || 0)
+        - ((pack.ir || []).length));
+      if (irOpen > 0){
+        return {
+          action: 'sit',
+          label: 'Move to IR',
+          reason: 'OUT · IR is for injured · frees a BN slot',
+          cls: 'rec-sit'
+        };
+      }
       return {
         action: 'sit',
         label: 'Sit',
@@ -2102,13 +2251,34 @@ function renderAdvice(pair, leftPack, rightPack){
       + '.</li>');
   }
 
+  const stashBits = focusPack.rows.filter(r =>
+    r.rec && (r.bucket === 'IR' || r.bucket === 'TX')
+    && (r.rec.action === 'switch' || r.rec.label === 'Move to IR' || r.rec.label === 'IR' || r.rec.label === 'Taxi')
+  ).slice(0, 4);
+  if (stashBits.length){
+    tips.push('<li><span class="tag news">IR / Taxi</span>'
+      + stashBits.map(r => '<strong>' + escapeHtml(playerName(r.p)) + '</strong> '
+        + escapeHtml(r.rec.label)
+        + ' <span style="color:var(--ink-dim)">(' + escapeHtml(r.rec.reason) + ')</span>')
+        .join(' · ')
+      + '.</li>');
+  }
+
   el.innerHTML = '<h2>Advice · ' + escapeHtml(focusSide.franchise.team) + '</h2><ul>' + tips.join('') + '</ul>';
 }
 
 function slotBadgeHtml(pid, slotKey){
-  const label = slotDisplayLabel(slotKey);
+  const raw = String(slotKey == null ? '' : slotKey).toUpperCase();
+  const label = (raw === 'IR' || raw === 'TX' || raw === 'TAXI')
+    ? (raw === 'TAXI' ? 'TX' : raw)
+    : slotDisplayLabel(slotKey);
   const cls = slotBadgeClass(label);
-  return '<span class="slot-badge ' + cls + '" title="Sleeper lineup slot (read-only)">'
+  const tip = label === 'IR'
+    ? 'IR — injured players only (read-only)'
+    : (label === 'TX'
+      ? ('Taxi — year ≤' + (leagueTaxiYears() + 1) + ' NBA (read-only)')
+      : 'Sleeper lineup slot (read-only)');
+  return '<span class="slot-badge ' + cls + '" title="' + escapeHtml(tip) + '">'
     + escapeHtml(label) + '</span>';
 }
 
@@ -2219,10 +2389,16 @@ function playerRowHtml(r){
         + (openPts != null ? (' @ ' + formatFp(openPts)) : '')
         + ' — click to manual-lock the FP, or tap Lock-In in Sleeper.')
       : 'Click to manually lock a night’s FP. (Schedule-logo slash = wasn’t started — can’t lock that night in Sleeper.)');
-  const trCls = (r.locked ? 'locked' : '') + (!r.starter ? ' bench' : '');
+  const bucketCls = r.bucket === 'IR' ? ' ir'
+    : (r.bucket === 'TX' ? ' taxi' : (!r.starter ? ' bench' : ''));
+  const trCls = (r.locked ? 'locked' : '') + bucketCls;
   const elig = eligHtml(r.p);
+  const yearsExp = r.p && r.p.years_exp != null ? Number(r.p.years_exp) : null;
   const meta = (r.p.team ? (' · ' + escapeHtml(r.p.team)) : '')
-    + (r.scout.injury ? (' · ' + escapeHtml(r.scout.injury)) : '');
+    + (r.scout.injury ? (' · ' + escapeHtml(r.scout.injury)) : '')
+    + (r.bucket === 'TX' && Number.isFinite(yearsExp)
+      ? (' · yr ' + (yearsExp + 1)) : '');
+  const badgeSlot = (r.bucket === 'IR' || r.bucket === 'TX') ? r.slotLabel : r.slot;
   return '<tr class="' + trCls.trim() + '">'
     + '<td class="player"><div class="player-row"><div class="player-main">'
     + escapeHtml(playerName(r.p))
@@ -2231,7 +2407,7 @@ function playerRowHtml(r){
     + pillTxt + '</button>'
     + '<span class="sub">' + elig + meta + '</span>'
     + slateHtml(r)
-    + '</div>' + slotBadgeHtml(r.pid, r.slot) + '</div></td>'
+    + '</div>' + slotBadgeHtml(r.pid, badgeSlot) + '</div></td>'
     + bankStackHtml(r)
     + '<td class="rec ' + escapeHtml(rec.cls) + '" title="' + escapeHtml(rec.reason || '') + '">'
     + '<span class="rec-act">' + escapeHtml(rec.label) + '</span>'
@@ -2253,11 +2429,17 @@ function renderSide(side, pack){
   const fr = side.franchise;
   const starters = pack.starters || [];
   const bench = pack.bench || [];
+  const ir = pack.ir || [];
+  const taxi = pack.taxi || [];
   const body = []
     .concat(starters.length ? ['<tr class="section-row"><td colspan="3">Starters</td></tr>'] : [])
     .concat(starters.map(playerRowHtml))
     .concat(bench.length ? ['<tr class="section-row"><td colspan="3">Bench</td></tr>'] : [])
     .concat(bench.map(playerRowHtml))
+    .concat(ir.length ? ['<tr class="section-row"><td colspan="3">IR · injured only</td></tr>'] : [])
+    .concat(ir.map(playerRowHtml))
+    .concat(taxi.length ? ['<tr class="section-row"><td colspan="3">Taxi · yr ≤' + (leagueTaxiYears() + 1) + '</td></tr>'] : [])
+    .concat(taxi.map(playerRowHtml))
     .join('');
 
   const lockedN = pack.lockedScores.length;
@@ -2336,7 +2518,8 @@ function render(){
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
-    + 'Only starting-slot nights can lock — BN never banks (Start then Lock). '
+    + 'Only starting-slot nights can lock — BN / IR / TX never bank (Start then Lock). '
+    + 'IR = injured only. Taxi (TX) = swap with BN players in year ≤' + (leagueTaxiYears() + 1) + '. '
     + 'Locks come from screenshots (locked chip or LOCK-IN) or manual override — never Sleeper/ESPN API week points. '
     + 'A transparent slash through a schedule logo means they weren’t in the starting lineup that night and that game can’t be locked. '
     + 'Bank column lists Avg, Bank ≥ (frozen at lock time), and Lock. '
