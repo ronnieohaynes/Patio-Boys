@@ -11,7 +11,7 @@ on:
       seasons:
         description: 'Sleeper season years (space-separated), e.g. "2025 2024"'
         required: false
-        default: '2025 2024'
+        default: '2026 2025'
       workers:
         description: 'Parallel ESPN fetch workers'
         required: false
@@ -41,7 +41,7 @@ jobs:
 
       - name: Rebuild gamelog snapshot
         env:
-          SEASONS: ${{ github.event.inputs.seasons || '2025 2024' }}
+          SEASONS: ${{ github.event.inputs.seasons || '2026 2025' }}
           WORKERS: ${{ github.event.inputs.workers || '12' }}
         run: |
           set -euo pipefail

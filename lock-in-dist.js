@@ -1,14 +1,33 @@
 /* Lock-in distribution model for Patio Boys.
-   Smash samples prefer full-season ESPN box scores (nba-gamelogs-snapshot.js),
-   scored live under league settings. Falls back to Sleeper fantasy-week rows
-   when the snapshot is missing a season. Lock-in weeks sum 10 chosen game
-   scores into starter spots, so per-game μ / σ / hit-rates are the unit. */
+   Smash samples use each player’s last LAST_N_GAMES ESPN box scores
+   (nba-gamelogs-snapshot.js), scored live under league settings. Falls back to
+   Sleeper fantasy-week rows when the snapshot is missing a season. Lock-in
+   weeks sum 10 chosen game scores into starter spots, so per-game μ / σ /
+   hit-rates are the unit. */
 (function(global){
   'use strict';
 
   const DEFAULT_MARKS = [30, 40, 50];
   const LOCK_SLOTS = 10;
+  /* Rolling window for Avg / σ / Bank / Lock smash stats platform-wide. */
+  const LAST_N_GAMES = 25;
   const GAMELOG_FIELDS = ['pts', 'reb', 'oreb', 'ast', 'stl', 'blk', 'to', 'fgmi', 'ftmi', 'tpm', 'min'];
+
+  function takeLastN(arr, n){
+    const a = arr || [];
+    const k = Math.max(1, Number(n) || LAST_N_GAMES);
+    return a.length <= k ? a.slice() : a.slice(-k);
+  }
+
+  function gamelogSeasonKeysAscending(){
+    const snap = gamelogSnapshot();
+    if (!snap || !snap.seasons) return [];
+    return Object.keys(snap.seasons)
+      .map(Number)
+      .filter(y => Number.isFinite(y))
+      .sort((a, b) => a - b)
+      .map(String);
+  }
 
   /* Abramowitz & Stegun normal CDF (good enough for hit-rate display). */
   function normalCdf(z){
@@ -246,20 +265,33 @@
     return out;
   }
 
-  function buildSamplesFromGamelogs(statsSeason, scoring){
+  /* Last LAST_N_GAMES box scores across seasons (oldest→newest), scored under league settings. */
+  function buildSamplesFromGamelogs(statsSeason, scoring, opts){
+    const options = opts || {};
+    const lastN = options.lastN != null ? Number(options.lastN) : LAST_N_GAMES;
     const snap = gamelogSnapshot();
     if (!snap || !snap.seasons) return null;
-    const seasonKey = String(statsSeason);
-    const byPid = snap.seasons[seasonKey];
-    if (!byPid) return null;
+    const seasonKeys = gamelogSeasonKeysAscending();
+    if (!seasonKeys.length) return null;
     const fields = snap.fields || GAMELOG_FIELDS;
+    const pidSet = new Set();
+    seasonKeys.forEach(sk => {
+      Object.keys(snap.seasons[sk] || {}).forEach(pid => pidSet.add(String(pid)));
+    });
+    if (!pidSet.size) return null;
     const samplesByPlayer = {};
     const per30ByPlayer = {};
     const per36ByPlayer = {};
     const mpgByPlayer = {};
     const fpPerMinByPlayer = {};
-    Object.keys(byPid).forEach(pid => {
-      const packed = scoreGamelogPlayer(byPid[pid], fields, scoring);
+    pidSet.forEach(pid => {
+      const rows = [];
+      seasonKeys.forEach(sk => {
+        const games = (snap.seasons[sk] || {})[pid];
+        if (!games || !games.length) return;
+        for (let i = 0; i < games.length; i++) rows.push(games[i]);
+      });
+      const packed = scoreGamelogPlayer(takeLastN(rows, lastN), fields, scoring);
       if (!packed) return;
       samplesByPlayer[pid] = packed.scored;
       if (packed.fpPerMin != null){
@@ -269,20 +301,28 @@
         mpgByPlayer[pid] = packed.mpg;
       }
     });
-    return {samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer};
+    return {
+      samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer,
+      lastN: lastN, seasons: seasonKeys
+    };
   }
 
   /* Chunked scoring so HQ tab clicks can paint between batches. */
   async function buildSamplesFromGamelogsAsync(statsSeason, scoring, opts){
     const options = opts || {};
     const chunk = Math.max(20, Number(options.chunk) || 40);
+    const lastN = options.lastN != null ? Number(options.lastN) : LAST_N_GAMES;
     const snap = gamelogSnapshot();
     if (!snap || !snap.seasons) return null;
-    const seasonKey = String(statsSeason);
-    const byPid = snap.seasons[seasonKey];
-    if (!byPid) return null;
+    const seasonKeys = gamelogSeasonKeysAscending();
+    if (!seasonKeys.length) return null;
     const fields = snap.fields || GAMELOG_FIELDS;
-    const pids = Object.keys(byPid);
+    const pidSet = new Set();
+    seasonKeys.forEach(sk => {
+      Object.keys(snap.seasons[sk] || {}).forEach(pid => pidSet.add(String(pid)));
+    });
+    const pids = Array.from(pidSet);
+    if (!pids.length) return null;
     const samplesByPlayer = {};
     const per30ByPlayer = {};
     const per36ByPlayer = {};
@@ -290,7 +330,13 @@
     const fpPerMinByPlayer = {};
     for (let i = 0; i < pids.length; i++){
       const pid = pids[i];
-      const packed = scoreGamelogPlayer(byPid[pid], fields, scoring);
+      const rows = [];
+      for (let s = 0; s < seasonKeys.length; s++){
+        const games = (snap.seasons[seasonKeys[s]] || {})[pid];
+        if (!games || !games.length) continue;
+        for (let g = 0; g < games.length; g++) rows.push(games[g]);
+      }
+      const packed = scoreGamelogPlayer(takeLastN(rows, lastN), fields, scoring);
       if (packed){
         samplesByPlayer[pid] = packed.scored;
         if (packed.fpPerMin != null){
@@ -302,7 +348,10 @@
       }
       if ((i + 1) % chunk === 0) await yieldToMain();
     }
-    return {samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer};
+    return {
+      samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer,
+      lastN: lastN, seasons: seasonKeys
+    };
   }
 
   /* Full-season FP/G from Sleeper season totals (matches Sleeper app averages). */
@@ -342,7 +391,8 @@
     const sampleMean = arr.reduce((s, v) => s + v, 0) / n;
     const variance = arr.reduce((s, v) => s + Math.pow(v - sampleMean, 2), 0) / n;
     const stdev = Math.sqrt(variance);
-    /* Prefer full-season FP/G for Avg (Sleeper-aligned); keep σ from game samples. */
+    /* Optional seasonInfo override (legacy). Default Avg = sample mean of the
+       last-N window already in `samples`. */
     const seasonAvg = seasonInfo && Number.isFinite(seasonInfo.avg) ? seasonInfo.avg : null;
     const seasonGp = seasonInfo && Number.isFinite(seasonInfo.gp) ? seasonInfo.gp : null;
     const mean = seasonAvg != null ? seasonAvg : sampleMean;
@@ -2343,8 +2393,6 @@
     const usingBox = !!(boxPack && boxPack.samplesByPlayer
       && Object.keys(boxPack.samplesByPlayer).length);
 
-    let seasonStats = null;
-    let weeklyResults = [];
     let samplesByPlayer;
     let weeksFound = 0;
     let sampleSource = 'weekly';
@@ -2354,9 +2402,6 @@
     let fpPerMinByPlayer = {};
 
     if (usingBox){
-      seasonStats = await fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
-        .then(r => r.ok ? r.json() : null)
-        .catch(() => null);
       samplesByPlayer = boxPack.samplesByPlayer;
       per30ByPlayer = boxPack.per30ByPlayer || {};
       per36ByPlayer = boxPack.per36ByPlayer || {};
@@ -2366,29 +2411,30 @@
       sampleSource = 'boxscore';
     } else {
       const weeks = Array.from({length: 25}, (_, i) => i + 1);
-      const pack = await Promise.all([
-        fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason)
+      const weeklyResults = await Promise.all(weeks.map(w =>
+        fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
           .then(r => r.ok ? r.json() : null)
-          .catch(() => null),
-        ...weeks.map(w =>
-          fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + statsSeason + '/' + w)
-            .then(r => r.ok ? r.json() : null)
-            .catch(() => null)
-        )
-      ]);
-      seasonStats = pack[0];
-      weeklyResults = pack.slice(1);
+          .catch(() => null)
+      ));
       weeksFound = weeklyResults.filter(w => w && Object.keys(w).length > 0).length;
-      samplesByPlayer = buildSamplesByPlayer(weeklyResults, scoreSettings);
+      const rawWeekly = buildSamplesByPlayer(weeklyResults, scoreSettings);
+      samplesByPlayer = {};
+      Object.keys(rawWeekly || {}).forEach(pid => {
+        samplesByPlayer[pid] = takeLastN(rawWeekly[pid], LAST_N_GAMES);
+      });
       sampleSource = 'weekly';
     }
 
     await yieldToMain();
-    const seasonAvgByPid = seasonStats ? buildSeasonAvgMap(seasonStats, scoreSettings) : {};
-    const distMap = buildDistMap(samplesByPlayer, useMarks, seasonAvgByPid);
+    /* Avg / σ / hits all come from the last-N game sample window. */
+    const distMap = buildDistMap(samplesByPlayer, useMarks, null);
     const distPids = Object.keys(distMap);
     for (let i = 0; i < distPids.length; i++){
       const pid = distPids[i];
+      distMap[pid].sampleWindow = LAST_N_GAMES;
+      distMap[pid].sampleSource = sampleSource;
+      distMap[pid].seasonAvg = distMap[pid].mean;
+      distMap[pid].seasonGp = distMap[pid].n;
       const p30 = per30ByPlayer[pid];
       if (p30 != null && Number.isFinite(p30)) distMap[pid].avgPer30 = p30;
       const p36 = per36ByPlayer[pid];
@@ -2408,8 +2454,83 @@
       weeksFound,
       sampleSource,
       gamesFound: weeksFound,
-      seasonAvgCount: Object.keys(seasonAvgByPid).length
+      lastN: LAST_N_GAMES,
+      seasonAvgCount: distPids.length
     };
+  }
+
+  /* Fold new current-season weekly games into the last-N smash window. */
+  async function refreshLiveSeasonAvgs(distMap, opts){
+    const options = opts || {};
+    const season = options.season;
+    const scoring = options.scoring || {};
+    const throughWeek = Math.max(1, Math.min(25, Number(options.throughWeek) || 1));
+    const lastN = options.lastN != null ? Number(options.lastN) : LAST_N_GAMES;
+    const fetchFn = options.fetch || (typeof fetch === 'function' ? fetch : null);
+    const map = distMap || {};
+    if (!season || !fetchFn) return {updated: 0, throughWeek: 0, season: null};
+    const weeks = Array.from({length: throughWeek}, (_, i) => i + 1);
+    const weeklyResults = [];
+    for (let i = 0; i < weeks.length; i++){
+      const w = weeks[i];
+      const row = await fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + season + '/' + w)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null);
+      weeklyResults.push(row);
+      if ((i + 1) % 3 === 0) await yieldToMain();
+    }
+    const samplesByPlayer = buildSamplesByPlayer(weeklyResults, scoring);
+    let updated = 0;
+    const pids = new Set([].concat(Object.keys(map), Object.keys(samplesByPlayer)));
+    pids.forEach(pid => {
+      const live = (samplesByPlayer[pid] || []).filter(v => Number.isFinite(v));
+      if (!live.length) return;
+      let d = map[pid];
+      if (!d){
+        const window = takeLastN(live, lastN);
+        d = playerDist(window, DEFAULT_MARKS, null);
+        if (!d) return;
+        d.avgSource = 'live';
+        d.sampleSource = 'last' + lastN;
+        d.sampleWindow = lastN;
+        d.liveSampleN = live.length;
+        d.priorSamples = [];
+        map[pid] = d;
+        updated++;
+        return;
+      }
+      /* Freeze baseline smash nights once so refreshes don’t duplicate them. */
+      if (!Array.isArray(d.priorSamples)){
+        d.priorSamples = Array.isArray(d.samples) ? d.samples.slice() : [];
+      }
+      if (d.priorAvg == null && d.mean != null && Number.isFinite(Number(d.mean))){
+        d.priorAvg = Number(d.mean);
+      }
+      const prior = d.priorSamples || [];
+      const window = takeLastN(prior.concat(live), lastN);
+      const marks = (d.marks && d.marks.length) ? d.marks : DEFAULT_MARKS;
+      const rebuilt = playerDist(window, marks, null);
+      if (!rebuilt) return;
+      d.n = rebuilt.n;
+      d.mean = rebuilt.mean;
+      d.sampleMean = rebuilt.sampleMean;
+      d.stdev = rebuilt.stdev;
+      d.ceiling = rebuilt.ceiling;
+      d.samples = rebuilt.samples;
+      d.hits = rebuilt.hits;
+      d.normalHits = rebuilt.normalHits;
+      d.marks = rebuilt.marks;
+      d.seasonAvg = rebuilt.mean;
+      d.seasonGp = rebuilt.n;
+      d.avgSource = 'live';
+      d.sampleSource = 'last' + lastN;
+      d.sampleWindow = lastN;
+      d.liveSampleMean = live.reduce((s, v) => s + v, 0) / live.length;
+      d.liveSampleN = live.length;
+      if (d.projOnly) d.projOnly = false;
+      updated++;
+    });
+    return {updated, throughWeek, season: String(season), lastN: lastN};
   }
 
   /* Fetch season totals + weekly samples, score under league settings, attach
@@ -2601,6 +2722,8 @@
   global.LockInDist = {
     DEFAULT_MARKS,
     LOCK_SLOTS,
+    LAST_N_GAMES,
+    takeLastN,
     SMASH_WEIGHTS,
     MIN_SAMPLES_FOR_SMASH,
     BLEND_VET,
@@ -2737,6 +2860,7 @@
     attachLockValuesAsync,
     loadSeasonDistMap,
     fetchLockValueIndex,
+    refreshLiveSeasonAvgs,
     ensureGamelogsLoaded,
     gamelogSnapshot
   };
