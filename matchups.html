@@ -307,7 +307,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261102-ir-taxi';
+    || '20261102-live-avg';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2352,7 +2352,17 @@ function bankStackHtml(r){
     if (scored != null && Number.isFinite(scored)) lockN = scored;
   }
   const grade = lockGradeClass(lockN, avgN, bankN);
-  const title = (r.bank && r.bank.why)
+  const liveN = r.dist && r.dist.avgSource === 'live' ? Number(r.dist.liveSampleN || r.dist.seasonGp) : null;
+  const priorN = r.dist && r.dist.priorAvg != null ? Number(r.dist.priorAvg) : null;
+  const avgWhy = r.dist && r.dist.avgSource === 'live'
+    ? ('Avg = ' + formatFp(avgN) + ' live '
+      + (state.league && state.league.season ? String(state.league.season) : '')
+      + ' form'
+      + (liveN != null && Number.isFinite(liveN) ? (' · ' + liveN + ' wk') : '')
+      + (priorN != null && Number.isFinite(priorN) ? (' · was ' + formatFp(priorN) + ' prior') : ''))
+    : null;
+  const title = [avgWhy, (r.bank && r.bank.why) || null]
+    .filter(Boolean).join(' · ')
     || 'Avg · Bank ≥ · Lock (red < Avg, yellow < Bank, green ≥ Bank)';
   const avgTxt = avgN != null ? formatFp(avgN) : '—';
   const bankTxt = bankN != null ? formatFp(bankN) : '—';
@@ -2366,6 +2376,33 @@ function bankStackHtml(r){
     + '<div class="row lock"><span class="k">Lock</span><span class="v '
     + grade + '">' + escapeHtml(lockTxt) + '</span></div>'
     + '</div></td>';
+}
+
+/* Current-season FP/G from Sleeper weekly rows → updates Matchup Avg as games land. */
+async function ensureLiveSeasonAvgs(force){
+  if (!window.LockInDist || typeof LockInDist.refreshLiveSeasonAvgs !== 'function') return;
+  if (!state.lockByPid || !state.league) return;
+  const season = state.league.season;
+  if (!season) return;
+  const through = Math.max(
+    1,
+    Number(state.week) || 1,
+    Number(state.nbaState && state.nbaState.display_week) || 1,
+    Number(state.nbaState && state.nbaState.leg) || 1,
+    Number(state.nbaState && state.nbaState.week) || 1
+  );
+  const key = String(season) + ':' + through;
+  if (!force && state._liveAvgKey === key) return;
+  try {
+    await LockInDist.refreshLiveSeasonAvgs(state.lockByPid, {
+      season: season,
+      scoring: state.league.scoring_settings || {},
+      throughWeek: through
+    });
+    state._liveAvgKey = key;
+  } catch (e){
+    console.warn('live season avg refresh failed', e);
+  }
 }
 
 function playerRowHtml(r){
@@ -2522,7 +2559,7 @@ function render(){
     + 'IR = injured only. Taxi (TX) = swap with BN players in year ≤' + (leagueTaxiYears() + 1) + '. '
     + 'Locks come from screenshots (locked chip or LOCK-IN) or manual override — never Sleeper/ESPN API week points. '
     + 'A transparent slash through a schedule logo means they weren’t in the starting lineup that night and that game can’t be locked. '
-    + 'Bank column lists Avg, Bank ≥ (frozen at lock time), and Lock. '
+    + 'Bank column lists Avg (live season form from new games), Bank ≥ (frozen at lock time), and Lock. '
     + 'Lock color: red below Avg, yellow between Avg and Bank, green at/above Bank. '
     + 'Rec Lock prefers PG–C before UTIL. Rec suggests tip-order Switch / Wait — this screen does not move players.';
 }
@@ -2591,6 +2628,8 @@ async function loadMatchups(week, opts){
       if (!state.gameFpByPid) state.gameFpByPid = {};
       console.warn('week game FP load failed', e);
     }
+    /* Refresh Avg when the fantasy week advances or user hits Refresh. */
+    await ensureLiveSeasonAvgs(!!refreshLineups);
     render();
     if (status){
       const fpN = Object.keys(state.gameFpByPid || {}).length;
@@ -3843,7 +3882,7 @@ async function load(){
     progress(25, 'Loading dynasty curves…');
     let statsSeason = league.season;
     try {
-      /* Prefer completed smash season when current has thin samples */
+      /* Smash samples / Bank σ from last completed season; Avg overlays live form below. */
       const prev = String(Number(league.season) - 1);
       statsSeason = prev;
     } catch (e) { /* keep */ }
@@ -3862,6 +3901,8 @@ async function load(){
       state.lockByPid = pack.distMap || {};
       if (pack.statsSeason) state.statsSeason = pack.statsSeason;
     }
+    progress(40, 'Updating live averages…');
+    await ensureLiveSeasonAvgs(true);
 
     /* ESPN Mon–Sun slate loads inside loadMatchups for the selected week. */
     state.nbaWeek = {byTeam: {}, oppg: {}, avgOppg: 112, gp: {}, finalEvents: [], week: state.week};

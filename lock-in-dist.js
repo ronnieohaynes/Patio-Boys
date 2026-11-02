@@ -2412,6 +2412,56 @@
     };
   }
 
+  /* Overlay current-season FP/G onto dist.mean from Sleeper weekly rows so
+     Matchup Avg moves as new games post. Keeps prior smash samples for σ/Bank. */
+  async function refreshLiveSeasonAvgs(distMap, opts){
+    const options = opts || {};
+    const season = options.season;
+    const scoring = options.scoring || {};
+    const throughWeek = Math.max(1, Math.min(25, Number(options.throughWeek) || 1));
+    const fetchFn = options.fetch || (typeof fetch === 'function' ? fetch : null);
+    const map = distMap || {};
+    if (!season || !fetchFn) return {updated: 0, throughWeek: 0, season: null};
+    const weeks = Array.from({length: throughWeek}, (_, i) => i + 1);
+    const weeklyResults = [];
+    for (let i = 0; i < weeks.length; i++){
+      const w = weeks[i];
+      const row = await fetchFn('https://api.sleeper.app/v1/stats/nba/regular/' + season + '/' + w)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null);
+      weeklyResults.push(row);
+      if ((i + 1) % 3 === 0) await yieldToMain();
+    }
+    const samplesByPlayer = buildSamplesByPlayer(weeklyResults, scoring);
+    let updated = 0;
+    Object.keys(samplesByPlayer).forEach(pid => {
+      const arr = (samplesByPlayer[pid] || []).filter(v => Number.isFinite(v));
+      if (!arr.length) return;
+      const liveMean = arr.reduce((s, v) => s + v, 0) / arr.length;
+      let d = map[pid];
+      if (!d){
+        d = playerDist(arr, DEFAULT_MARKS, {avg: liveMean, gp: arr.length});
+        if (!d) return;
+        d.avgSource = 'live';
+        d.liveSampleN = arr.length;
+        map[pid] = d;
+        updated++;
+        return;
+      }
+      if (d.priorAvg == null && d.mean != null && Number.isFinite(Number(d.mean))){
+        d.priorAvg = Number(d.mean);
+      }
+      d.mean = liveMean;
+      d.seasonAvg = liveMean;
+      d.seasonGp = arr.length;
+      d.avgSource = 'live';
+      d.liveSampleMean = liveMean;
+      d.liveSampleN = arr.length;
+      updated++;
+    });
+    return {updated, throughWeek, season: String(season)};
+  }
+
   /* Fetch season totals + weekly samples, score under league settings, attach
      Lock OVR + Trade stars. Shared by Intel / Trade Analyzer / later surfaces.
      Also loads statsSeason-1 for the vet 60/20/20 blend when available. */
@@ -2737,6 +2787,7 @@
     attachLockValuesAsync,
     loadSeasonDistMap,
     fetchLockValueIndex,
+    refreshLiveSeasonAvgs,
     ensureGamelogsLoaded,
     gamelogSnapshot
   };
