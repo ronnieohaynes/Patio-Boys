@@ -2412,13 +2412,17 @@
     };
   }
 
-  /* Overlay current-season FP/G onto dist.mean from Sleeper weekly rows so
-     Matchup Avg moves as new games post. Keeps prior smash samples for σ/Bank. */
+  /* Rebuild Matchup smash dists from current-season Sleeper weekly games.
+     Avg / σ / hit rates / Bank all move as new weeks post. When live N is
+     thin, pad with frozen prior-season samples so Bank stays usable. */
   async function refreshLiveSeasonAvgs(distMap, opts){
     const options = opts || {};
     const season = options.season;
     const scoring = options.scoring || {};
     const throughWeek = Math.max(1, Math.min(25, Number(options.throughWeek) || 1));
+    const minLive = Number.isFinite(Number(options.minLiveSamples))
+      ? Number(options.minLiveSamples)
+      : MIN_SAMPLES_FOR_SMASH;
     const fetchFn = options.fetch || (typeof fetch === 'function' ? fetch : null);
     const map = distMap || {};
     if (!season || !fetchFn) return {updated: 0, throughWeek: 0, season: null};
@@ -2434,29 +2438,53 @@
     }
     const samplesByPlayer = buildSamplesByPlayer(weeklyResults, scoring);
     let updated = 0;
-    Object.keys(samplesByPlayer).forEach(pid => {
-      const arr = (samplesByPlayer[pid] || []).filter(v => Number.isFinite(v));
-      if (!arr.length) return;
-      const liveMean = arr.reduce((s, v) => s + v, 0) / arr.length;
+    const pids = new Set([].concat(Object.keys(map), Object.keys(samplesByPlayer)));
+    pids.forEach(pid => {
+      const live = (samplesByPlayer[pid] || []).filter(v => Number.isFinite(v));
+      if (!live.length) return;
+      const liveMean = live.reduce((s, v) => s + v, 0) / live.length;
       let d = map[pid];
       if (!d){
-        d = playerDist(arr, DEFAULT_MARKS, {avg: liveMean, gp: arr.length});
+        d = playerDist(live, DEFAULT_MARKS, {avg: liveMean, gp: live.length});
         if (!d) return;
         d.avgSource = 'live';
-        d.liveSampleN = arr.length;
+        d.sampleSource = 'live';
+        d.liveSampleN = live.length;
+        d.priorSamples = [];
         map[pid] = d;
         updated++;
         return;
       }
+      /* Freeze prior smash nights once so refreshes don’t duplicate them. */
+      if (!Array.isArray(d.priorSamples)){
+        d.priorSamples = Array.isArray(d.samples) ? d.samples.slice() : [];
+      }
       if (d.priorAvg == null && d.mean != null && Number.isFinite(Number(d.mean))){
         d.priorAvg = Number(d.mean);
       }
-      d.mean = liveMean;
+      const prior = d.priorSamples || [];
+      const useLiveOnly = live.length >= minLive;
+      const combined = useLiveOnly ? live.slice() : live.concat(prior);
+      const marks = (d.marks && d.marks.length) ? d.marks : DEFAULT_MARKS;
+      const rebuilt = playerDist(combined, marks, {avg: liveMean, gp: live.length});
+      if (!rebuilt) return;
+      d.n = rebuilt.n;
+      d.mean = rebuilt.mean;
+      d.sampleMean = rebuilt.sampleMean;
+      d.stdev = rebuilt.stdev;
+      d.ceiling = rebuilt.ceiling;
+      d.samples = rebuilt.samples;
+      d.hits = rebuilt.hits;
+      d.normalHits = rebuilt.normalHits;
+      d.marks = rebuilt.marks;
       d.seasonAvg = liveMean;
-      d.seasonGp = arr.length;
+      d.seasonGp = live.length;
       d.avgSource = 'live';
+      d.sampleSource = useLiveOnly ? 'live' : 'live+prior';
       d.liveSampleMean = liveMean;
-      d.liveSampleN = arr.length;
+      d.liveSampleN = live.length;
+      /* Drop proj-only flag once real games exist. */
+      if (d.projOnly) d.projOnly = false;
       updated++;
     });
     return {updated, throughWeek, season: String(season)};
