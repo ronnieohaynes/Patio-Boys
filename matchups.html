@@ -587,6 +587,8 @@ function setFpOverride(pid, pts, meta){
     opp: info.opp || null,
     source: 'manual'
   };
+  /* Drop stale OCR/open bankable marks so Rec can’t keep using the old chip. */
+  if (state.openLockMarks && state.openLockMarks[id]) delete state.openLockMarks[id];
   applyFpOverridesToGameMap();
   saveLockMarks();
   return true;
@@ -1874,15 +1876,15 @@ function latestScoredFp(r){
   return null;
 }
 
-/* Lockable scored night — locked / open confirm / sticky manual FP edit.
-   Manual last-FP edits feed Rec Lock decisions; API box scores alone still don’t. */
+/* Lockable scored night — locked chip, then sticky manual edit, then open confirm.
+   Manual edits must beat stale OCR/open marks so Rec matches the edited chip. */
 function latestLockableFp(r){
   if (!r) return null;
   if (r.lockPts != null && Number.isFinite(Number(r.lockPts))) return Number(r.lockPts);
-  const open = openLockPtsFor(r.pid);
-  if (open != null) return open;
   const ovPts = fpOverridePts(r.pid);
   if (ovPts != null) return ovPts;
+  const open = openLockPtsFor(r.pid);
+  if (open != null) return open;
   return null;
 }
 
