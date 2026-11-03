@@ -933,6 +933,21 @@
     return {block: false, adj: 0, label: null};
   }
 
+  /* Best observed FP in the active window. Prefer current-season live samples
+     when present so Bank doesn’t chase prior-year unicorns (e.g. Melo). */
+  function observedSampleHigh(dist){
+    if (!dist) return null;
+    const live = dist.liveSamples;
+    const arr = (live && live.length) ? live : (dist.samples || []);
+    let hi = null;
+    for (let i = 0; i < arr.length; i++){
+      const n = Number(arr[i]);
+      if (!Number.isFinite(n)) continue;
+      if (hi == null || n > hi) hi = n;
+    }
+    return hi;
+  }
+
   /* Per-player lock plan: FP floor to bank this night into a lock-in week.
      Stars bank near Avg (don't hunt unicorns). Fringe waits for a real smash.
      Early season → pickier; late season → bank sooner so top-10 slots fill.
@@ -1071,6 +1086,23 @@
       guard += 1;
     }
 
+    /* Stars/starters: never set Bank above a night they've actually produced.
+       Hoping for Bank 41 when the season high is still under 40 is unicorn hunting. */
+    const observedHigh = observedSampleHigh(dist);
+    let highCapped = false;
+    const highSource = (dist.liveSamples && dist.liveSamples.length)
+      ? 'season high'
+      : 'sample high';
+    if ((style === 'star' || style === 'starter')
+      && observedHigh != null && Number.isFinite(observedHigh)){
+      const highCap = Math.max(Math.ceil(mean), Math.round(observedHigh));
+      if (mark > highCap){
+        mark = highCap;
+        highCapped = true;
+        rate = rateAt(mark);
+      }
+    }
+
     const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const dowN = Number(options.dow);
     const dowLabel = Number.isFinite(dowN) ? dowNames[((dowN % 7) + 7) % 7] : null;
@@ -1081,6 +1113,10 @@
     else whyBits.push('Stream — wait for a spike');
     if (phase === 'early') whyBits.push('early season · pickier');
     if (phase === 'late') whyBits.push('late season · bank sooner');
+    if (highCapped && observedHigh != null){
+      whyBits.push('capped at ' + highSource + ' '
+        + (Math.round(observedHigh * 10) / 10));
+    }
     if (rosterFloor != null && teamLift > 0){
       whyBits.push('roster top-' + slots + ' ~' + Math.round(rosterFloor));
     } else if (rosterFloor != null && (style === 'fringe' || style === 'stream' || style === 'starter')){
@@ -1119,6 +1155,10 @@
       gamesLeftAdj,
       injuryAdj,
       blocked: false,
+      observedHigh: observedHigh != null
+        ? Math.round(observedHigh * 10) / 10
+        : null,
+      highCapped,
       quality: quality != null && Number.isFinite(quality) ? Math.round(quality * 10) / 10 : null,
       mean: Math.round(mean * 10) / 10,
       why: whyBits.join(' · ')
@@ -2494,6 +2534,7 @@
         d.sampleSource = 'last' + lastN;
         d.sampleWindow = lastN;
         d.liveSampleN = live.length;
+        d.liveSamples = live.slice();
         d.priorSamples = [];
         map[pid] = d;
         updated++;
@@ -2527,6 +2568,7 @@
       d.sampleWindow = lastN;
       d.liveSampleMean = live.reduce((s, v) => s + v, 0) / live.length;
       d.liveSampleN = live.length;
+      d.liveSamples = live.slice();
       if (d.projOnly) d.projOnly = false;
       updated++;
     });
@@ -2793,6 +2835,7 @@
     bankDayAdj,
     bankGamesLeftAdj,
     bankInjuryAdj,
+    observedSampleHigh,
     lockBankPlan,
     SMASH_BOOM_SIGMA,
     SMASH_GRADE_BANDS,
