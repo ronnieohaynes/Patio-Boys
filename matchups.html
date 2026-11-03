@@ -321,7 +321,7 @@
     <div class="shot" id="confirmPanel">
       <div class="confirm-head">
         <h2>Confirm locks</h2>
-        <p class="hint">Pull scored nights from this week’s box scores. Confirm they were in your <strong>starting lineup</strong>, edit FP to match Sleeper, then mark bankable or lock now. Rec uses only what you confirm.</p>
+        <p class="hint">Only nights where box-score FP is <strong>≥ Bank</strong> show up here. Confirm they were in your <strong>starting lineup</strong>, edit FP to match Sleeper, then lock. Under-Bank nights stay out of the queue.</p>
       </div>
       <div id="confirmBody"><p class="confirm-empty">Loading scored nights…</p></div>
       <details class="ocr-fallback" id="ocrFallback">
@@ -351,7 +351,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261103-avginline';
+    || '20261103-overbank';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -713,7 +713,7 @@ function formatNightLabel(game){
   return tip || opp || (game.date || '—');
 }
 
-/* Finished nights for Focus team that still need Started? + FP confirmation. */
+/* Finished nights that look Lock-worthy: box-score FP ≥ Bank, still need confirm. */
 function listConfirmNights(side){
   if (!side || !side.franchise) return [];
   const fr = side.franchise;
@@ -730,17 +730,6 @@ function listConfirmNights(side){
       ? Object.assign({pid: pid}, state.lockByPid[pid])
       : null;
     const scout = scoutPlayer(pid, dist);
-    const slate = (scout && scout.slate) || [];
-    let pick = null;
-    for (let i = slate.length - 1; i >= 0; i--){
-      const g = slate[i];
-      if (!g || (g.kind !== 'fp' && g.kind !== 'played')) continue;
-      const eid = g.eventId || (String(g.date || '') + ':' + String(g.opp || ''));
-      if (isSlashedNight(pid, eid)) continue;
-      pick = Object.assign({}, g, {eventId: eid});
-      break;
-    }
-    if (!pick) return;
     const bank = (() => {
       if (!dist || !window.LockInDist || typeof LockInDist.lockBankPlan !== 'function') return null;
       const plan = LockInDist.lockBankPlan(dist, {
@@ -757,11 +746,25 @@ function listConfirmNights(side){
       });
       return plan && plan.mark != null ? Math.round(Number(plan.mark)) : null;
     })();
+    if (bank == null || !Number.isFinite(bank)) return;
+    const slate = (scout && scout.slate) || [];
+    let pick = null;
+    for (let i = slate.length - 1; i >= 0; i--){
+      const g = slate[i];
+      if (!g || g.kind !== 'fp') continue; /* need a scored box-score night */
+      const fp = g.fp != null && Number.isFinite(Number(g.fp)) ? Number(g.fp) : null;
+      if (fp == null || fp + 1e-9 < bank) continue; /* under Bank → no confirm */
+      const eid = g.eventId || (String(g.date || '') + ':' + String(g.opp || ''));
+      if (isSlashedNight(pid, eid)) continue;
+      pick = Object.assign({}, g, {eventId: eid, fp: fp});
+      break;
+    }
+    if (!pick) return;
     out.push({
       pid: pid,
       p: state.players[pid] || {},
       game: pick,
-      propFp: pick.fp != null && Number.isFinite(Number(pick.fp)) ? Number(pick.fp) : null,
+      propFp: Number(pick.fp),
       sleeperWeek: sleeperWeekPtsFor(pid, side.matchup),
       bank: bank,
       slotLabel: (() => {
@@ -789,9 +792,9 @@ function renderConfirmPanel(pair){
   const focusSide = pair.sides.find(s => s.franchise.team === state.focusTeam) || pair.sides[0];
   const nights = listConfirmNights(focusSide);
   if (!nights.length){
-    body.innerHTML = '<p class="confirm-empty">No open scored nights to confirm for <strong>'
+    body.innerHTML = '<p class="confirm-empty">No Lock-worthy nights to confirm for <strong>'
       + escapeHtml(focusSide.franchise.team)
-      + '</strong>. Finished games you’ve locked, marked bankable, or tagged “wasn’t started” stay out of this queue.</p>';
+      + '</strong>. Only box-score FP ≥ Bank shows up here — under-Bank nights, locked nights, and “wasn’t started” stay out.</p>';
     return;
   }
   const rows = nights.map(n => {
@@ -3007,8 +3010,8 @@ function render(){
   document.getElementById('footNote').textContent =
     'Build ' + (window.MATCHUP_BUILD || '—') + '. '
     + 'Lineup slots mirror Sleeper (read-only). '
-    + 'Confirm locks pulls scored nights — you verify Started + final Sleeper FP, then Bankable or Lock now. '
-    + 'API scores alone never bank. '
+    + 'Confirm locks only queues nights where box-score FP ≥ Bank — verify Started + final Sleeper FP, then lock. '
+    + 'Under-Bank nights need no confirm. API scores alone never bank. '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Under each name: last score (or locked FP) beside Avg (last 25), then next tip / games left. '
     + 'Rec shows Bank ≥ and uses that floor for Lock / Wait / Switch. '
