@@ -159,6 +159,57 @@
   }
   .ocr-fallback[open] summary{margin-bottom:8px;color:var(--ink)}
 
+  .week-plan{
+    margin:18px 0 8px;padding:14px 0 4px;border-top:1px solid var(--hairline);
+  }
+  .week-plan-head{
+    display:flex;flex-wrap:wrap;gap:10px 18px;align-items:baseline;justify-content:space-between;
+    margin-bottom:10px;
+  }
+  .week-plan-head h2{
+    font-family:'Anton',sans-serif;text-transform:uppercase;font-size:20px;margin:0;letter-spacing:.03em;
+  }
+  .week-plan-head .pace{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);
+    font-variant-numeric:tabular-nums;
+  }
+  .week-plan-head .pace strong{color:var(--gold);font-weight:600}
+  .week-plan-head .pace.on{color:var(--green)}
+  .week-plan-head .pace.behind{color:var(--coral)}
+  .week-plan-metrics{
+    display:flex;flex-wrap:wrap;gap:14px 22px;margin:0 0 12px;
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);
+    font-variant-numeric:tabular-nums;
+  }
+  .week-plan-metrics .m strong{
+    display:block;font-size:18px;color:var(--ink);font-weight:600;letter-spacing:.01em;
+  }
+  .week-plan-metrics .m .lbl{
+    font-size:10px;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;
+  }
+  .week-plan-copy{
+    font-size:13.5px;line-height:1.45;color:var(--ink);margin:0 0 10px;max-width:46rem;
+  }
+  .week-plan-lines{
+    list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;
+  }
+  .week-plan-lines li{
+    display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);
+    font-variant-numeric:tabular-nums;
+  }
+  .week-plan-lines .who{color:var(--ink);font-weight:600;min-width:7.5rem}
+  .week-plan-lines .tag-mini{
+    display:inline-block;font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+    padding:1px 5px;border-radius:3px;border:1px solid var(--hairline);color:var(--ink-dim);
+  }
+  .week-plan-lines .tag-mini.locked{border-color:var(--green);color:var(--green)}
+  .week-plan-lines .tag-mini.ready{border-color:var(--gold);color:var(--gold)}
+  .week-plan-lines .tag-mini.plan{border-color:var(--hairline);color:var(--ink)}
+  .week-plan-empty{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);margin:0;
+  }
+
   .sides{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   @media (max-width:820px){.sides{grid-template-columns:1fr}}
   .side{
@@ -344,6 +395,16 @@
       </details>
     </div>
 
+    <div class="week-plan" id="weekPlan" hidden>
+      <div class="week-plan-head">
+        <h2 id="weekPlanTitle">Week plan</h2>
+        <p class="pace" id="weekPlanPace"></p>
+      </div>
+      <div class="week-plan-metrics" id="weekPlanMetrics"></div>
+      <p class="week-plan-copy" id="weekPlanCopy"></p>
+      <ul class="week-plan-lines" id="weekPlanLines"></ul>
+    </div>
+
     <div class="report-head">
       <h1 id="detailTitle">Matchup</h1>
       <p id="detailSub"></p>
@@ -358,7 +419,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261103-editfp2';
+    || '20261103-weekplan';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -587,6 +648,8 @@ function setFpOverride(pid, pts, meta){
     opp: info.opp || null,
     source: 'manual'
   };
+  /* Drop stale OCR/open bankable marks so Rec can’t keep using the old chip. */
+  if (state.openLockMarks && state.openLockMarks[id]) delete state.openLockMarks[id];
   applyFpOverridesToGameMap();
   saveLockMarks();
   return true;
@@ -918,7 +981,9 @@ function listConfirmNights(side){
     }
     if (!pick) return;
     const bank = (() => {
-      if (!dist || !window.LockInDist || typeof LockInDist.lockBankPlan !== 'function') return null;
+      if (!dist || !window.LockInDist || typeof LockInDist.lockBankPlan !== 'function'){
+        return {mark: null, style: null};
+      }
       const plan = LockInDist.lockBankPlan(dist, {
         week: state.week,
         seasonWeeks: Number(state.league && state.league.settings
@@ -931,7 +996,11 @@ function listConfirmNights(side){
         gamesThisWeek: scout && scout.gamesThisWeek,
         injury: scout && scout.injury
       });
-      return plan && plan.mark != null ? Math.round(Number(plan.mark)) : null;
+      if (!(plan && plan.mark != null)) return {mark: null, style: plan && plan.style || null};
+      return {
+        mark: Math.round(Number(plan.mark)),
+        style: plan.style || null
+      };
     })();
     out.push({
       pid: pid,
@@ -939,7 +1008,8 @@ function listConfirmNights(side){
       game: pick,
       propFp: pick.fp != null && Number.isFinite(Number(pick.fp)) ? Number(pick.fp) : null,
       sleeperWeek: sleeperWeekPtsFor(pid, side.matchup),
-      bank: bank,
+      bank: bank.mark,
+      bankStyle: bank.style,
       slotLabel: (() => {
         const sk = slotKeyForPidOnSide(side, pid);
         return sk === 'BN' ? 'BN' : slotDisplayLabel(sk);
@@ -978,7 +1048,7 @@ function renderConfirmPanel(pair){
     const bank = n.bank != null ? String(n.bank) : '—';
     const suggest = n.propFp != null ? formatFp(n.propFp)
       : (n.sleeperWeek != null ? formatFp(n.sleeperWeek) : '');
-    const over = n.propFp != null && n.bank != null && n.propFp + 1e-9 >= n.bank;
+    const over = meetsBank(n.propFp, n.bank, n.bankStyle);
     return '<tr data-confirm-pid="' + escapeHtml(String(n.pid)) + '"'
       + ' data-event-id="' + escapeHtml(String(n.game.eventId || '')) + '"'
       + ' data-date="' + escapeHtml(String(n.game.date || '')) + '"'
@@ -1874,15 +1944,15 @@ function latestScoredFp(r){
   return null;
 }
 
-/* Lockable scored night — locked / open confirm / sticky manual FP edit.
-   Manual last-FP edits feed Rec Lock decisions; API box scores alone still don’t. */
+/* Lockable scored night — locked chip, then sticky manual edit, then open confirm.
+   Manual edits must beat stale OCR/open marks so Rec matches the edited chip. */
 function latestLockableFp(r){
   if (!r) return null;
   if (r.lockPts != null && Number.isFinite(Number(r.lockPts))) return Number(r.lockPts);
-  const open = openLockPtsFor(r.pid);
-  if (open != null) return open;
   const ovPts = fpOverridePts(r.pid);
   if (ovPts != null) return ovPts;
+  const open = openLockPtsFor(r.pid);
+  if (open != null) return open;
   return null;
 }
 
@@ -2105,10 +2175,38 @@ function nextTipMs(scout){
   return fromTip(row.tipIso, row.date);
 }
 
+/* Bank ≥ is a rounded integer. Flat ±1 for everyone is too soft for fringe
+   smash bars. Stars/starters already bank near Avg — give them 1 FP of
+   near-miss slack (Melo 40 vs Bank 41). Fringe/stream stay exact. */
+const BANK_CLOSE_STAR_FP = 1;
+
+function bankCloseFp(style){
+  const s = String(style || '').toLowerCase();
+  if (s === 'star' || s === 'starter' || s === 'locked') return BANK_CLOSE_STAR_FP;
+  return 0;
+}
+
+function meetsBank(scored, bank, style){
+  const s = scored != null ? Number(scored) : NaN;
+  const b = bank != null ? Number(bank) : NaN;
+  if (!Number.isFinite(s) || !Number.isFinite(b)) return false;
+  return s + 1e-9 >= b - bankCloseFp(style);
+}
+
+function bankMeetPhrase(scored, bank, style){
+  const s = Number(scored);
+  const b = Number(bank);
+  if (!Number.isFinite(s) || !Number.isFinite(b)) return '';
+  if (s + 1e-9 >= b) return formatFp(s) + ' ≥ Bank ' + formatFp(b);
+  const close = bankCloseFp(style);
+  if (close > 0) return formatFp(s) + ' ≈ Bank ' + formatFp(b) + ' (within ' + close + ')';
+  return formatFp(s) + ' ≥ Bank ' + formatFp(b);
+}
+
 function isBankableNow(r){
   const scored = latestLockableFp(r);
   const bank = r && r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
-  return scored != null && bank != null && scored + 1e-9 >= bank;
+  return meetsBank(scored, bank, r && r.bank && r.bank.style);
 }
 
 function isBenchRow(r){
@@ -2210,8 +2308,9 @@ function starterTipOpportunityOpen(starter, nowMs){
   const now = nowMs != null ? Number(nowMs) : Date.now();
   const scored = latestLockableFp(starter);
   const bank = starter.bank && starter.bank.mark != null ? Number(starter.bank.mark) : null;
-  /* Scored night already missed Bank — opportunity decided, slot free. */
-  if (scored != null && bank != null && scored + 1e-9 < bank) return false;
+  /* Scored night already missed Bank (incl. near-miss window) — slot free. */
+  if (scored != null && bank != null
+    && !meetsBank(scored, bank, starter.bank && starter.bank.style)) return false;
   const tip = nextTipMs(starter.scout);
   if (tip == null) return false;
   /* Before tip, and for ~25m after tip while the night settles, keep them. */
@@ -2340,6 +2439,7 @@ function buildRec(r, pack){
   /* Only confirmed / OCR / locked nights — raw ESPN FP isn’t bankable until you confirm. */
   const scored = latestLockableFp(r);
   const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const bankStyle = r.bank && r.bank.style;
   const open = openLockSlots(pack);
   /* Position locks first; UTIL last (even if they’re currently sitting in UTIL). */
   const slot = lockSlotForPlayer(r, open);
@@ -2383,12 +2483,12 @@ function buildRec(r, pack){
         cls: 'rec-switch'
       };
     }
-    if (scored != null && bank != null && scored + 1e-9 >= bank){
+    if (meetsBank(scored, bank, bankStyle)){
       if (slot){
         return {
           action: 'switch',
           label: 'Start · ' + slot.label + ' then Lock',
-          reason: formatFp(scored) + ' ≥ Bank ' + bank
+          reason: bankMeetPhrase(scored, bank, bankStyle)
             + ' · can’t lock from TX · start @ ' + slot.label + ' first',
           cls: 'rec-switch'
         };
@@ -2396,7 +2496,7 @@ function buildRec(r, pack){
       return {
         action: 'wait',
         label: 'Wait',
-        reason: formatFp(scored) + ' ≥ Bank ' + bank
+        reason: bankMeetPhrase(scored, bank, bankStyle)
           + ' · can’t lock from TX · no open start slot',
         cls: 'rec-wait'
       };
@@ -2449,12 +2549,12 @@ function buildRec(r, pack){
       };
     }
     /* Bench can’t lock — only starting slots bank. Point them at a start slot. */
-    if (scored != null && bank != null && scored + 1e-9 >= bank){
+    if (meetsBank(scored, bank, bankStyle)){
       if (slot){
         return {
           action: 'switch',
           label: 'Start · ' + slot.label + ' then Lock',
-          reason: formatFp(scored) + ' ≥ Bank ' + bank
+          reason: bankMeetPhrase(scored, bank, bankStyle)
             + ' · can’t lock from BN · start @ ' + slot.label + ' first'
             + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : '')
             + (dayHint ? (' · ' + dayHint) : ''),
@@ -2464,7 +2564,7 @@ function buildRec(r, pack){
       return {
         action: 'wait',
         label: 'Wait',
-        reason: formatFp(scored) + ' ≥ Bank ' + bank
+        reason: bankMeetPhrase(scored, bank, bankStyle)
           + ' · can’t lock from BN · no open start slot',
         cls: 'rec-wait'
       };
@@ -2535,8 +2635,9 @@ function buildRec(r, pack){
   }
 
   /* Bankable night in a start slot — lock before anything else.
-     Prefer a position slot over UTIL when recommending where to bank. */
-  if (scored != null && bank != null && scored + 1e-9 >= bank){
+     Prefer a position slot over UTIL when recommending where to bank.
+     Stars/starters: near-miss within BANK_CLOSE_STAR_FP (e.g. 40 vs Bank 41). */
+  if (meetsBank(scored, bank, bankStyle)){
     const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
     if (slot){
       const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
@@ -2546,14 +2647,14 @@ function buildRec(r, pack){
       return {
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: formatFp(scored) + ' ≥ Bank ' + bank + moveBit + utilLast + urgency,
+        reason: bankMeetPhrase(scored, bank, bankStyle) + moveBit + utilLast + urgency,
         cls: 'rec-lock'
       };
     }
     return {
       action: 'lock',
       label: 'Lock',
-      reason: formatFp(scored) + ' ≥ Bank ' + bank + ' · no open slot' + urgency,
+      reason: bankMeetPhrase(scored, bank, bankStyle) + ' · no open slot' + urgency,
       cls: 'rec-lock'
     };
   }
@@ -2840,6 +2941,7 @@ function renderAdvice(pair, leftPack, rightPack){
     + (gap > 0 ? (' · still <strong>' + gap + '</strong> locked FP short of ' + goal) : '')
     + '.</li>');
 
+  const weekPlan = buildWeekLockPlan(focusPack);
   tips.push('<li><span class="tag lock">Banked</span><strong>'
     + escapeHtml(focusSide.franchise.team) + '</strong> has <strong>' + lockedSum + ' / ' + goal
     + '</strong> locked FP'
@@ -2855,6 +2957,18 @@ function renderAdvice(pair, leftPack, rightPack){
       ? (' · remaining top-' + leftSlots + ' bar ~' + Math.round(focusPack.opts.rosterFloor))
       : '')
     + '. Confirm scored nights above (Started + final Sleeper FP) — API scores never bank alone.</li>');
+
+  tips.push('<li><span class="tag lock">Week plan</span>From this roster, projecting <strong>'
+    + Math.round(weekPlan.projected) + '</strong> locked FP'
+    + ' (locked ' + Math.round(weekPlan.lockedSum)
+    + (weekPlan.slotsLeft > 0
+      ? (' + ~' + Math.round(weekPlan.expectedAdd) + ' from ' + weekPlan.slotsLeft + ' more nights')
+      : '')
+    + '). League floor is <strong>' + goal + '</strong>'
+    + (weekPlan.vsGoal >= -5
+      ? ' — on pace.'
+      : (' — about <strong>' + Math.round(Math.abs(weekPlan.vsGoal)) + '</strong> short unless banks smash.'))
+    + ' See the Week plan panel for the night-by-night map; it updates all week.</li>');
 
   const focusPts = focusSide.points;
   const oppPts = oppSide.points;
@@ -2956,12 +3070,12 @@ function formatFp(v){
   return Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1);
 }
 
-/* Lock score vs Avg / Bank: red < Avg, yellow Avg..Bank, green ≥ Bank. */
-function lockGradeClass(lockN, avgN, bankN){
+/* Lock score vs Avg / Bank: red < Avg, yellow Avg..Bank, green at/near Bank. */
+function lockGradeClass(lockN, avgN, bankN, style){
   if (lockN == null || !Number.isFinite(lockN)) return '';
   if (avgN != null && Number.isFinite(avgN) && lockN + 1e-9 < avgN) return 'lock-red';
+  if (meetsBank(lockN, bankN, style)) return 'lock-green';
   if (bankN != null && Number.isFinite(bankN) && lockN + 1e-9 < bankN) return 'lock-yellow';
-  if (bankN != null && Number.isFinite(bankN) && lockN + 1e-9 >= bankN) return 'lock-green';
   if (avgN != null && Number.isFinite(avgN) && lockN + 1e-9 >= avgN) return 'lock-yellow';
   return '';
 }
@@ -2986,11 +3100,12 @@ function slateHtml(r){
   const chips = [];
   const avgN = r.dist && r.dist.mean != null ? Number(r.dist.mean) : null;
   const bankN = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const bankStyle = r.bank && r.bank.style;
 
   if (r.locked){
     const lockPts = r.lockPts != null && Number.isFinite(Number(r.lockPts)) ? Number(r.lockPts) : null;
     if (lockPts != null){
-      const grade = lockGradeClass(lockPts, avgN, bankN);
+      const grade = lockGradeClass(lockPts, avgN, bankN, bankStyle);
       chips.push(
         '<span class="fp-chip lock'
         + (grade ? (' ' + grade) : '')
@@ -3011,7 +3126,7 @@ function slateHtml(r){
     /* Always prefer sticky manual edit for the chip number. */
     const showFp = ovPts != null ? ovPts : (lockable != null ? lockable : lastFp);
     if (showFp != null && Number.isFinite(showFp)){
-      const grade = lockGradeClass(showFp, avgN, bankN);
+      const grade = lockGradeClass(showFp, avgN, bankN, bankStyle);
       const edited = ovPts != null;
       const title = edited
         ? ('Manual FP ' + formatFp(showFp)
@@ -3132,8 +3247,13 @@ function playerRowHtml(r){
       ? (' · yr ' + (yearsExp + 1)) : '');
   const badgeSlot = (r.bucket === 'IR' || r.bucket === 'TX') ? r.slotLabel : r.slot;
   const bankN = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const closeFp = bankCloseFp(r.bank && r.bank.style);
   const bankTitle = (r.bank && r.bank.why) || (bankN != null
-    ? ('Bank ≥' + formatFp(bankN) + ' — Rec uses this floor for Lock / Wait / Switch')
+    ? ('Bank ≥' + formatFp(bankN)
+      + (closeFp > 0
+        ? (' — Lock from ≥' + formatFp(Math.max(0, bankN - closeFp))
+          + ' (star/starter within ' + closeFp + ')')
+        : ' — exact floor for fringe/stream'))
     : '');
   const bankLine = bankN != null
     ? ('<span class="rec-bank" title="' + escapeHtml(bankTitle) + '">Bank ≥'
@@ -3157,13 +3277,247 @@ function playerRowHtml(r){
     + '</tr>';
 }
 
-const LOCK_FP_GOAL = 400; /* Weekly locked-in FP floor — bank toward this every week. */
+const LOCK_FP_GOAL = 400; /* League weekly locked-in FP floor — aspirational every week. */
 
 function lockedFpTotal(pack){
   return (pack && pack.lockedScores || []).reduce((s, x) => {
     const n = Number(x);
     return s + (Number.isFinite(n) ? n : 0);
   }, 0);
+}
+
+/* Personnel week plan: locked FP + best remaining lockable nights from THIS
+   roster (Bank floors / scored bankable / Avg when no Bank). Updates as locks
+   land, scores confirm, and games tip off the slate. 400 is the league floor;
+   the projected total is what this roster is actually on pace for. */
+function buildWeekLockPlan(pack){
+  const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
+  const goal = LOCK_FP_GOAL;
+  const lockedSum = lockedFpTotal(pack);
+  const lockedN = (pack && pack.lockedScores || []).length;
+  const slotsLeft = Math.max(0, slots - lockedN);
+  const need = Math.max(0, goal - lockedSum);
+  const needPer = slotsLeft > 0 ? need / slotsLeft : 0;
+
+  const lockedLines = (pack && pack.rows || [])
+    .filter(r => r && r.locked && r.lockPts != null && Number.isFinite(Number(r.lockPts)))
+    .map(r => ({
+      pid: r.pid,
+      name: shortPlayerName(r.p) || playerName(r.p),
+      kind: 'locked',
+      exp: Number(r.lockPts),
+      bank: r.bank && r.bank.mark != null ? Number(r.bank.mark) : null,
+      tip: null,
+      gamesLeft: 0,
+      why: 'banked'
+    }))
+    .sort((a, b) => b.exp - a.exp);
+
+  const cands = [];
+  (pack && pack.rows || []).forEach(r => {
+    if (!r || r.locked) return;
+    if (isIrRow(r) || isTaxiRow(r)) return;
+    const scored = latestLockableFp(r);
+    const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+    const style = r.bank && r.bank.style;
+    const mean = r.dist && r.dist.mean != null ? Number(r.dist.mean) : null;
+    const gamesLeft = r.scout && r.scout.gamesLeft != null
+      ? Number(r.scout.gamesLeft)
+      : ((r.scout && r.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
+    const tip = nextGamePhrase(r.scout);
+    const name = shortPlayerName(r.p) || playerName(r.p);
+    const ready = meetsBank(scored, bank, style);
+
+    if (ready && scored != null){
+      cands.push({
+        pid: r.pid,
+        name,
+        kind: 'ready',
+        exp: Number(scored),
+        bank,
+        tip,
+        gamesLeft,
+        why: bankMeetPhrase(scored, bank, style) || ('scored ' + formatFp(scored))
+      });
+      return;
+    }
+
+    /* Missed Bank with no games left — can't help the week plan. */
+    if (scored != null && gamesLeft <= 0) return;
+    if (!(gamesLeft > 0)) return;
+
+    let exp = null;
+    let why = '';
+    if (bank != null && Number.isFinite(bank)){
+      exp = bank;
+      why = 'Bank ≥' + formatFp(bank)
+        + (tip ? (' · ' + tip) : (' · ' + gamesLeft + ' left'));
+    } else if (mean != null && Number.isFinite(mean) && mean > 0){
+      exp = Math.round(mean);
+      why = 'Avg ' + formatFp(mean)
+        + (tip ? (' · ' + tip) : (' · ' + gamesLeft + ' left'));
+    } else {
+      return;
+    }
+    cands.push({
+      pid: r.pid,
+      name,
+      kind: 'plan',
+      exp,
+      bank,
+      tip,
+      gamesLeft,
+      why
+    });
+  });
+
+  cands.sort((a, b) => {
+    if (a.kind !== b.kind){
+      if (a.kind === 'ready') return -1;
+      if (b.kind === 'ready') return 1;
+    }
+    return b.exp - a.exp;
+  });
+  const chosen = cands.slice(0, slotsLeft);
+  const expectedAdd = chosen.reduce((s, x) => s + (Number(x.exp) || 0), 0);
+  const projected = lockedSum + expectedAdd;
+  const avgPlan = chosen.length ? expectedAdd / chosen.length : 0;
+  const vsGoal = projected - goal;
+  let pace = 'thin';
+  if (slotsLeft === 0){
+    pace = lockedSum + 1e-9 >= goal ? 'hit' : 'short';
+  } else if (vsGoal >= -5){
+    pace = 'on';
+  } else if (vsGoal >= -25){
+    pace = 'close';
+  } else {
+    pace = 'behind';
+  }
+
+  return {
+    goal,
+    slots,
+    lockedSum,
+    lockedN,
+    slotsLeft,
+    need,
+    needPer,
+    expectedAdd,
+    projected,
+    avgPlan,
+    vsGoal,
+    pace,
+    lockedLines,
+    chosen,
+    leftover: cands.slice(slotsLeft),
+    rosterFloor: pack && pack.opts && pack.opts.rosterFloor != null
+      ? Number(pack.opts.rosterFloor)
+      : null
+  };
+}
+
+function renderWeekPlan(focusSide, focusPack){
+  const root = document.getElementById('weekPlan');
+  if (!root) return;
+  if (!focusSide || !focusPack){
+    root.hidden = true;
+    return;
+  }
+  const plan = buildWeekLockPlan(focusPack);
+  root.hidden = false;
+  const title = document.getElementById('weekPlanTitle');
+  const paceEl = document.getElementById('weekPlanPace');
+  const metrics = document.getElementById('weekPlanMetrics');
+  const copy = document.getElementById('weekPlanCopy');
+  const lines = document.getElementById('weekPlanLines');
+  if (title){
+    title.textContent = 'Week plan · ' + (focusSide.franchise && focusSide.franchise.team || 'Focus');
+  }
+  if (paceEl){
+    paceEl.className = 'pace'
+      + (plan.pace === 'on' || plan.pace === 'hit' ? ' on'
+        : (plan.pace === 'behind' || plan.pace === 'short' ? ' behind' : ''));
+    let paceTxt;
+    if (plan.pace === 'hit') paceTxt = 'Goal hit · ' + Math.round(plan.lockedSum) + ' locked';
+    else if (plan.pace === 'short'){
+      paceTxt = 'Slots full · ' + Math.round(plan.need) + ' short of ' + plan.goal;
+    } else if (plan.pace === 'on'){
+      paceTxt = 'On pace · projects <strong>' + Math.round(plan.projected) + '</strong> / ' + plan.goal;
+    } else if (plan.pace === 'close'){
+      paceTxt = 'Close · projects <strong>' + Math.round(plan.projected) + '</strong> / ' + plan.goal
+        + ' · ' + Math.round(Math.abs(plan.vsGoal)) + ' shy';
+    } else {
+      paceTxt = 'Behind · projects <strong>' + Math.round(plan.projected) + '</strong> / ' + plan.goal
+        + ' · ' + Math.round(Math.abs(plan.vsGoal)) + ' short';
+    }
+    paceEl.innerHTML = paceTxt;
+  }
+  if (metrics){
+    metrics.innerHTML =
+      '<div class="m"><strong>' + Math.round(plan.lockedSum) + '</strong>'
+        + '<span class="lbl">Locked FP</span></div>'
+      + '<div class="m"><strong>' + Math.round(plan.projected) + '</strong>'
+        + '<span class="lbl">Roster plan</span></div>'
+      + '<div class="m"><strong>' + plan.goal + '</strong>'
+        + '<span class="lbl">League floor</span></div>'
+      + '<div class="m"><strong>' + plan.lockedN + '/' + plan.slots + '</strong>'
+        + '<span class="lbl">Nights locked</span></div>'
+      + (plan.slotsLeft > 0
+        ? ('<div class="m"><strong>' + Math.round(plan.needPer) + '</strong>'
+          + '<span class="lbl">Need / remaining lock</span></div>')
+        : '')
+      + (plan.rosterFloor != null && Number.isFinite(plan.rosterFloor)
+        ? ('<div class="m"><strong>' + Math.round(plan.rosterFloor) + '</strong>'
+          + '<span class="lbl">Remaining Bank bar</span></div>')
+        : '');
+  }
+  if (copy){
+    const bits = [];
+    if (plan.slotsLeft === 0){
+      bits.push(plan.lockedSum + 1e-9 >= plan.goal
+        ? ('All ' + plan.slots + ' locks in — cleared the ' + plan.goal + ' floor.')
+        : ('All ' + plan.slots + ' locks in at ' + Math.round(plan.lockedSum)
+          + ' — ' + Math.round(plan.need) + ' under the ' + plan.goal + ' floor.'));
+    } else {
+      bits.push('From <strong>' + escapeHtml(focusSide.franchise.team)
+        + '</strong> personnel: bank the next <strong>' + plan.slotsLeft
+        + '</strong> night'
+        + (plan.slotsLeft === 1 ? '' : 's')
+        + ' at ~<strong>' + Math.round(plan.avgPlan) + '</strong> FP each to project '
+        + '<strong>' + Math.round(plan.projected) + '</strong>.');
+      if (plan.needPer > 0){
+        bits.push('Hitting <strong>' + plan.goal + '</strong> needs ~<strong>'
+          + Math.round(plan.needPer) + '</strong> FP per remaining lock'
+          + (plan.avgPlan + 1e-9 >= plan.needPer
+            ? ' — roster banks clear that bar.'
+            : ' — banks sit ~' + Math.round(plan.avgPlan)
+              + ', so you need upside nights or a smash.'));
+      }
+    }
+    bits.push('Plan refreshes as you lock, edit FP, and games tip.');
+    copy.innerHTML = bits.join(' ');
+  }
+  if (lines){
+    const show = []
+      .concat(plan.lockedLines.map(x => Object.assign({section: 'locked'}, x)))
+      .concat(plan.chosen.map(x => Object.assign({}, x)));
+    if (!show.length){
+      lines.innerHTML = '<li class="week-plan-empty">No lockable nights mapped yet — confirm scores or wait for tips.</li>';
+    } else {
+      lines.innerHTML = show.map(x => {
+        const tag = x.kind === 'locked' ? 'locked'
+          : (x.kind === 'ready' ? 'ready' : 'plan');
+        const tagLbl = x.kind === 'locked' ? 'Locked'
+          : (x.kind === 'ready' ? 'Bank now' : 'Plan');
+        return '<li>'
+          + '<span class="tag-mini ' + tag + '">' + tagLbl + '</span>'
+          + '<span class="who">' + escapeHtml(x.name) + '</span>'
+          + '<span>' + escapeHtml(formatFp(x.exp)) + ' FP</span>'
+          + (x.why ? ('<span>' + escapeHtml(x.why) + '</span>') : '')
+          + '</li>';
+      }).join('');
+    }
+  }
 }
 
 function renderSide(side, pack){
@@ -3188,16 +3542,19 @@ function renderSide(side, pack){
   const lockedSum = Math.round(lockedFpTotal(pack));
   const goal = LOCK_FP_GOAL;
   const gap = Math.max(0, goal - lockedSum);
+  const weekPlan = buildWeekLockPlan(pack);
+  const planTot = Math.round(weekPlan.projected);
   const ptsTitle = lockedN
-    ? (lockedSum + ' locked FP toward ' + goal
-      + (gap > 0 ? (' · ' + gap + ' short') : ' · goal hit')
+    ? (lockedSum + ' locked FP · roster plan ' + planTot + ' · floor ' + goal
+      + (gap > 0 ? (' · ' + gap + ' short of floor') : ' · floor hit')
       + ' · ' + lockedN + '/' + slots + ' nights locked')
-    : ('0 locked FP · weekly goal ' + goal + ' · ' + lockedN + '/' + slots + ' locked');
+    : ('0 locked · roster plan ' + planTot + ' · floor ' + goal
+      + ' · ' + lockedN + '/' + slots + ' locked');
   return '<div class="side" style="--team-color:' + escapeHtml(fr.color) + '">'
     + '<div class="side-head"><h3>' + escapeHtml(fr.team) + '</h3>'
     + '<span class="pts" title="' + escapeHtml(ptsTitle) + '">'
-    + lockedSum + ' / ' + goal + ' FP · '
-    + lockedN + '/' + slots + ' locked</span></div>'
+    + lockedSum + ' locked · plan ' + planTot + ' · floor ' + goal
+    + ' · ' + lockedN + '/' + slots + '</span></div>'
     + '<table><thead><tr>'
     + '<th>Player</th>'
     + '<th>Rec</th>'
@@ -3229,6 +3586,7 @@ function render(){
     document.getElementById('detailTitle').textContent = 'No matchups';
     document.getElementById('sides').innerHTML = '';
     document.getElementById('advice').innerHTML = '';
+    renderWeekPlan(null, null);
     return;
   }
 
@@ -3262,6 +3620,7 @@ function render(){
   /* Switch alerts only for Focus team (not the opponent column). */
   const focusSide = pair.sides.find(s => s.franchise.team === state.focusTeam) || pair.sides[0];
   const focusPack = focusSide === pair.sides[0] ? leftPack : rightPack;
+  renderWeekPlan(focusSide, focusPack);
   processSwitchAlerts(focusPack);
 
   document.getElementById('footNote').textContent =
@@ -3270,8 +3629,11 @@ function render(){
     + 'Confirm locks pulls scored nights — you verify Started + final Sleeper FP, then Bankable or Lock now. '
     + 'API scores alone never bank. '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
+    + 'Week plan projects locked FP + best remaining Banks/Avgs from Focus personnel toward the '
+    + LOCK_FP_GOAL + ' floor — it updates as locks land and tips clear. '
     + 'Under each name: last score (click to edit — sticky, API won’t overwrite) beside Avg (last 25), then next tip / games left. '
-    + 'Rec shows Bank ≥ and uses that floor for Lock / Wait / Switch. '
+    + 'Rec shows Bank ≥; stars/starters lock within ' + BANK_CLOSE_STAR_FP
+    + ' FP of that floor, fringe/stream need exact. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
@@ -3279,7 +3641,7 @@ function render(){
     + 'IR = injured only. Taxi (TX) = swap with BN players in year ≤' + (leagueTaxiYears() + 1) + '. '
     + 'Wasn’t started = slash that night out of the confirm queue. '
     + 'Bank ≥ freezes at lock time. '
-    + 'Score color vs Avg/Bank: red below Avg, yellow between Avg and Bank, green at/above Bank. '
+    + 'Score color vs Avg/Bank: red below Avg, yellow between Avg and Bank, green at/near Bank. '
     + 'Rec Lock prefers PG–C before UTIL. Rec suggests tip-order Switch / Wait — this screen does not move players. '
     + 'Alerts on notifies when Focus team Rec flips to Switch (and ~15m before tip) while this tab stays open.';
 }
