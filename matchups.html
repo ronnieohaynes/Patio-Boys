@@ -358,7 +358,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261103-editfp';
+    || '20261103-editfp2';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -522,6 +522,25 @@ function fpOverrideFor(pid){
   return m;
 }
 
+function fpOverridePts(pid){
+  const ov = fpOverrideFor(pid);
+  return ov ? Number(ov.pts) : null;
+}
+
+/* True when a slate/game row is the night a manual FP edit targets. */
+function nightMatchesOverride(ov, game){
+  if (!ov || !game) return false;
+  if (ov.eventId != null && String(ov.eventId) !== ''
+    && game.eventId != null && String(game.eventId) === String(ov.eventId)){
+    return true;
+  }
+  if (ov.date && game.date && String(ov.date) === String(game.date)){
+    if (!ov.opp || !game.opp) return true;
+    return String(ov.opp).toUpperCase() === String(game.opp).toUpperCase();
+  }
+  return false;
+}
+
 /* Re-apply sticky manual FP after any API box-score rebuild. */
 function applyFpOverridesToGameMap(){
   const map = state.gameFpByPid || (state.gameFpByPid = {});
@@ -530,14 +549,7 @@ function applyFpOverridesToGameMap(){
     if (!ov || ov.pts == null || !Number.isFinite(Number(ov.pts))) return;
     const pts = Math.round(Number(ov.pts) * 100) / 100;
     const games = map[pid] || (map[pid] = []);
-    let hit = null;
-    if (ov.eventId != null && String(ov.eventId) !== ''){
-      hit = games.find(g => String(g.eventId) === String(ov.eventId));
-    }
-    if (!hit && ov.date){
-      hit = games.find(g => String(g.date || '') === String(ov.date)
-        && (!ov.opp || !g.opp || String(g.opp) === String(ov.opp)));
-    }
+    let hit = games.find(g => nightMatchesOverride(ov, g)) || null;
     if (!hit && games.length){
       /* Fall back to editing the latest scored night for this player. */
       hit = games[games.length - 1];
@@ -546,7 +558,9 @@ function applyFpOverridesToGameMap(){
       hit.fp = pts;
       hit.source = 'manual';
       hit.sticky = true;
-      if (ov.eventId && !hit.eventId) hit.eventId = ov.eventId;
+      if (ov.eventId && !hit.eventId) hit.eventId = String(ov.eventId);
+      if (ov.date && !hit.date) hit.date = ov.date;
+      if (ov.opp && !hit.opp) hit.opp = ov.opp;
     } else {
       games.push({
         eventId: ov.eventId || null,
@@ -652,11 +666,15 @@ function promptEditLastFp(pid){
     window.alert('Enter a score between 0 and 120.');
     return;
   }
-  setFpOverride(id, n, {
+  const ok = setFpOverride(id, n, {
     eventId: (ov && ov.eventId) || (night && night.eventId) || null,
     date: (ov && ov.date) || (night && night.date) || null,
     opp: (ov && ov.opp) || (night && night.opp) || null
   });
+  if (!ok){
+    window.alert('Could not save that FP.');
+    return;
+  }
   render();
 }
 
@@ -1436,24 +1454,68 @@ function scoutPlayer(pid, dist){
   const scoredByEvent = {};
   scored.forEach(g => { if (g.eventId) scoredByEvent[g.eventId] = g; });
 
+  const ov = fpOverrideFor(pid);
   /* Slate for scouting / Rec — UI under names no longer lists every opp. */
   const slate = games.map(g => {
     const oppLabel = ESPN_TO_SLEEPER[g.opp] || g.opp;
     if (g.final){
       const hit = (g.eventId && scoredByEvent[g.eventId])
-        || scored.find(s => s.date === g.date && (!s.opp || s.opp === oppLabel));
-      if (hit && hit.fp != null){
-        return {kind: 'fp', fp: hit.fp, opp: oppLabel, date: g.date, tipIso: g.tipIso || null, eventId: g.eventId || hit.eventId};
+        || scored.find(s => s.date === g.date && (!s.opp || s.opp === oppLabel
+          || String(s.opp).toUpperCase() === String(oppLabel).toUpperCase()
+          || String(s.opp).toUpperCase() === String(g.opp || '').toUpperCase()));
+      let fp = (hit && hit.fp != null) ? Number(hit.fp) : null;
+      const eventId = (g.eventId != null ? g.eventId : null)
+        || (hit && hit.eventId != null ? hit.eventId : null);
+      /* Sticky manual edit wins over box-score FP for this night. */
+      if (ov && nightMatchesOverride(ov, {eventId: eventId, date: g.date, opp: oppLabel})){
+        fp = Number(ov.pts);
       }
-      return {kind: 'played', opp: oppLabel, date: g.date, tipIso: g.tipIso || null, eventId: g.eventId || null, fp: null};
+      if (fp != null && Number.isFinite(fp)){
+        return {kind: 'fp', fp: fp, opp: oppLabel, date: g.date, tipIso: g.tipIso || null, eventId: eventId};
+      }
+      if (ov && nightMatchesOverride(ov, {eventId: eventId, date: g.date, opp: oppLabel})){
+        return {kind: 'fp', fp: Number(ov.pts), opp: oppLabel, date: g.date, tipIso: g.tipIso || null, eventId: eventId};
+      }
+      return {kind: 'played', opp: oppLabel, date: g.date, tipIso: g.tipIso || null, eventId: eventId, fp: null};
     }
     return {kind: 'opp', opp: oppLabel, date: g.date, tipIso: g.tipIso || null, eventId: g.eventId || null};
   });
+  /* If override targets the latest night but slate never stamped it, force it on. */
+  if (ov){
+    let stamped = slate.some(s => s.kind === 'fp' && nightMatchesOverride(ov, s)
+      && Number(s.fp) === Number(ov.pts));
+    if (!stamped){
+      /* Prefer rewriting the chronologically last final/played row. */
+      for (let i = slate.length - 1; i >= 0; i--){
+        const s = slate[i];
+        if (!s || (s.kind !== 'fp' && s.kind !== 'played')) continue;
+        slate[i] = Object.assign({}, s, {
+          kind: 'fp',
+          fp: Number(ov.pts),
+          eventId: s.eventId || ov.eventId || null
+        });
+        stamped = true;
+        break;
+      }
+    }
+    if (!stamped){
+      slate.push({
+        kind: 'fp',
+        fp: Number(ov.pts),
+        opp: ov.opp || null,
+        date: ov.date || null,
+        eventId: ov.eventId || null
+      });
+      slate.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+    }
+  }
   /* Fallback: scored lines with no matching slate row (name/team miss). */
   if (!slate.some(s => s.kind === 'fp') && scored.length){
     scored.forEach(g => {
-      if (slate.some(s => s.eventId && g.eventId && s.eventId === g.eventId)) return;
-      slate.push({kind: 'fp', fp: g.fp, opp: g.opp, date: g.date, eventId: g.eventId});
+      if (slate.some(s => s.eventId && g.eventId && String(s.eventId) === String(g.eventId))) return;
+      let fp = g.fp;
+      if (ov && nightMatchesOverride(ov, g)) fp = Number(ov.pts);
+      slate.push({kind: 'fp', fp: fp, opp: g.opp, date: g.date, eventId: g.eventId});
     });
     slate.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
   }
@@ -1534,6 +1596,7 @@ function scoutPlayer(pid, dist){
         }
       : null,
     lastFp: (() => {
+      if (ov) return Number(ov.pts);
       for (let i = slate.length - 1; i >= 0; i--){
         if (slate[i].kind === 'fp' && slate[i].fp != null) return Number(slate[i].fp);
       }
@@ -1799,19 +1862,27 @@ function sidePlayerRows(side){
 }
 
 function latestScoredFp(r){
+  if (!r) return null;
+  const ovPts = fpOverridePts(r.pid);
+  if (ovPts != null) return ovPts;
+  if (r.scout && r.scout.lastFp != null && Number.isFinite(Number(r.scout.lastFp))){
+    return Number(r.scout.lastFp);
+  }
   const fps = ((r.scout && r.scout.slate) || []).filter(s => s.kind === 'fp' && s.fp != null);
   if (fps.length) return Number(fps[fps.length - 1].fp);
   if (r.lockPts != null && Number.isFinite(Number(r.lockPts))) return Number(r.lockPts);
   return null;
 }
 
-/* Lockable scored night only — OCR locked chip or open LOCK-IN chip. ESPN last-game
-   FP can be from a non-start (transparent slash on that logo) and is not bankable. */
+/* Lockable scored night — locked / open confirm / sticky manual FP edit.
+   Manual last-FP edits feed Rec Lock decisions; API box scores alone still don’t. */
 function latestLockableFp(r){
   if (!r) return null;
   if (r.lockPts != null && Number.isFinite(Number(r.lockPts))) return Number(r.lockPts);
   const open = openLockPtsFor(r.pid);
   if (open != null) return open;
+  const ovPts = fpOverridePts(r.pid);
+  if (ovPts != null) return ovPts;
   return null;
 }
 
@@ -2931,22 +3002,26 @@ function slateHtml(r){
     }
   } else {
     const ov = fpOverrideFor(r.pid);
-    const lastFp = r.scout && r.scout.lastFp != null && Number.isFinite(Number(r.scout.lastFp))
-      ? Number(r.scout.lastFp)
-      : latestScoredFp(r);
+    const ovPts = ov ? Number(ov.pts) : null;
+    const lastFp = ovPts != null ? ovPts
+      : (r.scout && r.scout.lastFp != null && Number.isFinite(Number(r.scout.lastFp))
+        ? Number(r.scout.lastFp)
+        : latestScoredFp(r));
     const lockable = latestLockableFp(r);
-    const showFp = lockable != null ? lockable : lastFp;
+    /* Always prefer sticky manual edit for the chip number. */
+    const showFp = ovPts != null ? ovPts : (lockable != null ? lockable : lastFp);
     if (showFp != null && Number.isFinite(showFp)){
-      const grade = lockable != null ? lockGradeClass(lockable, avgN, bankN) : '';
-      const edited = !!(ov && lockable == null);
-      const title = lockable != null
-        ? ('Bankable · ' + formatFp(lockable) + ' FP'
+      const grade = lockGradeClass(showFp, avgN, bankN);
+      const edited = ovPts != null;
+      const title = edited
+        ? ('Manual FP ' + formatFp(showFp)
           + (bankN != null ? (' · Bank ≥' + formatFp(bankN)) : '')
-          + ' · red < Avg, yellow < Bank, green ≥ Bank'
-          + ' · click lock pill to edit')
-        : ('Last game · ' + formatFp(showFp) + ' FP'
-          + (edited ? ' · manual edit (sticky)' : ' (not confirmed bankable)')
-          + ' · click to edit — blank clears manual');
+          + ' · sticky (API won’t overwrite) · click to edit')
+        : (lockable != null
+          ? ('Bankable · ' + formatFp(lockable) + ' FP'
+            + (bankN != null ? (' · Bank ≥' + formatFp(bankN)) : '')
+            + ' · click to edit')
+          : ('Last game · ' + formatFp(showFp) + ' FP · click to edit — blank clears manual'));
       chips.push(
         '<button type="button" class="fp-chip'
         + (grade ? (' ' + grade) : '')
@@ -3023,25 +3098,29 @@ async function ensureLiveSeasonAvgs(force){
 function playerRowHtml(r){
   const rec = r.rec || {label: '—', reason: '', cls: 'rec-none'};
   const openPts = openLockPtsFor(r.pid);
+  const ovPts = fpOverridePts(r.pid);
   const src = lockMarkSource(r.pid);
   const openSrc = (state.openLockMarks && state.openLockMarks[String(r.pid)]
     && state.openLockMarks[String(r.pid)].source) || null;
-  const canLock = r.locked || hasOpenLockIn(r.pid) || openPts != null;
+  const canLock = r.locked || hasOpenLockIn(r.pid) || openPts != null || ovPts != null;
   const pillCls = r.locked
     ? ((src === 'manual' || src === 'confirm') ? 'manual' : 'locked')
     : (canLock ? 'open' : 'none');
   const pillTxt = r.locked
     ? (src === 'confirm' ? 'Confirmed' : (src === 'manual' ? 'Manual' : 'Locked'))
-    : (canLock ? (openSrc === 'confirm' ? 'Bankable' : 'Unlocked') : 'Not lock');
+    : (ovPts != null ? 'Edited'
+      : (canLock ? (openSrc === 'confirm' ? 'Bankable' : 'Unlocked') : 'Not lock'));
   const pillTitle = r.locked
     ? ((src === 'confirm' ? 'Confirmed lock' : (src === 'manual' ? 'Manual lock' : 'Locked'))
       + ' at ' + (r.slotLabel || 'slot') + ' · ' + formatFp(r.lockPts)
       + ' — click to edit or clear.')
-    : (canLock
-      ? ('Bankable night'
-        + (openPts != null ? (' @ ' + formatFp(openPts)) : '')
-        + ' — click to lock / edit FP. Rec will say Lock when ≥ Bank.')
-      : 'Confirm a scored night above (Started + final Sleeper FP), or click to enter FP.');
+    : (ovPts != null
+      ? ('Manual FP ' + formatFp(ovPts) + ' — sticky. Click score to edit; click pill to lock it in.')
+      : (canLock
+        ? ('Bankable night'
+          + (openPts != null ? (' @ ' + formatFp(openPts)) : '')
+          + ' — click to lock / edit FP. Rec will say Lock when ≥ Bank.')
+        : 'Click the score chip to enter FP, or confirm a scored night above.'));
   const bucketCls = r.bucket === 'IR' ? ' ir'
     : (r.bucket === 'TX' ? ' taxi' : (!r.starter ? ' bench' : ''));
   const trCls = (r.locked ? 'locked' : '') + bucketCls;
