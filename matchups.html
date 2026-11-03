@@ -55,6 +55,10 @@
     letter-spacing:.04em;text-transform:uppercase;font-weight:600}
   .btn:hover{border-color:var(--gold);color:var(--gold)}
   .btn.primary{background:color-mix(in srgb, var(--gold) 18%, var(--surface));border-color:var(--gold);color:var(--gold)}
+  .btn.notify-on{
+    background:color-mix(in srgb, var(--green) 18%, var(--surface));
+    border-color:var(--green);color:var(--green);
+  }
 
   .slate{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin:14px 0 18px}
   .mu-card{
@@ -277,6 +281,7 @@
         <select id="focusTeam"></select>
       </div>
       <button type="button" class="btn" id="refreshBtn" title="Reload Sleeper lineups/matchups — keeps screenshot locks">Refresh slate</button>
+      <button type="button" class="btn" id="notifyBtn" title="Browser alerts when Focus team Rec flips to Switch (keep this tab open)">Alerts off</button>
     </div>
 
     <div class="slate" id="slate"></div>
@@ -307,7 +312,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261102-last25';
+    || '20261102-swalert';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -317,6 +322,9 @@
 <script>
 const LEAGUE_ID = '1350649177381552128';
 const MY_TEAM = 'Freakonomics';
+/* Browser Notification alerts while Matchup tab stays open (background OK). */
+const SWITCH_NOTIFY_LS = 'pb-matchup-switch-alerts';
+const SWITCH_TIP_WARN_MS = 15 * 60 * 1000;
 const TEAM_COLORS = {
   'Funeral Home':'#C9963A','BoobieDominguez':'#1D9E75','2011-12 Champs':'#D8553A',
   'Freakonomics':'#7F77DD','Papa Book':'#D4537E','Bam Add the Mayo':'#3A8FC9',
@@ -360,7 +368,11 @@ const state = {
   /* Scored nights still open on Sleeper (LOCK-IN button). Not ESPN boxscore FP —
      a schedule-logo slash means they weren’t started that night and can’t lock it. */
   openLockMarks: {}, /* pid -> {pts, source:'ocr-open', name, slot} */
-  tesseractLoading: null
+  tesseractLoading: null,
+  /* Switch browser alerts (Focus team only; tab must stay open). */
+  notifyOn: false,
+  _notified: null, /* Set of fingerprints already alerted this session */
+  _notifySeeded: false
 };
 
 /* Starter lock-in slots in lineup order (bench is BN until changed). */
@@ -2146,6 +2158,171 @@ function buildRec(r, pack){
   return {action: 'none', label: '—', reason: 'No slate', cls: 'rec-none'};
 }
 
+/* ——— Switch browser alerts (Focus team, tab open / background OK) ——— */
+function notifySupported(){
+  return typeof Notification !== 'undefined';
+}
+
+function loadNotifyPref(){
+  try { return localStorage.getItem(SWITCH_NOTIFY_LS) === '1'; } catch (e){ return false; }
+}
+
+function saveNotifyPref(on){
+  try { localStorage.setItem(SWITCH_NOTIFY_LS, on ? '1' : '0'); } catch (e){ /* ignore */ }
+}
+
+function notifyStore(){
+  if (!state._notified) state._notified = new Set();
+  return state._notified;
+}
+
+function paintNotifyBtn(){
+  const btn = document.getElementById('notifyBtn');
+  if (!btn) return;
+  if (!notifySupported()){
+    btn.disabled = true;
+    btn.textContent = 'Alerts N/A';
+    btn.classList.remove('notify-on', 'primary');
+    btn.title = 'This browser does not support notifications';
+    return;
+  }
+  const granted = Notification.permission === 'granted';
+  const on = !!(state.notifyOn && granted);
+  btn.disabled = false;
+  btn.textContent = on ? 'Alerts on' : 'Alerts off';
+  btn.classList.toggle('notify-on', on);
+  btn.classList.toggle('primary', !on);
+  btn.title = on
+    ? 'Alerts on — notifies when Focus team Rec flips to Switch, and ~15m before tip. Keep this tab open (background OK).'
+    : 'Turn on Switch alerts for your Focus team (browser permission required; keep Matchup tab open)';
+}
+
+function resetNotifySeed(){
+  state._notifySeeded = false;
+  state._notified = new Set();
+}
+
+function seedSwitchAlerts(pack){
+  const store = notifyStore();
+  (pack && pack.rows || []).forEach(r => {
+    if (!r || !r.rec || r.rec.action !== 'switch') return;
+    store.add(switchAlertKey(r));
+    const tipMs = nextTipMs(r.scout);
+    if (tipMs != null) store.add(tipWarnKey(r.pid, tipMs));
+  });
+  state._notifySeeded = true;
+}
+
+function switchAlertKey(r){
+  return 'sw|' + String(state.week) + '|' + String(r.pid) + '|'
+    + String((r.rec && r.rec.label) || '') + '|' + String((r.rec && r.rec.reason) || '');
+}
+
+function tipWarnKey(pid, tipMs){
+  return 'tip|' + String(state.week) + '|' + String(pid) + '|' + String(tipMs);
+}
+
+function fireSwitchNote(title, body, tag){
+  if (!state.notifyOn || !notifySupported() || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(title, {
+      body: body || '',
+      tag: tag || undefined,
+      renotify: false
+    });
+    n.onclick = () => {
+      try { window.focus(); } catch (e){ /* ignore */ }
+      try { n.close(); } catch (e2){ /* ignore */ }
+    };
+  } catch (e){ /* ignore */ }
+}
+
+function processSwitchAlerts(pack){
+  if (!state.notifyOn || !pack) return;
+  if (!notifySupported() || Notification.permission !== 'granted') return;
+  if (!state._notifySeeded){
+    seedSwitchAlerts(pack);
+    return;
+  }
+  const store = notifyStore();
+  const now = Date.now();
+  (pack.rows || []).forEach(r => {
+    if (!r || !r.rec || r.rec.action !== 'switch') return;
+    const name = shortPlayerName(r.p) || 'Player';
+    const key = switchAlertKey(r);
+    if (!store.has(key)){
+      store.add(key);
+      fireSwitchNote(
+        'Matchup · Switch ' + name,
+        (r.rec.label || 'Switch') + (r.rec.reason ? (' — ' + r.rec.reason) : ''),
+        'pb-sw-' + String(r.pid)
+      );
+    }
+    const tipMs = nextTipMs(r.scout);
+    if (tipMs == null || !Number.isFinite(tipMs)) return;
+    const delta = tipMs - now;
+    if (delta > SWITCH_TIP_WARN_MS || delta < -60 * 1000) return;
+    const warnKey = tipWarnKey(r.pid, tipMs);
+    if (store.has(warnKey)) return;
+    store.add(warnKey);
+    const mins = Math.max(0, Math.round(delta / 60000));
+    fireSwitchNote(
+      'Matchup · tip in ' + mins + 'm',
+      name + ': ' + (r.rec.label || 'Switch')
+        + (r.rec.reason ? (' — ' + r.rec.reason) : ''),
+      'pb-tip-' + String(r.pid)
+    );
+  });
+}
+
+async function toggleSwitchAlerts(){
+  if (!notifySupported()){
+    paintNotifyBtn();
+    return;
+  }
+  if (state.notifyOn && Notification.permission === 'granted'){
+    state.notifyOn = false;
+    saveNotifyPref(false);
+    paintNotifyBtn();
+    return;
+  }
+  let perm = Notification.permission;
+  if (perm === 'default'){
+    try { perm = await Notification.requestPermission(); }
+    catch (e){ perm = Notification.permission; }
+  }
+  if (perm !== 'granted'){
+    state.notifyOn = false;
+    saveNotifyPref(false);
+    paintNotifyBtn();
+    const status = document.getElementById('status');
+    if (status){
+      status.classList.remove('error');
+      status.textContent = 'Switch alerts need browser notification permission — allow them for this site, then try again.';
+    }
+    return;
+  }
+  state.notifyOn = true;
+  saveNotifyPref(true);
+  resetNotifySeed();
+  paintNotifyBtn();
+  /* Seed current Switches so enabling doesn’t dump every open Rec. */
+  try {
+    const pair = state.selectedPair || (state.pairs && state.pairs[0]);
+    if (pair){
+      const focusSide = pair.sides.find(s => s.franchise.team === state.focusTeam) || pair.sides[0];
+      seedSwitchAlerts(sidePlayerRows(focusSide));
+    }
+  } catch (e){ /* ignore */ }
+  const status = document.getElementById('status');
+  if (status){
+    status.classList.remove('error');
+    status.textContent = 'Switch alerts on for '
+      + (state.focusTeam || 'Focus team')
+      + ' — keep this Matchup tab open (background is fine).';
+  }
+}
+
 function renderAdvice(pair, leftPack, rightPack){
   const el = document.getElementById('advice');
   if (!pair){ el.innerHTML = ''; return; }
@@ -2551,6 +2728,11 @@ function render(){
   });
   renderAdvice(pair, leftPack, rightPack);
 
+  /* Switch alerts only for Focus team (not the opponent column). */
+  const focusSide = pair.sides.find(s => s.franchise.team === state.focusTeam) || pair.sides[0];
+  const focusPack = focusSide === pair.sides[0] ? leftPack : rightPack;
+  processSwitchAlerts(focusPack);
+
   document.getElementById('footNote').textContent =
     'Build ' + (window.MATCHUP_BUILD || '—') + '. '
     + 'Lineup slots mirror Sleeper (read-only). Click a lock pill to manually lock / edit / clear a night’s FP when OCR misses. '
@@ -2566,7 +2748,8 @@ function render(){
     + 'Bank column Avg / Bank / Lock use each player’s last 25 games. '
     + 'Bank ≥ freezes at lock time. '
     + 'Lock color: red below Avg, yellow between Avg and Bank, green at/above Bank. '
-    + 'Rec Lock prefers PG–C before UTIL. Rec suggests tip-order Switch / Wait — this screen does not move players.';
+    + 'Rec Lock prefers PG–C before UTIL. Rec suggests tip-order Switch / Wait — this screen does not move players. '
+    + 'Alerts on notifies when Focus team Rec flips to Switch (and ~15m before tip) while this tab stays open.';
 }
 
 async function loadMatchups(week, opts){
@@ -3921,7 +4104,10 @@ async function load(){
       if (w === state.week) opt.selected = true;
       weekSel.appendChild(opt);
     }
-    weekSel.addEventListener('change', () => loadMatchups(Number(weekSel.value), {quiet: true}));
+    weekSel.addEventListener('change', () => {
+      resetNotifySeed();
+      loadMatchups(Number(weekSel.value), {quiet: true});
+    });
 
     const focus = document.getElementById('focusTeam');
     const teamNames = state.rosters.map(r => franchiseOfRoster(r).team)
@@ -3931,12 +4117,19 @@ async function load(){
       + escapeHtml(t) + '</option>').join('');
     focus.addEventListener('change', () => {
       state.focusTeam = focus.value;
+      resetNotifySeed();
       const mine = state.pairs.find(p => p.sides.some(s => s.franchise.team === state.focusTeam));
       if (mine) state.selectedPair = mine;
       render();
     });
     document.getElementById('refreshBtn').addEventListener('click', () => {
       loadMatchups(state.week, {quiet: true, refreshLineups: true});
+    });
+    state.notifyOn = loadNotifyPref() && notifySupported()
+      && Notification.permission === 'granted';
+    paintNotifyBtn();
+    document.getElementById('notifyBtn').addEventListener('click', () => {
+      toggleSwitchAlerts();
     });
     bindShotUi();
 
@@ -3978,10 +4171,10 @@ function startLiveClock(){
   if (state._clockTimer) clearInterval(state._clockTimer);
   if (state._recTimer) clearInterval(state._recTimer);
   state._clockTimer = setInterval(paintLiveClock, 1000);
-  /* Rebuild Rec reasons every minute so “in 45m” / day hints stay honest. */
+  /* Rebuild Rec every minute (even when tab is backgrounded) so Switch
+     alerts and tip−15m warns still fire while Matchup stays open. */
   state._recTimer = setInterval(() => {
     if (!state.pairs || !state.pairs.length) return;
-    if (document.hidden) return;
     try { render(); } catch (e) { /* keep clock ticking */ }
   }, 60000);
   document.addEventListener('visibilitychange', () => {
