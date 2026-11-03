@@ -358,7 +358,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261103-bankclose';
+    || '20261103-bankclose2';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -920,7 +920,9 @@ function listConfirmNights(side){
     }
     if (!pick) return;
     const bank = (() => {
-      if (!dist || !window.LockInDist || typeof LockInDist.lockBankPlan !== 'function') return null;
+      if (!dist || !window.LockInDist || typeof LockInDist.lockBankPlan !== 'function'){
+        return {mark: null, style: null};
+      }
       const plan = LockInDist.lockBankPlan(dist, {
         week: state.week,
         seasonWeeks: Number(state.league && state.league.settings
@@ -933,7 +935,11 @@ function listConfirmNights(side){
         gamesThisWeek: scout && scout.gamesThisWeek,
         injury: scout && scout.injury
       });
-      return plan && plan.mark != null ? Math.round(Number(plan.mark)) : null;
+      if (!(plan && plan.mark != null)) return {mark: null, style: plan && plan.style || null};
+      return {
+        mark: Math.round(Number(plan.mark)),
+        style: plan.style || null
+      };
     })();
     out.push({
       pid: pid,
@@ -941,7 +947,8 @@ function listConfirmNights(side){
       game: pick,
       propFp: pick.fp != null && Number.isFinite(Number(pick.fp)) ? Number(pick.fp) : null,
       sleeperWeek: sleeperWeekPtsFor(pid, side.matchup),
-      bank: bank,
+      bank: bank.mark,
+      bankStyle: bank.style,
       slotLabel: (() => {
         const sk = slotKeyForPidOnSide(side, pid);
         return sk === 'BN' ? 'BN' : slotDisplayLabel(sk);
@@ -980,7 +987,7 @@ function renderConfirmPanel(pair){
     const bank = n.bank != null ? String(n.bank) : '—';
     const suggest = n.propFp != null ? formatFp(n.propFp)
       : (n.sleeperWeek != null ? formatFp(n.sleeperWeek) : '');
-    const over = meetsBank(n.propFp, n.bank);
+    const over = meetsBank(n.propFp, n.bank, n.bankStyle);
     return '<tr data-confirm-pid="' + escapeHtml(String(n.pid)) + '"'
       + ' data-event-id="' + escapeHtml(String(n.game.eventId || '')) + '"'
       + ' data-date="' + escapeHtml(String(n.game.date || '')) + '"'
@@ -2107,32 +2114,38 @@ function nextTipMs(scout){
   return fromTip(row.tipIso, row.date);
 }
 
-/* Bank ≥ is an integer floor; accept nights within 1 FP so a 40 vs Bank 41
-   still locks (Sleeper half-points + rounding shouldn't reject near-misses). */
-const BANK_CLOSE_FP = 1;
+/* Bank ≥ is a rounded integer. Flat ±1 for everyone is too soft for fringe
+   smash bars. Stars/starters already bank near Avg — give them 1 FP of
+   near-miss slack (Melo 40 vs Bank 41). Fringe/stream stay exact. */
+const BANK_CLOSE_STAR_FP = 1;
 
-function meetsBank(scored, bank, closeFp){
+function bankCloseFp(style){
+  const s = String(style || '').toLowerCase();
+  if (s === 'star' || s === 'starter' || s === 'locked') return BANK_CLOSE_STAR_FP;
+  return 0;
+}
+
+function meetsBank(scored, bank, style){
   const s = scored != null ? Number(scored) : NaN;
   const b = bank != null ? Number(bank) : NaN;
   if (!Number.isFinite(s) || !Number.isFinite(b)) return false;
-  const close = closeFp != null && Number.isFinite(Number(closeFp))
-    ? Math.max(0, Number(closeFp))
-    : BANK_CLOSE_FP;
-  return s + 1e-9 >= b - close;
+  return s + 1e-9 >= b - bankCloseFp(style);
 }
 
-function bankMeetPhrase(scored, bank){
+function bankMeetPhrase(scored, bank, style){
   const s = Number(scored);
   const b = Number(bank);
   if (!Number.isFinite(s) || !Number.isFinite(b)) return '';
   if (s + 1e-9 >= b) return formatFp(s) + ' ≥ Bank ' + formatFp(b);
-  return formatFp(s) + ' ≈ Bank ' + formatFp(b) + ' (within ' + BANK_CLOSE_FP + ')';
+  const close = bankCloseFp(style);
+  if (close > 0) return formatFp(s) + ' ≈ Bank ' + formatFp(b) + ' (within ' + close + ')';
+  return formatFp(s) + ' ≥ Bank ' + formatFp(b);
 }
 
 function isBankableNow(r){
   const scored = latestLockableFp(r);
   const bank = r && r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
-  return meetsBank(scored, bank);
+  return meetsBank(scored, bank, r && r.bank && r.bank.style);
 }
 
 function isBenchRow(r){
@@ -2235,7 +2248,8 @@ function starterTipOpportunityOpen(starter, nowMs){
   const scored = latestLockableFp(starter);
   const bank = starter.bank && starter.bank.mark != null ? Number(starter.bank.mark) : null;
   /* Scored night already missed Bank (incl. near-miss window) — slot free. */
-  if (scored != null && bank != null && !meetsBank(scored, bank)) return false;
+  if (scored != null && bank != null
+    && !meetsBank(scored, bank, starter.bank && starter.bank.style)) return false;
   const tip = nextTipMs(starter.scout);
   if (tip == null) return false;
   /* Before tip, and for ~25m after tip while the night settles, keep them. */
@@ -2364,6 +2378,7 @@ function buildRec(r, pack){
   /* Only confirmed / OCR / locked nights — raw ESPN FP isn’t bankable until you confirm. */
   const scored = latestLockableFp(r);
   const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const bankStyle = r.bank && r.bank.style;
   const open = openLockSlots(pack);
   /* Position locks first; UTIL last (even if they’re currently sitting in UTIL). */
   const slot = lockSlotForPlayer(r, open);
@@ -2407,12 +2422,12 @@ function buildRec(r, pack){
         cls: 'rec-switch'
       };
     }
-    if (meetsBank(scored, bank)){
+    if (meetsBank(scored, bank, bankStyle)){
       if (slot){
         return {
           action: 'switch',
           label: 'Start · ' + slot.label + ' then Lock',
-          reason: bankMeetPhrase(scored, bank)
+          reason: bankMeetPhrase(scored, bank, bankStyle)
             + ' · can’t lock from TX · start @ ' + slot.label + ' first',
           cls: 'rec-switch'
         };
@@ -2420,7 +2435,7 @@ function buildRec(r, pack){
       return {
         action: 'wait',
         label: 'Wait',
-        reason: bankMeetPhrase(scored, bank)
+        reason: bankMeetPhrase(scored, bank, bankStyle)
           + ' · can’t lock from TX · no open start slot',
         cls: 'rec-wait'
       };
@@ -2473,12 +2488,12 @@ function buildRec(r, pack){
       };
     }
     /* Bench can’t lock — only starting slots bank. Point them at a start slot. */
-    if (meetsBank(scored, bank)){
+    if (meetsBank(scored, bank, bankStyle)){
       if (slot){
         return {
           action: 'switch',
           label: 'Start · ' + slot.label + ' then Lock',
-          reason: bankMeetPhrase(scored, bank)
+          reason: bankMeetPhrase(scored, bank, bankStyle)
             + ' · can’t lock from BN · start @ ' + slot.label + ' first'
             + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : '')
             + (dayHint ? (' · ' + dayHint) : ''),
@@ -2488,7 +2503,7 @@ function buildRec(r, pack){
       return {
         action: 'wait',
         label: 'Wait',
-        reason: bankMeetPhrase(scored, bank)
+        reason: bankMeetPhrase(scored, bank, bankStyle)
           + ' · can’t lock from BN · no open start slot',
         cls: 'rec-wait'
       };
@@ -2560,8 +2575,8 @@ function buildRec(r, pack){
 
   /* Bankable night in a start slot — lock before anything else.
      Prefer a position slot over UTIL when recommending where to bank.
-     Near-miss within BANK_CLOSE_FP still counts (e.g. 40 vs Bank 41). */
-  if (meetsBank(scored, bank)){
+     Stars/starters: near-miss within BANK_CLOSE_STAR_FP (e.g. 40 vs Bank 41). */
+  if (meetsBank(scored, bank, bankStyle)){
     const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
     if (slot){
       const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
@@ -2571,14 +2586,14 @@ function buildRec(r, pack){
       return {
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: bankMeetPhrase(scored, bank) + moveBit + utilLast + urgency,
+        reason: bankMeetPhrase(scored, bank, bankStyle) + moveBit + utilLast + urgency,
         cls: 'rec-lock'
       };
     }
     return {
       action: 'lock',
       label: 'Lock',
-      reason: bankMeetPhrase(scored, bank) + ' · no open slot' + urgency,
+      reason: bankMeetPhrase(scored, bank, bankStyle) + ' · no open slot' + urgency,
       cls: 'rec-lock'
     };
   }
@@ -2981,11 +2996,11 @@ function formatFp(v){
   return Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1);
 }
 
-/* Lock score vs Avg / Bank: red < Avg, yellow Avg..Bank, green within BANK_CLOSE_FP of Bank. */
-function lockGradeClass(lockN, avgN, bankN){
+/* Lock score vs Avg / Bank: red < Avg, yellow Avg..Bank, green at/near Bank. */
+function lockGradeClass(lockN, avgN, bankN, style){
   if (lockN == null || !Number.isFinite(lockN)) return '';
   if (avgN != null && Number.isFinite(avgN) && lockN + 1e-9 < avgN) return 'lock-red';
-  if (meetsBank(lockN, bankN)) return 'lock-green';
+  if (meetsBank(lockN, bankN, style)) return 'lock-green';
   if (bankN != null && Number.isFinite(bankN) && lockN + 1e-9 < bankN) return 'lock-yellow';
   if (avgN != null && Number.isFinite(avgN) && lockN + 1e-9 >= avgN) return 'lock-yellow';
   return '';
@@ -3011,11 +3026,12 @@ function slateHtml(r){
   const chips = [];
   const avgN = r.dist && r.dist.mean != null ? Number(r.dist.mean) : null;
   const bankN = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const bankStyle = r.bank && r.bank.style;
 
   if (r.locked){
     const lockPts = r.lockPts != null && Number.isFinite(Number(r.lockPts)) ? Number(r.lockPts) : null;
     if (lockPts != null){
-      const grade = lockGradeClass(lockPts, avgN, bankN);
+      const grade = lockGradeClass(lockPts, avgN, bankN, bankStyle);
       chips.push(
         '<span class="fp-chip lock'
         + (grade ? (' ' + grade) : '')
@@ -3036,7 +3052,7 @@ function slateHtml(r){
     /* Always prefer sticky manual edit for the chip number. */
     const showFp = ovPts != null ? ovPts : (lockable != null ? lockable : lastFp);
     if (showFp != null && Number.isFinite(showFp)){
-      const grade = lockGradeClass(showFp, avgN, bankN);
+      const grade = lockGradeClass(showFp, avgN, bankN, bankStyle);
       const edited = ovPts != null;
       const title = edited
         ? ('Manual FP ' + formatFp(showFp)
@@ -3157,10 +3173,13 @@ function playerRowHtml(r){
       ? (' · yr ' + (yearsExp + 1)) : '');
   const badgeSlot = (r.bucket === 'IR' || r.bucket === 'TX') ? r.slotLabel : r.slot;
   const bankN = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const closeFp = bankCloseFp(r.bank && r.bank.style);
   const bankTitle = (r.bank && r.bank.why) || (bankN != null
     ? ('Bank ≥' + formatFp(bankN)
-      + ' — Lock from ≥' + formatFp(Math.max(0, bankN - BANK_CLOSE_FP))
-      + ' (within ' + BANK_CLOSE_FP + ' FP)')
+      + (closeFp > 0
+        ? (' — Lock from ≥' + formatFp(Math.max(0, bankN - closeFp))
+          + ' (star/starter within ' + closeFp + ')')
+        : ' — exact floor for fringe/stream'))
     : '');
   const bankLine = bankN != null
     ? ('<span class="rec-bank" title="' + escapeHtml(bankTitle) + '">Bank ≥'
@@ -3298,7 +3317,8 @@ function render(){
     + 'API scores alone never bank. '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Under each name: last score (click to edit — sticky, API won’t overwrite) beside Avg (last 25), then next tip / games left. '
-    + 'Rec shows Bank ≥ and locks nights within ' + BANK_CLOSE_FP + ' FP of that floor. '
+    + 'Rec shows Bank ≥; stars/starters lock within ' + BANK_CLOSE_STAR_FP
+    + ' FP of that floor, fringe/stream need exact. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
@@ -3306,8 +3326,7 @@ function render(){
     + 'IR = injured only. Taxi (TX) = swap with BN players in year ≤' + (leagueTaxiYears() + 1) + '. '
     + 'Wasn’t started = slash that night out of the confirm queue. '
     + 'Bank ≥ freezes at lock time. '
-    + 'Score color vs Avg/Bank: red below Avg, yellow between Avg and Bank, green at/within '
-    + BANK_CLOSE_FP + ' of Bank. '
+    + 'Score color vs Avg/Bank: red below Avg, yellow between Avg and Bank, green at/near Bank. '
     + 'Rec Lock prefers PG–C before UTIL. Rec suggests tip-order Switch / Wait — this screen does not move players. '
     + 'Alerts on notifies when Focus team Rec flips to Switch (and ~15m before tip) while this tab stays open.';
 }
