@@ -196,6 +196,13 @@
     color:var(--gold);background:color-mix(in srgb, var(--gold) 12%, transparent);
     border:1px solid color-mix(in srgb, var(--gold) 35%, transparent);
   }
+  td.player button.fp-chip{
+    cursor:pointer;appearance:none;-webkit-appearance:none;font:inherit;
+  }
+  td.player button.fp-chip:hover{border-color:var(--gold);filter:brightness(1.08)}
+  td.player .fp-chip.edited{
+    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--gold) 55%, transparent);
+  }
   /* Locked-in game score — white so it stands apart from raw FP chips. */
   td.player .fp-chip.lock{
     color:#fff;background:color-mix(in srgb, #fff 14%, transparent);
@@ -351,7 +358,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261103-avginline';
+    || '20261103-editfp';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -408,6 +415,8 @@ const state = {
   openLockMarks: {}, /* pid -> {pts, source:'confirm'|'ocr-open', name, slot, eventId} */
   /* Nights marked “wasn’t started” (slash) so Confirm skips them. */
   slashMarks: {}, /* "pid:eventId" -> true */
+  /* Manual last-FP edits — sticky; API refresh must not overwrite. */
+  fpOverrides: {}, /* pid -> {pts, eventId, date, opp, source:'manual'} */
   tesseractLoading: null,
   /* Switch browser alerts (Focus team only; tab must stay open). */
   notifyOn: false,
@@ -470,19 +479,22 @@ function loadLockMarks(){
     const raw = localStorage.getItem(lockStorageKey());
     const parsed = raw ? (JSON.parse(raw) || {}) : {};
     /* Shape: {locks, open, slash}. Legacy: flat pid → lock mark. */
-    if (parsed && (parsed.locks || parsed.open || parsed.slash)){
+    if (parsed && (parsed.locks || parsed.open || parsed.slash || parsed.fp)){
       state.lockMarks = parsed.locks || {};
       state.openLockMarks = parsed.open || {};
       state.slashMarks = parsed.slash || {};
+      state.fpOverrides = parsed.fp || {};
     } else {
       state.lockMarks = parsed || {};
       state.openLockMarks = {};
       state.slashMarks = {};
+      state.fpOverrides = {};
     }
   } catch (e){
     state.lockMarks = {};
     state.openLockMarks = {};
     state.slashMarks = {};
+    state.fpOverrides = {};
   }
 }
 function saveLockMarks(){
@@ -490,7 +502,8 @@ function saveLockMarks(){
     localStorage.setItem(lockStorageKey(), JSON.stringify({
       locks: state.lockMarks || {},
       open: state.openLockMarks || {},
-      slash: state.slashMarks || {}
+      slash: state.slashMarks || {},
+      fp: state.fpOverrides || {}
     }));
   } catch (e){ /* ignore quota */ }
 }
@@ -498,8 +511,153 @@ function clearLockMarks(){
   state.lockMarks = {};
   state.openLockMarks = {};
   state.slashMarks = {};
+  state.fpOverrides = {};
   try { localStorage.removeItem(lockStorageKey()); }
   catch (e){ /* ignore */ }
+}
+
+function fpOverrideFor(pid){
+  const m = state.fpOverrides && state.fpOverrides[String(pid)];
+  if (!m || m.pts == null || !Number.isFinite(Number(m.pts))) return null;
+  return m;
+}
+
+/* Re-apply sticky manual FP after any API box-score rebuild. */
+function applyFpOverridesToGameMap(){
+  const map = state.gameFpByPid || (state.gameFpByPid = {});
+  Object.keys(state.fpOverrides || {}).forEach(pid => {
+    const ov = state.fpOverrides[pid];
+    if (!ov || ov.pts == null || !Number.isFinite(Number(ov.pts))) return;
+    const pts = Math.round(Number(ov.pts) * 100) / 100;
+    const games = map[pid] || (map[pid] = []);
+    let hit = null;
+    if (ov.eventId != null && String(ov.eventId) !== ''){
+      hit = games.find(g => String(g.eventId) === String(ov.eventId));
+    }
+    if (!hit && ov.date){
+      hit = games.find(g => String(g.date || '') === String(ov.date)
+        && (!ov.opp || !g.opp || String(g.opp) === String(ov.opp)));
+    }
+    if (!hit && games.length){
+      /* Fall back to editing the latest scored night for this player. */
+      hit = games[games.length - 1];
+    }
+    if (hit){
+      hit.fp = pts;
+      hit.source = 'manual';
+      hit.sticky = true;
+      if (ov.eventId && !hit.eventId) hit.eventId = ov.eventId;
+    } else {
+      games.push({
+        eventId: ov.eventId || null,
+        date: ov.date || null,
+        opp: ov.opp || null,
+        fp: pts,
+        source: 'manual',
+        sticky: true
+      });
+    }
+  });
+}
+
+function setFpOverride(pid, pts, meta){
+  const id = String(pid);
+  const n = Number(pts);
+  if (!Number.isFinite(n) || n < 0 || n > 120) return false;
+  const info = meta || {};
+  state.fpOverrides = state.fpOverrides || {};
+  state.fpOverrides[id] = {
+    pts: Math.round(n * 100) / 100,
+    eventId: info.eventId != null ? String(info.eventId) : null,
+    date: info.date || null,
+    opp: info.opp || null,
+    source: 'manual'
+  };
+  applyFpOverridesToGameMap();
+  saveLockMarks();
+  return true;
+}
+
+function clearFpOverride(pid){
+  const id = String(pid);
+  if (!state.fpOverrides || !state.fpOverrides[id]) return false;
+  delete state.fpOverrides[id];
+  saveLockMarks();
+  return true;
+}
+
+function lastScoredNightMeta(pid){
+  const id = String(pid);
+  const dist = state.lockByPid[id]
+    ? Object.assign({pid: id}, state.lockByPid[id])
+    : null;
+  const scout = scoutPlayer(id, dist);
+  const slate = (scout && scout.slate) || [];
+  for (let i = slate.length - 1; i >= 0; i--){
+    const g = slate[i];
+    if (!g || (g.kind !== 'fp' && g.kind !== 'played')) continue;
+    return {
+      eventId: g.eventId || (String(g.date || '') + ':' + String(g.opp || '')),
+      date: g.date || null,
+      opp: g.opp || null,
+      fp: g.fp != null && Number.isFinite(Number(g.fp)) ? Number(g.fp) : null
+    };
+  }
+  const games = gameFpForPid(id);
+  if (games.length){
+    const g = games[games.length - 1];
+    return {
+      eventId: g.eventId || null,
+      date: g.date || null,
+      opp: g.opp || null,
+      fp: g.fp != null ? Number(g.fp) : null
+    };
+  }
+  return null;
+}
+
+function promptEditLastFp(pid){
+  const id = String(pid);
+  if (isLocked(id)){
+    promptManualLock(id);
+    return;
+  }
+  const p = state.players[id] || {};
+  const name = playerName(p);
+  const night = lastScoredNightMeta(id);
+  const ov = fpOverrideFor(id);
+  const current = ov ? Number(ov.pts)
+    : (night && night.fp != null ? Number(night.fp) : null);
+  const msg = 'Edit last FP for ' + name
+    + (night && night.opp ? (' (' + formatNightLabel(night) + ')') : '')
+    + '.\nEnter final Sleeper points. Leave blank to clear a manual edit and revert to API.';
+  const raw = window.prompt(msg, current != null && Number.isFinite(current)
+    ? String(current) : '');
+  if (raw == null) return;
+  const trimmed = String(raw).trim();
+  if (!trimmed){
+    if (ov){
+      clearFpOverride(id);
+      /* Reload week FP from API so sticky value is gone. */
+      if (state.nbaWeek){
+        loadWeekGameFp(state.nbaWeek).then(() => { applyFpOverridesToGameMap(); render(); });
+      } else {
+        render();
+      }
+    }
+    return;
+  }
+  const n = Number(trimmed.replace(/,/g, ''));
+  if (!Number.isFinite(n) || n < 0 || n > 120){
+    window.alert('Enter a score between 0 and 120.');
+    return;
+  }
+  setFpOverride(id, n, {
+    eventId: (ov && ov.eventId) || (night && night.eventId) || null,
+    date: (ov && ov.date) || (night && night.date) || null,
+    opp: (ov && ov.opp) || (night && night.opp) || null
+  });
+  render();
 }
 
 /* Clear screenshot OCR only — keep confirm / manual locks. */
@@ -1195,7 +1353,8 @@ async function loadWeekGameFp(nbaWeek){
   const events = (nbaWeek && nbaWeek.finalEvents) || [];
   if (!scoring || !window.LockInDist || typeof LockInDist.scoreGame !== 'function'){
     state.gameFpByPid = {};
-    return {};
+    applyFpOverridesToGameMap();
+    return state.gameFpByPid;
   }
   let byPid = {};
   if (state._boxFpByPid){
@@ -1247,7 +1406,9 @@ async function loadWeekGameFp(nbaWeek){
      fall back to Sleeper’s week total for that single night. */
   applySleeperSingleGameFallback(byPid, nbaWeek);
   state.gameFpByPid = byPid;
-  return byPid;
+  /* Sticky manual edits win over freshly pulled box scores. */
+  applyFpOverridesToGameMap();
+  return state.gameFpByPid;
 }
 
 function espnAbbr(sleeperTeam){
@@ -2769,6 +2930,7 @@ function slateHtml(r){
       );
     }
   } else {
+    const ov = fpOverrideFor(r.pid);
     const lastFp = r.scout && r.scout.lastFp != null && Number.isFinite(Number(r.scout.lastFp))
       ? Number(r.scout.lastFp)
       : latestScoredFp(r);
@@ -2776,16 +2938,28 @@ function slateHtml(r){
     const showFp = lockable != null ? lockable : lastFp;
     if (showFp != null && Number.isFinite(showFp)){
       const grade = lockable != null ? lockGradeClass(lockable, avgN, bankN) : '';
+      const edited = !!(ov && lockable == null);
       const title = lockable != null
         ? ('Bankable · ' + formatFp(lockable) + ' FP'
           + (bankN != null ? (' · Bank ≥' + formatFp(bankN)) : '')
-          + ' · red < Avg, yellow < Bank, green ≥ Bank')
-        : ('Last game · ' + formatFp(lastFp) + ' FP (not confirmed bankable)');
+          + ' · red < Avg, yellow < Bank, green ≥ Bank'
+          + ' · click lock pill to edit')
+        : ('Last game · ' + formatFp(showFp) + ' FP'
+          + (edited ? ' · manual edit (sticky)' : ' (not confirmed bankable)')
+          + ' · click to edit — blank clears manual');
       chips.push(
-        '<span class="fp-chip'
+        '<button type="button" class="fp-chip'
         + (grade ? (' ' + grade) : '')
-        + '" title="' + escapeHtml(title) + '">'
-        + escapeHtml(formatFp(showFp)) + '</span>'
+        + (edited ? ' edited' : '')
+        + '" data-edit-fp-pid="' + escapeHtml(String(r.pid)) + '"'
+        + ' title="' + escapeHtml(title) + '">'
+        + escapeHtml(formatFp(showFp)) + '</button>'
+      );
+    } else {
+      chips.push(
+        '<button type="button" class="fp-chip edited" data-edit-fp-pid="'
+        + escapeHtml(String(r.pid))
+        + '" title="No scored night yet — click to enter FP manually">+</button>'
       );
     }
   }
@@ -2996,6 +3170,13 @@ function render(){
       promptManualLock(btn.getAttribute('data-lock-pid'));
     });
   });
+  document.getElementById('sides').querySelectorAll('[data-edit-fp-pid]').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      promptEditLastFp(btn.getAttribute('data-edit-fp-pid'));
+    });
+  });
   renderAdvice(pair, leftPack, rightPack);
   renderConfirmPanel(pair);
 
@@ -3010,7 +3191,7 @@ function render(){
     + 'Confirm locks pulls scored nights — you verify Started + final Sleeper FP, then Bankable or Lock now. '
     + 'API scores alone never bank. '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
-    + 'Under each name: last score (or locked FP) beside Avg (last 25), then next tip / games left. '
+    + 'Under each name: last score (click to edit — sticky, API won’t overwrite) beside Avg (last 25), then next tip / games left. '
     + 'Rec shows Bank ≥ and uses that floor for Lock / Wait / Switch. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
