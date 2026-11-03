@@ -419,7 +419,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261103-nounicorn';
+    || '20261103-uniqueswitch';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1929,6 +1929,7 @@ function sidePlayerRows(side){
     taxi: rows.filter(r => r.bucket === 'TX')
   };
   rows.forEach(r => { r.rec = buildRec(r, pack); });
+  resolveUniqueSwitchRecs(pack);
   return pack;
 }
 
@@ -2278,18 +2279,27 @@ function isImmovable(r){
   return false;
 }
 
+function switchExcludeSet(opts){
+  const raw = opts && opts.excludeSwitchPids;
+  if (!raw) return null;
+  if (raw instanceof Set) return raw;
+  return new Set([].concat(raw).map(String));
+}
+
 /* You can only lock a night from a starting slot before tip. If this starter
    isn’t banking now, free the slot for a bench player who tips sooner — even
    with a lower Avg. A non-locked score costs nothing to sit. */
-function tipOrderSwitchTarget(r, pack){
+function tipOrderSwitchTarget(r, pack, opts){
   if (isImmovable(r) || isBenchRow(r)) return null;
   if (isBankableNow(r)) return null;
   const myNext = nextTipMs(r.scout);
   if (myNext == null) return null;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null;
+  const excluded = switchExcludeSet(opts);
   const cands = (pack.rows || []).filter(o => {
     if (!o || o.pid === r.pid || isImmovable(o)) return false;
+    if (excluded && excluded.has(String(o.pid))) return false;
     if (!isBenchRow(o)) return false;
     const inj = o.scout && o.scout.injury;
     if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
@@ -2317,15 +2327,17 @@ function tipOrderSwitchTarget(r, pack){
    Never recommend swapping one starter for another starter.
    Never recommend moving a locked starter.
    Prefer tip-order (earlier tip) when not locking; else higher Avg. */
-function betterSwitchTarget(r, pack){
+function betterSwitchTarget(r, pack, opts){
   if (isImmovable(r)) return null;
-  const tipAlt = tipOrderSwitchTarget(r, pack);
+  const tipAlt = tipOrderSwitchTarget(r, pack, opts);
   if (tipAlt) return tipAlt;
   const myMean = r.dist && Number(r.dist.mean) || 0;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null; /* starters only — bench uses switch-in */
+  const excluded = switchExcludeSet(opts);
   const cands = (pack.rows || []).filter(o => {
     if (!o || o.pid === r.pid || isImmovable(o)) return false;
+    if (excluded && excluded.has(String(o.pid))) return false;
     if (!isBenchRow(o)) return false; /* bench only — no starter↔starter */
     const inj = o.scout && o.scout.injury;
     if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
@@ -2339,6 +2351,132 @@ function betterSwitchTarget(r, pack){
   const best = cands[0] || null;
   if (!best) return null;
   return {row: best, into: slotLabel, kind: 'avg'};
+}
+
+/* How strongly this starter should claim this bench sub (unique across roster).
+   Prefer real position slots over UTIL, tip-order over Avg chase, then tip gap. */
+function switchClaimScore(starter, alt){
+  if (!starter || !alt || !alt.row) return -Infinity;
+  let score = 0;
+  if (alt.into && !isUtilSlotLabel(alt.into)) score += 10000;
+  if (alt.kind === 'tip') score += 5000;
+  else if (alt.kind === 'avg') score += 2000;
+  const myTip = nextTipMs(starter.scout);
+  const theirTip = nextTipMs(alt.row.scout);
+  if (myTip != null && theirTip != null && myTip > theirTip){
+    score += Math.min(72, (myTip - theirTip) / 3600000) * 40;
+    /* Sooner free-slot (starter tips sooner) wins ties — use the night now. */
+    score += Math.max(0, 48 - (myTip - Date.now()) / 3600000);
+  }
+  score += Number(alt.row.dist && alt.row.dist.mean) || 0;
+  const bank = starter.bank && starter.bank.mark != null ? Number(starter.bank.mark) : null;
+  const scored = latestLockableFp(starter);
+  if (scored != null && bank != null) score += Math.max(0, bank - scored);
+  return score;
+}
+
+function attachSwitchMeta(rec, alt, starter){
+  if (!rec || !alt || !alt.row) return rec;
+  rec.switchPid = String(alt.row.pid);
+  rec.switchInto = alt.into || null;
+  rec.switchKind = alt.kind || null;
+  rec.switchScore = switchClaimScore(starter, alt);
+  return rec;
+}
+
+/* One bench sub → one starter Switch. Greedy best claim, then re-Rec losers
+   without the claimed benches so the next-best sub (or Wait) surfaces. */
+function resolveUniqueSwitchRecs(pack){
+  if (!pack || !pack.rows) return;
+  const maxPasses = 6;
+  for (let pass = 0; pass < maxPasses; pass++){
+    const edges = [];
+    (pack.rows || []).forEach(r => {
+      if (!r || !r.rec || r.rec.action !== 'switch' || !r.rec.switchPid) return;
+      if (isBenchRow(r) || isIrRow(r) || isTaxiRow(r)) return;
+      edges.push({
+        starter: r,
+        benchPid: String(r.rec.switchPid),
+        score: Number(r.rec.switchScore) || 0
+      });
+    });
+    if (!edges.length) return;
+    edges.sort((a, b) => b.score - a.score
+      || String(a.starter.pid).localeCompare(String(b.starter.pid)));
+    const benchTaken = new Set();
+    const starterKeep = new Set();
+    edges.forEach(e => {
+      if (starterKeep.has(String(e.starter.pid))) return;
+      if (benchTaken.has(e.benchPid)) return;
+      benchTaken.add(e.benchPid);
+      starterKeep.add(String(e.starter.pid));
+    });
+    const losers = edges
+      .map(e => e.starter)
+      .filter((r, i, arr) => arr.indexOf(r) === i)
+      .filter(r => !starterKeep.has(String(r.pid)));
+    if (!losers.length){
+      syncBenchSwitchIns(pack, benchTaken, starterKeep);
+      return;
+    }
+    let changed = false;
+    losers.forEach(r => {
+      const prevPid = r.rec && r.rec.switchPid;
+      const prevLabel = r.rec && r.rec.label;
+      r.rec = buildRec(r, pack, {excludeSwitchPids: benchTaken});
+      if ((r.rec && r.rec.switchPid) !== prevPid || (r.rec && r.rec.label) !== prevLabel){
+        changed = true;
+      }
+      if (r.rec && r.rec.action === 'switch' && r.rec.switchPid
+        && !benchTaken.has(String(r.rec.switchPid))){
+        benchTaken.add(String(r.rec.switchPid));
+        starterKeep.add(String(r.pid));
+      }
+    });
+    if (!changed){
+      syncBenchSwitchIns(pack, benchTaken, starterKeep);
+      return;
+    }
+  }
+  const claimed = new Set();
+  (pack.rows || []).forEach(r => {
+    if (r && r.rec && r.rec.action === 'switch' && r.rec.switchPid
+      && !isBenchRow(r) && !isIrRow(r) && !isTaxiRow(r)){
+      claimed.add(String(r.rec.switchPid));
+    }
+  });
+  syncBenchSwitchIns(pack, claimed, null);
+}
+
+/* Bench "In · over" should name the starter who actually claimed them. */
+function syncBenchSwitchIns(pack, benchTaken, starterKeep){
+  if (!pack || !benchTaken || !benchTaken.size) return;
+  const byBench = {};
+  (pack.rows || []).forEach(r => {
+    if (!r || !r.rec || r.rec.action !== 'switch' || !r.rec.switchPid) return;
+    if (isBenchRow(r) || isIrRow(r) || isTaxiRow(r)) return;
+    byBench[String(r.rec.switchPid)] = r;
+  });
+  (pack.rows || []).forEach(b => {
+    if (!b || !isBenchRow(b)) return;
+    const owner = byBench[String(b.pid)];
+    if (!owner) return;
+    const into = owner.slotLabel && owner.slotLabel !== 'BN'
+      ? String(owner.slotLabel).toUpperCase()
+      : (owner.rec && owner.rec.switchInto) || null;
+    const over = {row: owner, into: into, why: 'paired Switch', score: 1};
+    b.rec = {
+      action: 'switch',
+      label: switchInLabel(over),
+      reason: 'start @ ' + (into || 'slot') + ' for '
+        + (nextGamePhrase(b.scout) || nextGameLabel(b.scout) || 'earlier tip')
+        + ' · over ' + shortPlayerName(owner.p),
+      cls: 'rec-switch',
+      switchPid: String(owner.pid),
+      switchInto: into,
+      switchKind: 'paired'
+    };
+  });
 }
 
 /* Keep a starter’s tip opportunity open until tip + short watch window.
@@ -2462,9 +2600,11 @@ function switchInLabel(over){
 
 /* Actionable recommendation: Lock / Switch / Wait (+ reason).
    Only starting slots score — bench Switch means switch THIS player in.
-   Reasons cite the live clock when tip timing matters. */
-function buildRec(r, pack){
+   Reasons cite the live clock when tip timing matters.
+   opts.excludeSwitchPids = bench pids already claimed by another Switch. */
+function buildRec(r, pack, opts){
   const nowMs = Date.now();
+  const switchOpts = opts || {};
   if (isImmovable(r)){
     return {
       action: 'locked',
@@ -2663,18 +2803,18 @@ function buildRec(r, pack){
 
   /* ——— Starters ——— */
   if (injury === 'OUT' || injury === 'O' || injury === 'IR'){
-    const alt = betterSwitchTarget(r, pack);
+    const alt = betterSwitchTarget(r, pack, switchOpts);
     const tag = injury === 'IR' ? 'IR' : 'OUT';
     if (alt && alt.row){
       const altTip = nextGamePhrase(alt.row.scout, nowMs);
-      return {
+      return attachSwitchMeta({
         action: 'switch',
         label: switchOutLabel(alt),
         reason: tag + ' — use ' + shortPlayerName(alt.row.p)
           + (alt.into ? (' @ ' + alt.into) : '')
           + (altTip ? (' · tips ' + altTip) : ''),
         cls: 'rec-switch'
-      };
+      }, alt, r);
     }
     return {action: 'sit', label: 'Sit', reason: 'ruled ' + tag, cls: 'rec-sit'};
   }
@@ -2707,7 +2847,7 @@ function buildRec(r, pack){
   /* Not locking this night → don’t park the slot until their next tip.
      Start whoever tips sooner (even lower Avg); you lose nothing if the
      current score isn’t being banked. */
-  const tipAlt = tipOrderSwitchTarget(r, pack);
+  const tipAlt = tipOrderSwitchTarget(r, pack, switchOpts);
   if (tipAlt && tipAlt.row){
     const inName = shortPlayerName(tipAlt.row.p);
     const inTip = nextGamePhrase(tipAlt.row.scout, nowMs);
@@ -2716,28 +2856,28 @@ function buildRec(r, pack){
     if (scored != null && bank != null) bits.push(formatFp(scored) + ' < Bank ' + bank);
     bits.push('free slot until ' + holdUntil);
     bits.push('start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first');
-    return {
+    return attachSwitchMeta({
       action: 'switch',
       label: switchOutLabel(tipAlt),
       reason: bits.join(' · '),
       cls: 'rec-switch'
-    };
+    }, tipAlt, r);
   }
 
   if (scored != null && bank != null && scored < bank){
-    const alt = betterSwitchTarget(r, pack);
+    const alt = betterSwitchTarget(r, pack, switchOpts);
     const myMean = r.dist && Number(r.dist.mean) || 0;
     const altMean = alt && alt.row && alt.row.dist && Number(alt.row.dist.mean) || 0;
     if (alt && alt.row && alt.kind !== 'tip' && altMean - myMean >= 4){
       const altTip = nextGamePhrase(alt.row.scout, nowMs);
-      return {
+      return attachSwitchMeta({
         action: 'switch',
         label: switchOutLabel(alt),
         reason: formatFp(scored) + ' < Bank ' + bank
           + (alt.into ? (' · ' + alt.into + '-eligible') : '')
           + (altTip ? (' · ' + shortPlayerName(alt.row.p) + ' ' + altTip) : ''),
         cls: 'rec-switch'
-      };
+      }, alt, r);
     }
     if (gamesLeft > 0){
       return {
@@ -3687,7 +3827,7 @@ function render(){
     + 'Wasn’t started = slash that night out of the confirm queue. '
     + 'Bank ≥ freezes at lock time. '
     + 'Score color vs Avg/Bank: red below Avg, yellow between Avg and Bank, green at/near Bank. '
-    + 'Rec Lock prefers PG–C before UTIL. Rec suggests tip-order Switch / Wait — this screen does not move players. '
+    + 'Rec Lock prefers PG–C before UTIL. Rec suggests tip-order Switch / Wait — each bench sub is assigned to one best starter slot (not the same Switch on four rows). '
     + 'Alerts on notifies when Focus team Rec flips to Switch (and ~15m before tip) while this tab stays open.';
 }
 
