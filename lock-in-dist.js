@@ -904,14 +904,15 @@
   }
 
   /* Absolute minimum lock FP by day of week (hard floor — never Lock below).
-     Mon 35, then −1 each day → Sat 30, Sun 29. Personal Bank may sit higher. */
+     Mon 35, then −1 each day → Sat 30, Sun 29. Personal Bank may sit higher.
+     Unknown/missing dow → Mon 35 (strictest) so we never silently skip the floor. */
   function absoluteMinLockFp(dow){
-    const d = Number(dow);
-    if (!Number.isFinite(d)) return null;
+    let d = Number(dow);
+    if (!Number.isFinite(d)) d = 1; /* Mon */
     const n = ((Math.floor(d) % 7) + 7) % 7;
     if (n === 0) return 29; /* Sunday */
     if (n >= 1 && n <= 6) return 35 - (n - 1); /* Mon 35 … Sat 30 */
-    return null;
+    return 35;
   }
 
   /* Remaining Mon–Sun logos for this player, in σ. Many left → raise bar;

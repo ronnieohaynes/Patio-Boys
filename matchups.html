@@ -419,7 +419,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261106-dowmin';
+    || '20261106-dowmin2';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -773,7 +773,7 @@ function computeBankAtLockForPid(pid){
       ? Number(state.league.settings.playoff_week_start) - 1
       : 21,
     slots: (window.LockInDist && LockInDist.LOCK_SLOTS) || 10,
-    dow: (new Date()).getDay(),
+    dow: leagueDow(),
     gamesLeft: scout && scout.gamesLeft,
     gamesThisWeek: scout && scout.gamesThisWeek,
     injury: scout && scout.injury
@@ -991,15 +991,20 @@ function listConfirmNights(side){
           ? Number(state.league.settings.playoff_week_start) - 1
           : 21,
         slots: (window.LockInDist && LockInDist.LOCK_SLOTS) || 10,
-        dow: (new Date()).getDay(),
+        dow: leagueDow(),
         gamesLeft: scout && scout.gamesLeft,
         gamesThisWeek: scout && scout.gamesThisWeek,
         injury: scout && scout.injury
       });
       if (!(plan && plan.mark != null)) return {mark: null, style: plan && plan.style || null};
-      return {
+      const floored = enforceBankAbsFloor({
         mark: Math.round(Number(plan.mark)),
-        style: plan.style || null
+        style: plan.style || null,
+        why: plan.why || ''
+      }, leagueDow());
+      return {
+        mark: floored.mark,
+        style: floored.style
       };
     })();
     out.push({
@@ -1798,7 +1803,7 @@ function bankOptsForSide(sideDists, lockedScores){
     slots: left,
     rosterDists: unlocked,
     rosterFloor: floor,
-    dow: (new Date()).getDay(),
+    dow: leagueDow(),
     lockedCount: (lockedScores || []).length
   };
 }
@@ -1915,7 +1920,7 @@ function sidePlayerRows(side){
       };
       return;
     }
-    r.bank = plan;
+    r.bank = enforceBankAbsFloor(plan, opts.dow);
   });
   if (freezeDirty) saveLockMarks();
 
@@ -2143,20 +2148,53 @@ function nextGamePhrase(scout, nowMs){
   return lbl || rel || null;
 }
 
+/* League day-of-week in America/Los_Angeles (0=Sun … 6=Sat). */
+function leagueDow(ms){
+  const t = ms != null ? Number(ms) : Date.now();
+  try {
+    const w = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      weekday: 'short'
+    }).format(new Date(Number.isFinite(t) ? t : Date.now()));
+    const map = {Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6};
+    if (map[w] != null) return map[w];
+  } catch (e){ /* fall through */ }
+  return new Date(Number.isFinite(t) ? t : Date.now()).getDay();
+}
+
 function absoluteMinLockFp(dow){
   if (window.LockInDist && typeof LockInDist.absoluteMinLockFp === 'function'){
-    return LockInDist.absoluteMinLockFp(dow);
+    const v = LockInDist.absoluteMinLockFp(dow);
+    if (v != null && Number.isFinite(Number(v))) return Number(v);
   }
-  const d = Number(dow);
-  if (!Number.isFinite(d)) return null;
+  let d = Number(dow);
+  if (!Number.isFinite(d)) d = leagueDow();
   const n = ((Math.floor(d) % 7) + 7) % 7;
   if (n === 0) return 29;
   if (n >= 1 && n <= 6) return 35 - (n - 1);
-  return null;
+  return 35;
+}
+
+function enforceBankAbsFloor(bank, dow){
+  if (!bank || bank.mark == null || !Number.isFinite(Number(bank.mark))) return bank;
+  const day = dow != null && Number.isFinite(Number(dow)) ? Number(dow) : leagueDow();
+  const min = absoluteMinLockFp(day);
+  if (min == null) return bank;
+  if (Number(bank.mark) + 1e-9 >= min){
+    bank.absMin = min;
+    return bank;
+  }
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  bank.mark = min;
+  bank.absMin = min;
+  bank.absFloored = true;
+  bank.why = (bank.why ? (bank.why + ' · ') : '')
+    + names[((Math.floor(day) % 7) + 7) % 7] + ' floor ≥' + min;
+  return bank;
 }
 
 function dowBankHint(nowMs){
-  const d = new Date(nowMs != null ? nowMs : Date.now()).getDay();
+  const d = leagueDow(nowMs);
   const floor = absoluteMinLockFp(d);
   const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const floorBit = floor != null ? (names[d] + ' floor ≥' + floor) : null;
@@ -2240,7 +2278,7 @@ function isObservedBestNight(scored, style, dist){
 function clearsAbsoluteMinLock(scored, dow){
   const s = scored != null ? Number(scored) : NaN;
   if (!Number.isFinite(s)) return false;
-  const day = dow != null ? Number(dow) : new Date().getDay();
+  const day = dow != null && Number.isFinite(Number(dow)) ? Number(dow) : leagueDow();
   const min = absoluteMinLockFp(day);
   if (min == null) return true;
   return s + 1e-9 >= min;
@@ -2249,8 +2287,9 @@ function clearsAbsoluteMinLock(scored, dow){
 function meetsBank(scored, bank, style, dist, dow){
   const s = scored != null ? Number(scored) : NaN;
   if (!Number.isFinite(s)) return false;
+  const day = dow != null && Number.isFinite(Number(dow)) ? Number(dow) : leagueDow();
   /* Hard DOW floor — near-miss / season-high cannot undercut Mon…Sun min. */
-  if (!clearsAbsoluteMinLock(s, dow)) return false;
+  if (!clearsAbsoluteMinLock(s, day)) return false;
   const b = bank != null ? Number(bank) : NaN;
   if (Number.isFinite(b) && s + 1e-9 >= b - bankCloseFp(style)){
     return true;
@@ -2263,7 +2302,7 @@ function bankMeetPhrase(scored, bank, style, dist, dow){
   const s = Number(scored);
   const b = Number(bank);
   if (!Number.isFinite(s)) return '';
-  const day = dow != null ? Number(dow) : new Date().getDay();
+  const day = dow != null && Number.isFinite(Number(dow)) ? Number(dow) : leagueDow();
   const absMin = absoluteMinLockFp(day);
   if (absMin != null && s + 1e-9 < absMin){
     const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -2854,10 +2893,45 @@ function buildRec(r, pack, opts){
     return {action: 'sit', label: 'Sit', reason: 'ruled ' + tag, cls: 'rec-sit'};
   }
 
+  /* Absolute DOW floor — never Lock below Mon…Sun min (Nemby 29 on Fri/Sat). */
+  const dowNow = leagueDow(nowMs);
+  const absMinNow = absoluteMinLockFp(dowNow);
+  if (scored != null && absMinNow != null && Number(scored) + 1e-9 < absMinNow){
+    const tipAltFloor = tipOrderSwitchTarget(r, pack, switchOpts);
+    if (tipAltFloor && tipAltFloor.row){
+      const inName = shortPlayerName(tipAltFloor.row.p);
+      const inTip = nextGamePhrase(tipAltFloor.row.scout, nowMs);
+      const holdUntil = nextPhrase || nextLbl || 'later';
+      return attachSwitchMeta({
+        action: 'switch',
+        label: switchOutLabel(tipAltFloor),
+        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow)
+          + ' · free slot until ' + holdUntil
+          + ' · start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first',
+        cls: 'rec-switch'
+      }, tipAltFloor, r);
+    }
+    if (gamesLeft > 0){
+      return {
+        action: 'wait',
+        label: 'Wait',
+        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow)
+          + (nextPhrase ? (' · next ' + nextPhrase) : (' · ' + gamesLeft + ' left')),
+        cls: 'rec-wait'
+      };
+    }
+    return {
+      action: 'sit',
+      label: 'Pass',
+      reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow) + ' · no games left',
+      cls: 'rec-sit'
+    };
+  }
+
   /* Bankable night in a start slot — lock before anything else.
      Prefer a position slot over UTIL when recommending where to bank.
      Stars/starters: near-miss or season/sample-best (don’t hunt unicorns). */
-  if (meetsBank(scored, bank, bankStyle, r.dist)){
+  if (meetsBank(scored, bank, bankStyle, r.dist, dowNow)){
     const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
     if (slot){
       const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
@@ -2867,14 +2941,14 @@ function buildRec(r, pack, opts){
       return {
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist) + moveBit + utilLast + urgency,
+        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow) + moveBit + utilLast + urgency,
         cls: 'rec-lock'
       };
     }
     return {
       action: 'lock',
       label: 'Lock',
-      reason: bankMeetPhrase(scored, bank, bankStyle, r.dist) + ' · no open slot' + urgency,
+      reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow) + ' · no open slot' + urgency,
       cls: 'rec-lock'
     };
   }
@@ -5052,7 +5126,7 @@ async function runOcrOnImage(file){
             ? Number(state.league.settings.playoff_week_start) - 1
             : 21,
           slots: (window.LockInDist && LockInDist.LOCK_SLOTS) || 10,
-          dow: (new Date()).getDay(),
+          dow: leagueDow(),
           gamesLeft: scout && scout.gamesLeft,
           gamesThisWeek: scout && scout.gamesThisWeek,
           injury: scout && scout.injury
