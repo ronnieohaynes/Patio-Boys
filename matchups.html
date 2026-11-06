@@ -419,7 +419,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261103-uniqueswitch';
+    || '20261106-dowmin';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2143,13 +2143,28 @@ function nextGamePhrase(scout, nowMs){
   return lbl || rel || null;
 }
 
+function absoluteMinLockFp(dow){
+  if (window.LockInDist && typeof LockInDist.absoluteMinLockFp === 'function'){
+    return LockInDist.absoluteMinLockFp(dow);
+  }
+  const d = Number(dow);
+  if (!Number.isFinite(d)) return null;
+  const n = ((Math.floor(d) % 7) + 7) % 7;
+  if (n === 0) return 29;
+  if (n >= 1 && n <= 6) return 35 - (n - 1);
+  return null;
+}
+
 function dowBankHint(nowMs){
   const d = new Date(nowMs != null ? nowMs : Date.now()).getDay();
-  /* Matches lock-in-dist bankDayAdj: Thu hold · weekend bank sooner. */
-  if (d === 4) return 'Thu · stay picky';
-  if (d === 0 || d === 1) return 'weekend · bank sooner';
-  if (d === 5 || d === 6) return 'weekend slate · bank quality nights';
-  return null;
+  const floor = absoluteMinLockFp(d);
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const floorBit = floor != null ? (names[d] + ' floor ≥' + floor) : null;
+  /* Matches lock-in-dist: DOW abs floor + soft pickiness. */
+  if (d === 4) return floorBit ? (floorBit + ' · stay picky') : 'Thu · stay picky';
+  if (d === 0 || d === 6) return floorBit ? (floorBit + ' · bank quality nights') : 'weekend · bank quality nights';
+  if (d === 5) return floorBit ? (floorBit + ' · weekend slate') : 'weekend slate · bank quality nights';
+  return floorBit;
 }
 
 /* Next tip timestamp for tip-order lineup (earlier tip wins the start slot). */
@@ -2179,7 +2194,8 @@ function nextTipMs(scout){
 
 /* Bank ≥ is a rounded integer. Stars/starters get 1 FP near-miss slack, and
    also bank a season/sample-best night — don’t pass on Melo’s first 40 hoping
-   for Bank 41. Fringe/stream stay exact. */
+   for Bank 41. Fringe/stream stay exact.
+   Absolute DOW floor (Mon 35 … Sun 29) still wins — never Lock below it. */
 const BANK_CLOSE_STAR_FP = 1;
 
 function bankCloseFp(style){
@@ -2221,20 +2237,39 @@ function isObservedBestNight(scored, style, dist){
   return s + 1e-9 >= hi;
 }
 
-function meetsBank(scored, bank, style, dist){
+function clearsAbsoluteMinLock(scored, dow){
   const s = scored != null ? Number(scored) : NaN;
+  if (!Number.isFinite(s)) return false;
+  const day = dow != null ? Number(dow) : new Date().getDay();
+  const min = absoluteMinLockFp(day);
+  if (min == null) return true;
+  return s + 1e-9 >= min;
+}
+
+function meetsBank(scored, bank, style, dist, dow){
+  const s = scored != null ? Number(scored) : NaN;
+  if (!Number.isFinite(s)) return false;
+  /* Hard DOW floor — near-miss / season-high cannot undercut Mon…Sun min. */
+  if (!clearsAbsoluteMinLock(s, dow)) return false;
   const b = bank != null ? Number(bank) : NaN;
-  if (Number.isFinite(s) && Number.isFinite(b) && s + 1e-9 >= b - bankCloseFp(style)){
+  if (Number.isFinite(b) && s + 1e-9 >= b - bankCloseFp(style)){
     return true;
   }
   /* New / tied best night for a star — bank it; don’t hunt +1 over the high. */
   return isObservedBestNight(scored, style, dist);
 }
 
-function bankMeetPhrase(scored, bank, style, dist){
+function bankMeetPhrase(scored, bank, style, dist, dow){
   const s = Number(scored);
   const b = Number(bank);
   if (!Number.isFinite(s)) return '';
+  const day = dow != null ? Number(dow) : new Date().getDay();
+  const absMin = absoluteMinLockFp(day);
+  if (absMin != null && s + 1e-9 < absMin){
+    const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const d = ((Math.floor(day) % 7) + 7) % 7;
+    return formatFp(s) + ' < ' + names[d] + ' floor ' + absMin;
+  }
   if (Number.isFinite(b) && s + 1e-9 >= b) return formatFp(s) + ' ≥ Bank ' + formatFp(b);
   const close = bankCloseFp(style);
   if (Number.isFinite(b) && close > 0 && s + 1e-9 >= b - close){
@@ -3819,6 +3854,7 @@ function render(){
     + 'Under each name: last score (click to edit — sticky, API won’t overwrite) beside Avg (last 25), then next tip / games left. '
     + 'Rec shows Bank ≥; stars/starters lock within ' + BANK_CLOSE_STAR_FP
     + ' FP or on a season/sample-best night (Bank won’t hunt above that high), fringe/stream need exact. '
+    + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — never Lock below that day’s number. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
