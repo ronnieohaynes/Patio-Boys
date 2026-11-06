@@ -903,6 +903,17 @@
     return Math.round(adj * bankStyleSigmaScale(style) * 1000) / 1000;
   }
 
+  /* Absolute minimum lock FP by day of week (hard floor — never Lock below).
+     Mon 35, then −1 each day → Sat 30, Sun 29. Personal Bank may sit higher. */
+  function absoluteMinLockFp(dow){
+    const d = Number(dow);
+    if (!Number.isFinite(d)) return null;
+    const n = ((Math.floor(d) % 7) + 7) % 7;
+    if (n === 0) return 29; /* Sunday */
+    if (n >= 1 && n <= 6) return 35 - (n - 1); /* Mon 35 … Sat 30 */
+    return null;
+  }
+
   /* Remaining Mon–Sun logos for this player, in σ. Many left → raise bar;
      last game → ease so the night can still bank. Scales with week volume. */
   function bankGamesLeftAdj(style, gamesLeft, dow, gamesThisWeek){
@@ -1103,6 +1114,15 @@
       }
     }
 
+    /* Hard DOW floor after soft caps — never advertise Bank below Mon…Sun min. */
+    const absMin = absoluteMinLockFp(options.dow);
+    let absFloored = false;
+    if (absMin != null && mark < absMin){
+      mark = absMin;
+      absFloored = true;
+      rate = rateAt(mark);
+    }
+
     const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const dowN = Number(options.dow);
     const dowLabel = Number.isFinite(dowN) ? dowNames[((dowN % 7) + 7) % 7] : null;
@@ -1116,6 +1136,9 @@
     if (highCapped && observedHigh != null){
       whyBits.push('capped at ' + highSource + ' '
         + (Math.round(observedHigh * 10) / 10));
+    }
+    if (absFloored && absMin != null){
+      whyBits.push((dowLabel || 'DOW') + ' floor ≥' + absMin);
     }
     if (rosterFloor != null && teamLift > 0){
       whyBits.push('roster top-' + slots + ' ~' + Math.round(rosterFloor));
@@ -1159,6 +1182,8 @@
         ? Math.round(observedHigh * 10) / 10
         : null,
       highCapped,
+      absMin: absMin != null ? absMin : null,
+      absFloored,
       quality: quality != null && Number.isFinite(quality) ? Math.round(quality * 10) / 10 : null,
       mean: Math.round(mean * 10) / 10,
       why: whyBits.join(' · ')
@@ -2836,6 +2861,7 @@
     bankGamesLeftAdj,
     bankInjuryAdj,
     observedSampleHigh,
+    absoluteMinLockFp,
     lockBankPlan,
     SMASH_BOOM_SIGMA,
     SMASH_GRADE_BANDS,
