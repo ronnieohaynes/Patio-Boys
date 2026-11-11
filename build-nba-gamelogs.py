@@ -7,7 +7,7 @@ counting-stat rows. The site scores those rows live under league settings.
 
 Refresh:
   python3 build-nba-gamelogs.py
-  python3 build-nba-gamelogs.py --seasons 2025 2024
+  python3 build-nba-gamelogs.py --seasons 2026 2025
 
 Scheduled:
   .github/workflows/update-nba-gamelogs.yml runs daily (~6am PT) and on
@@ -311,8 +311,8 @@ def main() -> None:
     ap.add_argument(
         "--seasons",
         nargs="+",
-        default=["2025", "2024"],
-        help="Sleeper NBA season years (e.g. 2025 = 2025-26)",
+        default=["2026", "2025"],
+        help="Sleeper NBA season years (e.g. 2026 = 2026-27)",
     )
     ap.add_argument("--workers", type=int, default=16)
     args = ap.parse_args()
