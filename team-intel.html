@@ -611,7 +611,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261111-locklogs';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261111-rookiescale';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   var files = ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','league-awards.js','lock-in-dist.js','draft-pick-value.js','table-sort.js'];
   function ready(){ window.dispatchEvent(new Event('pb-deps-ready')); }
@@ -2128,7 +2128,7 @@ function renderLockIn(t){
       + escapeHtml(String(state.statsSeason || 'last'))
       + ' / 20% '
       + escapeHtml(String(state.priorStatsSeason || 'prior'))
-      + ' / 20% proj</strong>; sophomores <strong>75/25</strong>; rookies unchanged. '
+      + ' / 20% proj</strong>; sophomores + sampled rookies <strong>75/25</strong>; thin-sample rookies stay on proj+comps. '
       + 'Franchise <strong>situation</strong> (same depth-chart primary only — multi-eligible tags ignored; unclear pecking order / multi-star logjams at that slot) '
       + 'haircuts Trade ★ fully and Lock OVR partially. '
       + 'Players with <strong>no NBA team</strong> project <strong>0</strong> FP/G and Lock floors at <strong>50</strong> until signed. '
@@ -2142,9 +2142,10 @@ function renderLockIn(t){
       + 'Vets: 60% last-season smash · 20% prior-season smash'
       + (state.priorStatsSeason ? (' (' + escapeHtml(String(state.priorStatsSeason)) + ')') : '')
       + ' · 20% next-year proj (renormalized if a leg is missing; unsigned NBA FAs contribute 0 proj / skipped in blend). '
-      + 'Sophomores (1 year exp): 75% last · 25% proj. Rookies stay on Y1 proj + early-career comps, '
+      + 'Sophomores (1 year exp) and rookies with smash samples: 75% last · 25% proj on the same absolute curve. '
+      + 'Thin-sample rookies stay on Y1 proj + early-career comps, '
       + 'capped at Lock ' + ((window.LockInDist && LockInDist.ROOKIE_LOCK_OVR_CAP) || 82)
-      + ' until they have smash samples. '
+      + ' until N ≥ ' + ((window.LockInDist && LockInDist.MIN_SAMPLES_FOR_SMASH) || 5) + '. '
       + '<strong>Smash</strong> = how often game FP hits <strong>GG</strong> (Avg+0.5σ quality lock line; ~31% normal). '
       + '<strong>GG</strong> is that FP threshold; full Ceil stays Avg+1σ. '
       + '<strong>Trade ★</strong> = prod OVR × age × injury × contract × situation × potential'

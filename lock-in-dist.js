@@ -503,8 +503,10 @@
 
   /* ---- Smash-hunting Lock OVR (Intel) ----
      Raw smash base = 0.50·Avg + 0.25·Ceil + 0.25·(40·P≥40 + 50·P≥50)
-     Rookies: Y1 proj + early-career comps (peak floors haircut) or draft-rank
-     bands (50/50), soft-capped until smash samples exist.
+     Rookies with smash samples (N ≥ MIN_SAMPLES_FOR_SMASH): same absolute
+     curve as everyone else — soph-style blend (75% last · 25% proj; no prior).
+     Thin-sample rookies: Y1 proj + early-career comps / draft-rank (50/50),
+     soft-capped until samples exist.
      Thin vet samples (N < 5 game lines) fall back to projected FP/G.
      Lock OVR maps smash base → 50–99 on an ABSOLUTE curve (not pool
      percentile — percentile vs all NBA stuffed every roster guy into the 90s).
@@ -513,8 +515,8 @@
   const MIN_SAMPLES_FOR_SMASH = 5;
   /* Multi-season Lock blend (smash bases, then OVR curve).
      Vet: 60% last · 20% prior · 20% next-year proj.
-     Sophomore (years_exp=1): 75% last · 25% proj.
-     Rookie: unchanged (proj + early-career comps). */
+     Sophomore (years_exp=1) / sampled rookie: 75% last · 25% proj.
+     Thin-sample rookie: proj + early-career comps (soft-capped). */
   const BLEND_VET = {last: 0.60, prior: 0.20, proj: 0.20};
   const BLEND_SOPH = {last: 0.75, proj: 0.25};
   const LOCK_OVR_FLOOR = 50;
@@ -2161,7 +2163,7 @@
   }
 
   /* Mutates each dist with lockBase / lockOvr / lockTier / tradeScore / tradeStars.
-     OVR is smash (multi-season blend for non-rookies) or rookie proj+comp.
+     OVR is smash multi-season blend; thin-sample rookies fall back to proj+comp.
      Trade stars layer age + injury + contract + potential + franchise situation. */
   function attachLockValues(distMap, opts){
     const options = opts || {};
@@ -2196,11 +2198,14 @@
       const priorD = priorDistMap
         ? (priorDistMap[pid] || priorDistMap[String(pid)] || null)
         : null;
+      /* Once rookies clear the smash sample floor, grade them on the same
+         absolute curve as sophs/vets (no soft cap / no early-career proxy). */
+      const useRookieProxy = isRookie && thin;
 
       let base = null;
       let baseSource = null;
       let blendInfo = null;
-      if (isRookie){
+      if (useRookieProxy){
         base = blendRookieBase(proj, comp);
         if (base != null){
           if (proj != null && earlyComp != null) baseSource = 'rookie-proj-early';
@@ -2215,10 +2220,11 @@
           baseSource = base != null ? 'smash' : null;
         }
       } else {
-        /* Vet / sophomore: blend smash bases across seasons + next-year proj. */
+        /* Vet / soph / sampled rookie: blend smash bases + next-year proj. */
         const lastBase = seasonLockInput(d);
         const priorBase = seasonLockInput(priorD);
-        const isSoph = yearsExp === 1;
+        /* Rookies have no prior season — same weights as sophomores. */
+        const isSoph = yearsExp === 1 || isRookie;
         const parts = isSoph
           ? [
             {key: 'last', w: BLEND_SOPH.last, v: lastBase},
@@ -2271,7 +2277,7 @@
       }
 
       const rawOvr = ovrFromSmashBase(base);
-      const prodOvr = isRookie ? clampRookieOvr(rawOvr, !thin) : rawOvr;
+      const prodOvr = useRookieProxy ? clampRookieOvr(rawOvr, false) : rawOvr;
       const band = lockAgeBand(p.age, isRookie);
 
       d.lockBase = base;
@@ -2288,13 +2294,13 @@
       d.lockOvr = prodOvr; /* overwritten in pass 2 when situation applies */
       d.lockStars = null;
       d.lockPct = null;
-      d.rookieComp = comp;
-      d.rookieCompPeak = peakComp;
-      d.rookieEarlyMult = earlyMult;
-      d.rookieRankFloor = rankFloor;
-      d.rookieProj = proj;
-      d.rookieOvrCapped = isRookie && thin && rawOvr > ROOKIE_LOCK_OVR_CAP;
-      d._lockMeta = {isRookie, band, p, thin, rawOvr};
+      d.rookieComp = useRookieProxy ? comp : null;
+      d.rookieCompPeak = useRookieProxy ? peakComp : null;
+      d.rookieEarlyMult = useRookieProxy ? earlyMult : null;
+      d.rookieRankFloor = useRookieProxy ? rankFloor : null;
+      d.rookieProj = useRookieProxy ? proj : null;
+      d.rookieOvrCapped = useRookieProxy && rawOvr > ROOKIE_LOCK_OVR_CAP;
+      d._lockMeta = {isRookie, band, p, thin, rawOvr, useRookieProxy};
       attachSmashGrade(d);
       count++;
     });
