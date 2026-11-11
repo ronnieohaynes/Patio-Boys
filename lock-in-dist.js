@@ -188,8 +188,8 @@
     const options = opts || {};
     let bust = options.cacheBust;
     if (bust == null && typeof location !== 'undefined'){
-      try { bust = new URLSearchParams(location.search).get('nocache') || '20260809-uiresp2'; }
-      catch (e) { bust = '20260809-uiresp2'; }
+      try { bust = new URLSearchParams(location.search).get('nocache') || '20261111-locklogs'; }
+      catch (e) { bust = '20261111-locklogs'; }
     }
     const src = options.scriptUrl || 'nba-gamelogs-snapshot.js';
     const url = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(bust || '1');

@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       seasons:
-        description: 'Sleeper season years (space-separated), e.g. "2025 2024"'
+        description: 'Sleeper season years (space-separated), e.g. "2026 2025"'
         required: false
         default: '2026 2025'
       workers:
