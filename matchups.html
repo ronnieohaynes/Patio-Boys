@@ -441,7 +441,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261113-slotpath';
+    || '20261113-tipkeep';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2643,9 +2643,12 @@ function betterSwitchTarget(r, pack, opts){
   if (isImmovable(r)) return null;
   const tipAlt = tipOrderSwitchTarget(r, pack, opts);
   if (tipAlt) return tipAlt;
+  /* Don’t chase a later higher-Avg bench while this tip is still live. */
+  if (starterTipOpportunityOpen(r, Date.now(), pack)) return null;
   const myMean = r.dist && Number(r.dist.mean) || 0;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null; /* starters only — bench uses switch-in */
+  const myTip = nextTipMs(r.scout);
   const excluded = switchExcludeSet(opts);
   const cands = (pack.rows || []).filter(o => {
     if (!o || o.pid === r.pid || isImmovable(o)) return false;
@@ -2656,6 +2659,9 @@ function betterSwitchTarget(r, pack, opts){
     if (!fitsLockSlot(o.p, slotLabel)) return false;
     const mean = o.dist && Number(o.dist.mean) || 0;
     if (!(mean > myMean + 2)) return false;
+    const theirTip = nextTipMs(o.scout);
+    /* Later tip than starter — only after starter tip window closed (above). */
+    if (myTip != null && theirTip != null && theirTip < myTip) return false;
     const left = o.scout && o.scout.gamesLeft || 0;
     const scored = latestScoredFp(o);
     return left > 0 || scored != null;
@@ -2801,16 +2807,17 @@ function starterTipOpportunityOpen(starter, nowMs, pack){
   if (!starter || isImmovable(starter)) return true;
   if (isBankableNow(starter, pack)) return true;
   const now = nowMs != null ? Number(nowMs) : Date.now();
+  const tip = nextTipMs(starter.scout);
+  /* Upcoming tip (or ~25m settle) still owns the slot — a prior under-Bank
+     edit must not yank Nemby Fri 4pm for Sunday Tatum. */
+  if (tip != null && now < tip + STARTER_TIP_WATCH_MS) return true;
   const scored = latestLockableFp(starter);
   const bank = starter.bank && starter.bank.mark != null ? Number(starter.bank.mark) : null;
-  /* Scored night already missed Bank (incl. near-miss window) — slot free. */
+  /* Tip window closed with a miss — slot free for later higher-Avg benches. */
   if (scored != null && bank != null
     && !meetsBank(scored, bank, starter.bank && starter.bank.style, starter.dist,
       null, packWeekPlanMode(pack), packRecNeedPer(pack))) return false;
-  const tip = nextTipMs(starter.scout);
-  if (tip == null) return false;
-  /* Before tip, and for ~25m after tip while the night settles, keep them. */
-  return now < tip + STARTER_TIP_WATCH_MS;
+  return false;
 }
 
 function laterBenchBehindStarter(starter, pack, nowMs){
@@ -3223,23 +3230,33 @@ function buildRec(r, pack, opts){
     const alt = betterSwitchTarget(r, pack, switchOpts);
     const myMean = r.dist && Number(r.dist.mean) || 0;
     const altMean = alt && alt.row && alt.row.dist && Number(alt.row.dist.mean) || 0;
-    if (alt && alt.row && alt.kind !== 'tip' && altMean - myMean >= 4){
+    /* Higher-Avg later tip only after this tip window — keep Fri Nemby over Sun Tatum. */
+    if (alt && alt.row && alt.kind !== 'tip' && altMean - myMean >= 4
+      && !starterTipOpportunityOpen(r, nowMs, pack)){
       const altTip = nextGamePhrase(alt.row.scout, nowMs);
       return attachSwitchMeta({
         action: 'switch',
         label: switchOutLabel(alt),
         reason: formatFp(scored) + ' < Bank ' + bank
           + (alt.into ? (' · ' + alt.into + '-eligible') : '')
-          + (altTip ? (' · ' + shortPlayerName(alt.row.p) + ' ' + altTip) : ''),
+          + (altTip ? (' · ' + shortPlayerName(alt.row.p) + ' ' + altTip) : '')
+          + ' · after tip window',
         cls: 'rec-switch'
       }, alt, r);
     }
     if (gamesLeft > 0){
+      const later = laterBenchBehindStarter(r, pack, nowMs);
+      const laterBit = later
+        ? (' · see night before subbing ' + shortPlayerName(later.p)
+          + (nextGamePhrase(later.scout, nowMs)
+            ? (' (' + nextGamePhrase(later.scout, nowMs) + ')') : ''))
+        : '';
       return {
         action: 'wait',
         label: 'Wait',
         reason: formatFp(scored) + ' < ' + bank
-          + (nextPhrase ? (' · next ' + nextPhrase) : (' · ' + gamesLeft + ' left')),
+          + (nextPhrase ? (' · next ' + nextPhrase) : (' · ' + gamesLeft + ' left'))
+          + laterBit,
         cls: 'rec-wait'
       };
     }
