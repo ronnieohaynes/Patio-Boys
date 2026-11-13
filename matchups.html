@@ -419,7 +419,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261112-uniquelock';
+    || '20261112-relock';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1935,6 +1935,9 @@ function sidePlayerRows(side){
   };
   rows.forEach(r => { r.rec = buildRec(r, pack); });
   resolveUniqueLockSlotRecs(pack);
+  resolveRelocateLockChains(pack);
+  /* Demoted relocate losers may collide again — re-unique Lock slots. */
+  resolveUniqueLockSlotRecs(pack);
   resolveUniqueSwitchRecs(pack);
   return pack;
 }
@@ -2048,6 +2051,71 @@ function lockSlotForPlayer(r, openSlots){
   /* Last resort: their current G/F/UTIL if that’s all that’s left. */
   if (currentOpen) return currentSlot;
   return null;
+}
+
+/* Bankable locker can move into a non-bankable starter’s slot when that frees
+   their current slot for a clearly better bench player (e.g. Barrett PF→SF
+   so Giannis starts at PF over Tatum). Never moves into UTIL. */
+function bestRelocateLockForBench(locker, pack, openSlots){
+  if (!locker || !pack || isBenchRow(locker) || isIrRow(locker) || isTaxiRow(locker)) return null;
+  if (isImmovable(locker) || !isBankableNow(locker)) return null;
+  const curIdx = locker.slot != null && locker.slot !== 'BN' ? Number(locker.slot) : null;
+  const curLab = locker.slotLabel ? String(locker.slotLabel).toUpperCase() : null;
+  if (!Number.isFinite(curIdx) || !curLab || curLab === 'BN') return null;
+  if (isUtilSlotLabel(curLab)) return null; /* already last-resort — nothing to free */
+  const open = openSlots || [];
+  const openIdx = new Set(open.map(s => Number(s.index)));
+  if (!openIdx.has(curIdx)) return null;
+
+  let best = null;
+  (pack.rows || []).forEach(donor => {
+    if (!donor || String(donor.pid) === String(locker.pid)) return;
+    if (isBenchRow(donor) || isIrRow(donor) || isTaxiRow(donor) || isImmovable(donor)) return;
+    if (isBankableNow(donor)) return; /* don’t displace another bankable lock */
+    const intoIdx = donor.slot != null && donor.slot !== 'BN' ? Number(donor.slot) : null;
+    const intoLab = donor.slotLabel ? String(donor.slotLabel).toUpperCase() : null;
+    if (!Number.isFinite(intoIdx) || !intoLab || intoLab === 'BN') return;
+    if (isUtilSlotLabel(intoLab)) return;
+    if (!openIdx.has(intoIdx)) return;
+    if (intoIdx === curIdx) return;
+    if (!fitsLockSlot(locker.p, intoLab)) return;
+
+    const donorMean = Number(donor.dist && donor.dist.mean) || 0;
+    (pack.rows || []).forEach(bench => {
+      if (!bench || !isBenchRow(bench) || isImmovable(bench)) return;
+      const inj = bench.scout && bench.scout.injury;
+      if (inj === 'OUT' || inj === 'O' || inj === 'IR') return;
+      if (inj === 'DTD' || inj === 'Q' || inj === 'QUESTIONABLE') return;
+      if (!fitsLockSlot(bench.p, curLab)) return;
+      const benchMean = Number(bench.dist && bench.dist.mean) || 0;
+      const meanGain = benchMean - donorMean;
+      /* Need a real upgrade over the displaced starter (Giannis ≫ Tatum). */
+      if (!(meanGain >= 4)) return;
+      const gamesLeft = bench.scout && bench.scout.gamesLeft != null
+        ? Number(bench.scout.gamesLeft)
+        : (((bench.scout && bench.scout.slate) || []).filter(s => s.kind === 'opp').length);
+      if (!(gamesLeft > 0) && latestScoredFp(bench) == null) return;
+
+      let score = meanGain * 20 + benchMean;
+      if (isPrimaryPosSlotLabel(intoLab)) score += 100;
+      if (isPrimaryPosSlotLabel(curLab)) score += 40; /* freeing a real lock slot */
+      /* Prefer parking the lock in a primary the locker already lists. */
+      const elig = eligList(locker.p).map(String);
+      if (elig.indexOf(intoLab) >= 0) score += 30;
+
+      if (!best || score > best.score){
+        best = {
+          slot: {index: intoIdx, label: intoLab},
+          from: {index: curIdx, label: curLab},
+          donor: donor,
+          bench: bench,
+          score: score,
+          meanGain: meanGain
+        };
+      }
+    });
+  });
+  return best;
 }
 
 function shortPlayerName(p){
@@ -2476,13 +2544,123 @@ function recClaimsLockSlot(rec){
   return false;
 }
 
+/* Drop a relocate-Lock back onto the slot it was freeing (original seat). */
+function demoteRelocateLock(locker){
+  const rec = locker && locker.rec;
+  if (!rec || rec.action !== 'lock' || !rec.relocateFrom) return false;
+  const fromLab = String(rec.relocateFrom).toUpperCase();
+  const fromIdx = Number(rec.relocateFromIndex);
+  if (!fromLab || !Number.isFinite(fromIdx)) return false;
+  const scored = latestLockableFp(locker);
+  const bank = locker.bank && locker.bank.mark != null ? Number(locker.bank.mark) : null;
+  const bankStyle = locker.bank && locker.bank.style;
+  const dow = leagueDow(Date.now());
+  const dayHint = dowBankHint(Date.now());
+  const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
+  locker.rec = {
+    action: 'lock',
+    label: 'Lock · ' + fromLab,
+    reason: bankMeetPhrase(scored, bank, bankStyle, locker.dist, dow) + urgency,
+    cls: 'rec-lock',
+    lockSlotIndex: fromIdx,
+    lockSlotLabel: fromLab
+  };
+  return true;
+}
+
+/* After Lock slots settle: if a Lock relocated to free a bench star, pair the
+   displaced starter + bench (Tatum out · Giannis in @ freed PF) and win the
+   unique-Switch claim over weaker UTIL paths. One bench star → one chain. */
+function resolveRelocateLockChains(pack){
+  if (!pack || !pack.rows) return;
+  const cands = [];
+  (pack.rows || []).forEach(locker => {
+    const rec = locker && locker.rec;
+    if (!rec || rec.action !== 'lock' || !rec.relocateBenchPid || !rec.relocateDonorPid) return;
+    const fromLab = String(rec.relocateFrom || '').toUpperCase();
+    const fromIdx = Number(rec.relocateFromIndex);
+    if (!fromLab || !Number.isFinite(fromIdx)) return;
+    const donor = (pack.rows || []).find(x => x && String(x.pid) === String(rec.relocateDonorPid));
+    const bench = (pack.rows || []).find(x => x && String(x.pid) === String(rec.relocateBenchPid));
+    if (!donor || !bench) return;
+    const scored = latestLockableFp(locker);
+    const meanGain = (Number(bench.dist && bench.dist.mean) || 0)
+      - (Number(donor.dist && donor.dist.mean) || 0);
+    cands.push({
+      locker: locker,
+      rec: rec,
+      donor: donor,
+      bench: bench,
+      fromLab: fromLab,
+      fromIdx: fromIdx,
+      intoLab: String(rec.lockSlotLabel || '').toUpperCase(),
+      score: (Number.isFinite(scored) ? scored : 0) + meanGain * 10
+        + (Number(bench.dist && bench.dist.mean) || 0)
+    });
+  });
+  if (!cands.length) return;
+  cands.sort((a, b) => b.score - a.score
+    || String(a.locker.pid).localeCompare(String(b.locker.pid)));
+  const benchTaken = new Set();
+  const donorTaken = new Set();
+  cands.forEach(c => {
+    const bPid = String(c.bench.pid);
+    const dPid = String(c.donor.pid);
+    if (benchTaken.has(bPid) || donorTaken.has(dPid)){
+      demoteRelocateLock(c.locker);
+      return;
+    }
+    benchTaken.add(bPid);
+    donorTaken.add(dPid);
+    const lockerName = shortPlayerName(c.locker.p);
+    const benchName = shortPlayerName(c.bench.p);
+    const donorName = shortPlayerName(c.donor.p);
+    c.donor.rec = {
+      action: 'switch',
+      label: 'Out · ' + benchName + ' @ ' + c.fromLab,
+      reason: lockerName + ' locks @ ' + c.intoLab
+        + ' · start ' + benchName + ' @ ' + c.fromLab
+        + ' over ' + donorName,
+      cls: 'rec-switch',
+      switchPid: bPid,
+      switchInto: c.fromLab,
+      switchKind: 'relocate',
+      switchScore: 50000 + (Number(c.bench.dist && c.bench.dist.mean) || 0)
+    };
+    c.bench.rec = {
+      action: 'switch',
+      label: 'In · over ' + donorName + ' @ ' + c.fromLab,
+      reason: 'start @ ' + c.fromLab + ' · ' + lockerName + ' locks @ ' + c.intoLab,
+      cls: 'rec-switch',
+      switchPid: dPid,
+      switchInto: c.fromLab,
+      switchKind: 'relocate'
+    };
+  });
+}
+
+/* Slots freed by a relocate-Lock (Barrett leaves PF for Giannis) — other
+   Lock claims must not squat there. */
+function relocateReservedSlotIndexes(pack){
+  const reserved = new Set();
+  (pack.rows || []).forEach(r => {
+    if (!r || !r.rec || r.rec.action !== 'lock') return;
+    if (r.rec.relocateFromIndex == null) return;
+    const n = Number(r.rec.relocateFromIndex);
+    if (Number.isFinite(n)) reserved.add(n);
+  });
+  return reserved;
+}
+
 /* One Lock target slot → one player. Prefer whoever already sits there, then
    higher bankable FP. Losers re-Rec with that slot excluded (e.g. Sarr stays
-   at F instead of both Barrett + Sarr saying Lock · PF). */
+   at F instead of both Barrett + Sarr saying Lock · PF).
+   Also keep relocate-freed slots clear for the inbound bench star. */
 function resolveUniqueLockSlotRecs(pack){
   if (!pack || !pack.rows) return;
-  const maxPasses = 6;
+  const maxPasses = 8;
   for (let pass = 0; pass < maxPasses; pass++){
+    const reservedFrom = relocateReservedSlotIndexes(pack);
     const edges = [];
     (pack.rows || []).forEach(r => {
       if (!r || !recClaimsLockSlot(r.rec)) return;
@@ -2491,26 +2669,36 @@ function resolveUniqueLockSlotRecs(pack){
       const curIdx = r.slot != null && r.slot !== 'BN' ? Number(r.slot) : null;
       const keep = Number.isFinite(curIdx) && curIdx === idx;
       const scored = latestLockableFp(r);
+      /* Relocate locks outrank keep-in-place when competing for the same slot. */
+      const relocateBoost = (r.rec.action === 'lock' && r.rec.relocateBenchPid) ? 1 : 0;
       edges.push({
         row: r,
         slotIndex: idx,
         slotLabel: lab,
         keep: keep,
+        relocateBoost: relocateBoost,
         score: Number.isFinite(scored) ? scored : -1
       });
     });
     if (!edges.length) return;
     edges.sort((a, b) =>
-      (b.keep ? 1 : 0) - (a.keep ? 1 : 0)
+      b.relocateBoost - a.relocateBoost
+      || (b.keep ? 1 : 0) - (a.keep ? 1 : 0)
       || b.score - a.score
       || String(a.row.pid).localeCompare(String(b.row.pid)));
-    const slotTaken = new Set();
+    /* reservedFrom seeds slotTaken so Sarr can’t Lock · PF while Barrett
+       frees PF for Giannis. */
+    const slotTaken = new Set(reservedFrom);
     const winnerKeep = new Set();
     edges.forEach(e => {
       if (winnerKeep.has(String(e.row.pid))) return;
       if (slotTaken.has(e.slotIndex)) return;
       slotTaken.add(e.slotIndex);
       winnerKeep.add(String(e.row.pid));
+      if (e.row.rec && e.row.rec.relocateFromIndex != null){
+        const fr = Number(e.row.rec.relocateFromIndex);
+        if (Number.isFinite(fr)) slotTaken.add(fr);
+      }
     });
     const losers = edges
       .map(e => e.row)
@@ -2521,14 +2709,20 @@ function resolveUniqueLockSlotRecs(pack){
     losers.forEach(r => {
       const prevIdx = r.rec && r.rec.lockSlotIndex;
       const prevLabel = r.rec && r.rec.label;
+      const prevRelo = r.rec && r.rec.relocateBenchPid;
       r.rec = buildRec(r, pack, {excludeSlotIndexes: slotTaken});
       if ((r.rec && r.rec.lockSlotIndex) !== prevIdx
-        || (r.rec && r.rec.label) !== prevLabel){
+        || (r.rec && r.rec.label) !== prevLabel
+        || (r.rec && r.rec.relocateBenchPid) !== prevRelo){
         changed = true;
       }
       if (recClaimsLockSlot(r.rec) && !slotTaken.has(Number(r.rec.lockSlotIndex))){
         slotTaken.add(Number(r.rec.lockSlotIndex));
         winnerKeep.add(String(r.pid));
+        if (r.rec.relocateFromIndex != null){
+          const fr = Number(r.rec.relocateFromIndex);
+          if (Number.isFinite(fr)) slotTaken.add(fr);
+        }
       }
     });
     if (!changed) return;
@@ -3012,22 +3206,40 @@ function buildRec(r, pack, opts){
 
   /* Bankable night in a start slot — lock before anything else.
      Prefer a position slot over UTIL when recommending where to bank.
-     Stars/starters: near-miss or season/sample-best (don’t hunt unicorns). */
+     Stars/starters: near-miss or season/sample-best (don’t hunt unicorns).
+     If locking here traps a better bench player out of a primary, relocate
+     the lock into a non-bankable starter’s slot (Barrett SF · Giannis PF). */
   if (meetsBank(scored, bank, bankStyle, r.dist, dowNow)){
     const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
-    if (slot){
+    const relocate = bestRelocateLockForBench(r, pack, open);
+    const lockSlot = (relocate && relocate.slot) ? relocate.slot : slot;
+    if (lockSlot){
       const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
-      const moved = curLab && slot.label !== curLab;
-      const utilLast = isUtilSlotLabel(slot.label) ? ' · UTIL last' : '';
-      const moveBit = moved ? (' · use ' + slot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : '')) : '';
-      return {
+      const moved = curLab && lockSlot.label !== curLab;
+      const utilLast = isUtilSlotLabel(lockSlot.label) ? ' · UTIL last' : '';
+      let moveBit = '';
+      if (relocate && relocate.bench && relocate.donor){
+        moveBit = ' · move to ' + lockSlot.label
+          + ' · frees ' + relocate.from.label + ' for '
+          + shortPlayerName(relocate.bench.p);
+      } else if (moved){
+        moveBit = ' · use ' + lockSlot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : '');
+      }
+      const rec = {
         action: 'lock',
-        label: 'Lock · ' + slot.label,
+        label: 'Lock · ' + lockSlot.label,
         reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow) + moveBit + utilLast + urgency,
         cls: 'rec-lock',
-        lockSlotIndex: slot.index,
-        lockSlotLabel: slot.label
+        lockSlotIndex: lockSlot.index,
+        lockSlotLabel: lockSlot.label
       };
+      if (relocate && relocate.bench && relocate.donor){
+        rec.relocateFrom = relocate.from.label;
+        rec.relocateFromIndex = relocate.from.index;
+        rec.relocateDonorPid = String(relocate.donor.pid);
+        rec.relocateBenchPid = String(relocate.bench.pid);
+      }
+      return rec;
     }
     return {
       action: 'lock',
