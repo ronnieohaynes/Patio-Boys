@@ -187,6 +187,28 @@
   .week-plan-metrics .m .lbl{
     font-size:10px;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;
   }
+  .week-plan-metrics .m.plan-edit{
+    display:flex;flex-direction:column;gap:2px;min-width:7rem;
+  }
+  .week-plan-metrics .plan-edit-row{
+    display:flex;align-items:center;gap:6px;
+  }
+  .week-plan-metrics .plan-edit-row input{
+    width:4.6rem;background:var(--surface-2, rgba(255,255,255,.04));
+    border:1px solid var(--hairline);border-radius:4px;color:var(--ink);
+    font:inherit;font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;
+    font-variant-numeric:tabular-nums;padding:2px 6px;letter-spacing:.01em;
+  }
+  .week-plan-metrics .plan-edit-row input:focus{
+    outline:none;border-color:var(--gold);
+  }
+  .week-plan-metrics .plan-edit-row .plan-auto{
+    cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:10px;
+    color:var(--ink-dim);background:transparent;border:1px solid var(--hairline);
+    border-radius:3px;padding:2px 6px;
+  }
+  .week-plan-metrics .plan-edit-row .plan-auto:hover{color:var(--gold);border-color:var(--gold)}
+  .week-plan-metrics .plan-edit .manual{color:var(--gold)}
   .week-plan-copy{
     font-size:13.5px;line-height:1.45;color:var(--ink);margin:0 0 10px;max-width:46rem;
   }
@@ -419,7 +441,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261111-rookiescale';
+    || '20261113-planbeat';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -482,7 +504,9 @@ const state = {
   /* Switch browser alerts (Focus team only; tab must stay open). */
   notifyOn: false,
   _notified: null, /* Set of fingerprints already alerted this session */
-  _notifySeeded: false
+  _notifySeeded: false,
+  /* Editable beat-opponent roster plan target (null = auto from opp). */
+  planTargetManual: null
 };
 
 /* Starter lock-in slots in lineup order (bench is BN until changed). */
@@ -2235,11 +2259,23 @@ function nextTipMs(scout){
    for Bank 41. Fringe/stream stay exact.
    Absolute DOW floor (Mon 35 … Sun 29) still wins — never Lock below it. */
 const BANK_CLOSE_STAR_FP = 1;
+/* Extra Bank slack when chasing the beat-opponent roster plan. */
+const BANK_CLOSE_CHASE_STAR = 5;
+const BANK_CLOSE_CHASE_FRINGE = 3;
 
-function bankCloseFp(style){
+function packWeekPlanMode(pack){
+  return (pack && pack.opts && pack.opts.weekPlanMode) || null;
+}
+
+function bankCloseFp(style, mode){
   const s = String(style || '').toLowerCase();
-  if (s === 'star' || s === 'starter' || s === 'locked') return BANK_CLOSE_STAR_FP;
-  return 0;
+  const star = s === 'star' || s === 'starter' || s === 'locked';
+  let n = star ? BANK_CLOSE_STAR_FP : 0;
+  /* Behind beat-opponent plan → bank more aggressively (still ≥ DOW abs min). */
+  if (mode === 'chase'){
+    n = star ? Math.max(n, BANK_CLOSE_CHASE_STAR) : Math.max(n, BANK_CLOSE_CHASE_FRINGE);
+  }
+  return n;
 }
 
 function observedHighFor(dist){
@@ -2284,21 +2320,21 @@ function clearsAbsoluteMinLock(scored, dow){
   return s + 1e-9 >= min;
 }
 
-function meetsBank(scored, bank, style, dist, dow){
+function meetsBank(scored, bank, style, dist, dow, mode){
   const s = scored != null ? Number(scored) : NaN;
   if (!Number.isFinite(s)) return false;
   const day = dow != null && Number.isFinite(Number(dow)) ? Number(dow) : leagueDow();
   /* Hard DOW floor — near-miss / season-high cannot undercut Mon…Sun min. */
   if (!clearsAbsoluteMinLock(s, day)) return false;
   const b = bank != null ? Number(bank) : NaN;
-  if (Number.isFinite(b) && s + 1e-9 >= b - bankCloseFp(style)){
+  if (Number.isFinite(b) && s + 1e-9 >= b - bankCloseFp(style, mode)){
     return true;
   }
   /* New / tied best night for a star — bank it; don’t hunt +1 over the high. */
   return isObservedBestNight(scored, style, dist);
 }
 
-function bankMeetPhrase(scored, bank, style, dist, dow){
+function bankMeetPhrase(scored, bank, style, dist, dow, mode){
   const s = Number(scored);
   const b = Number(bank);
   if (!Number.isFinite(s)) return '';
@@ -2310,9 +2346,10 @@ function bankMeetPhrase(scored, bank, style, dist, dow){
     return formatFp(s) + ' < ' + names[d] + ' floor ' + absMin;
   }
   if (Number.isFinite(b) && s + 1e-9 >= b) return formatFp(s) + ' ≥ Bank ' + formatFp(b);
-  const close = bankCloseFp(style);
+  const close = bankCloseFp(style, mode);
   if (Number.isFinite(b) && close > 0 && s + 1e-9 >= b - close){
-    return formatFp(s) + ' ≈ Bank ' + formatFp(b) + ' (within ' + close + ')';
+    return formatFp(s) + ' ≈ Bank ' + formatFp(b) + ' (within ' + close + ')'
+      + (mode === 'chase' ? ' · chase plan' : '');
   }
   if (isObservedBestNight(scored, style, dist)){
     const live = dist && dist.liveSamples && dist.liveSamples.length;
@@ -2323,10 +2360,11 @@ function bankMeetPhrase(scored, bank, style, dist, dow){
   return formatFp(s);
 }
 
-function isBankableNow(r){
+function isBankableNow(r, pack){
   const scored = latestLockableFp(r);
   const bank = r && r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
-  return meetsBank(scored, bank, r && r.bank && r.bank.style, r && r.dist);
+  return meetsBank(scored, bank, r && r.bank && r.bank.style, r && r.dist,
+    null, packWeekPlanMode(pack));
 }
 
 function isBenchRow(r){
@@ -2365,7 +2403,7 @@ function switchExcludeSet(opts){
    with a lower Avg. A non-locked score costs nothing to sit. */
 function tipOrderSwitchTarget(r, pack, opts){
   if (isImmovable(r) || isBenchRow(r)) return null;
-  if (isBankableNow(r)) return null;
+  if (isBankableNow(r, pack)) return null;
   const myNext = nextTipMs(r.scout);
   if (myNext == null) return null;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
@@ -2559,15 +2597,16 @@ function syncBenchSwitchIns(pack, benchTaken, starterKeep){
    ~4:55 before subbing Harden/LaMelo who tip after). */
 const STARTER_TIP_WATCH_MS = 25 * 60 * 1000;
 
-function starterTipOpportunityOpen(starter, nowMs){
+function starterTipOpportunityOpen(starter, nowMs, pack){
   if (!starter || isImmovable(starter)) return true;
-  if (isBankableNow(starter)) return true;
+  if (isBankableNow(starter, pack)) return true;
   const now = nowMs != null ? Number(nowMs) : Date.now();
   const scored = latestLockableFp(starter);
   const bank = starter.bank && starter.bank.mark != null ? Number(starter.bank.mark) : null;
   /* Scored night already missed Bank (incl. near-miss window) — slot free. */
   if (scored != null && bank != null
-    && !meetsBank(scored, bank, starter.bank && starter.bank.style, starter.dist)) return false;
+    && !meetsBank(scored, bank, starter.bank && starter.bank.style, starter.dist,
+      null, packWeekPlanMode(pack))) return false;
   const tip = nextTipMs(starter.scout);
   if (tip == null) return false;
   /* Before tip, and for ~25m after tip while the night settles, keep them. */
@@ -2619,13 +2658,13 @@ function benchSwitchInOver(r, pack){
     const theirLockable = latestLockableFp(o);
     const theirScored = latestScoredFp(o);
     const theirNext = nextTipMs(o.scout);
-    const oppOpen = starterTipOpportunityOpen(o, nowMs);
+    const oppOpen = starterTipOpportunityOpen(o, nowMs, pack);
     let why = null;
     let score = 0;
     if (theirInj === 'OUT' || theirInj === 'O' || theirInj === 'IR'){
       why = (theirInj === 'IR' ? 'IR' : 'OUT') + ' starter';
       score = 1000 + myMean;
-    } else if (myNext != null && theirNext != null && myNext < theirNext && !isBankableNow(o)){
+    } else if (myNext != null && theirNext != null && myNext < theirNext && !isBankableNow(o, pack)){
       /* Free a non-lock night for an earlier tip — Avg can be lower. */
       const theirLbl = nextGamePhrase(o.scout, nowMs) || nextGameLabel(o.scout) || 'later tip';
       why = 'earlier tip before their ' + theirLbl;
@@ -2679,6 +2718,7 @@ function switchInLabel(over){
 function buildRec(r, pack, opts){
   const nowMs = Date.now();
   const switchOpts = opts || {};
+  const weekMode = packWeekPlanMode(pack);
   if (isImmovable(r)){
     return {
       action: 'locked',
@@ -2742,12 +2782,12 @@ function buildRec(r, pack, opts){
         cls: 'rec-switch'
       };
     }
-    if (meetsBank(scored, bank, bankStyle, r.dist)){
+    if (meetsBank(scored, bank, bankStyle, r.dist, null, weekMode)){
       if (slot){
         return {
           action: 'switch',
           label: 'Start · ' + slot.label + ' then Lock',
-          reason: bankMeetPhrase(scored, bank, bankStyle, r.dist)
+          reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode)
             + ' · can’t lock from TX · start @ ' + slot.label + ' first',
           cls: 'rec-switch'
         };
@@ -2755,7 +2795,7 @@ function buildRec(r, pack, opts){
       return {
         action: 'wait',
         label: 'Wait',
-        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist)
+        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode)
           + ' · can’t lock from TX · no open start slot',
         cls: 'rec-wait'
       };
@@ -2808,12 +2848,12 @@ function buildRec(r, pack, opts){
       };
     }
     /* Bench can’t lock — only starting slots bank. Point them at a start slot. */
-    if (meetsBank(scored, bank, bankStyle, r.dist)){
+    if (meetsBank(scored, bank, bankStyle, r.dist, null, weekMode)){
       if (slot){
         return {
           action: 'switch',
           label: 'Start · ' + slot.label + ' then Lock',
-          reason: bankMeetPhrase(scored, bank, bankStyle, r.dist)
+          reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode)
             + ' · can’t lock from BN · start @ ' + slot.label + ' first'
             + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : '')
             + (dayHint ? (' · ' + dayHint) : ''),
@@ -2823,7 +2863,7 @@ function buildRec(r, pack, opts){
       return {
         action: 'wait',
         label: 'Wait',
-        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist)
+        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode)
           + ' · can’t lock from BN · no open start slot',
         cls: 'rec-wait'
       };
@@ -2843,7 +2883,7 @@ function buildRec(r, pack, opts){
       const myMeanNow = r.dist && Number(r.dist.mean) || 0;
       const blocked = (pack.rows || []).filter(o => {
         if (!o || isBenchRow(o) || isImmovable(o)) return false;
-        if (!starterTipOpportunityOpen(o, nowMs)) return false;
+        if (!starterTipOpportunityOpen(o, nowMs, pack)) return false;
         const into = o.slotLabel && o.slotLabel !== 'BN' ? String(o.slotLabel).toUpperCase() : null;
         if (!into || !fitsLockSlot(r.p, into)) return false;
         const theirTip = nextTipMs(o.scout);
@@ -2905,7 +2945,7 @@ function buildRec(r, pack, opts){
       return attachSwitchMeta({
         action: 'switch',
         label: switchOutLabel(tipAltFloor),
-        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow)
+        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode)
           + ' · free slot until ' + holdUntil
           + ' · start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first',
         cls: 'rec-switch'
@@ -2915,7 +2955,7 @@ function buildRec(r, pack, opts){
       return {
         action: 'wait',
         label: 'Wait',
-        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow)
+        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode)
           + (nextPhrase ? (' · next ' + nextPhrase) : (' · ' + gamesLeft + ' left')),
         cls: 'rec-wait'
       };
@@ -2923,7 +2963,7 @@ function buildRec(r, pack, opts){
     return {
       action: 'sit',
       label: 'Pass',
-      reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow) + ' · no games left',
+      reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode) + ' · no games left',
       cls: 'rec-sit'
     };
   }
@@ -2931,7 +2971,7 @@ function buildRec(r, pack, opts){
   /* Bankable night in a start slot — lock before anything else.
      Prefer a position slot over UTIL when recommending where to bank.
      Stars/starters: near-miss or season/sample-best (don’t hunt unicorns). */
-  if (meetsBank(scored, bank, bankStyle, r.dist, dowNow)){
+  if (meetsBank(scored, bank, bankStyle, r.dist, dowNow, weekMode)){
     const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
     if (slot){
       const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
@@ -2941,14 +2981,14 @@ function buildRec(r, pack, opts){
       return {
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow) + moveBit + utilLast + urgency,
+        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode) + moveBit + utilLast + urgency,
         cls: 'rec-lock'
       };
     }
     return {
       action: 'lock',
       label: 'Lock',
-      reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow) + ' · no open slot' + urgency,
+      reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode) + ' · no open slot' + urgency,
       cls: 'rec-lock'
     };
   }
@@ -3020,7 +3060,7 @@ function buildRec(r, pack, opts){
     if (nextPhrase) bits.push('hold for ' + nextPhrase);
     else bits.push(gamesLeft + ' game' + (gamesLeft > 1 ? 's' : '') + ' left');
     /* If a later higher-Avg bench exists, say so — don’t Switch them in yet. */
-    if (starterTipOpportunityOpen(r, nowMs)){
+    if (starterTipOpportunityOpen(r, nowMs, pack)){
       const later = laterBenchBehindStarter(r, pack, nowMs);
       if (later){
         const laterTip = nextGamePhrase(later.scout, nowMs) || nextGameLabel(later.scout);
@@ -3223,23 +3263,35 @@ function renderAdvice(pair, leftPack, rightPack){
   const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
   const leftSlots = Math.max(0, slots - lockedN);
   const lockedSum = Math.round(lockedFpTotal(focusPack));
-  const goal = LOCK_FP_GOAL;
-  const gap = Math.max(0, goal - lockedSum);
+  const weeklyGoal = LOCK_FP_GOAL;
+  const planTarget = focusPack.opts && focusPack.opts.planTarget != null
+    ? Number(focusPack.opts.planTarget) : weeklyGoal;
+  const beatGap = Math.max(0, planTarget - lockedSum);
+  const weeklyGap = Math.max(0, weeklyGoal - lockedSum);
   const nowMs = Date.now();
   const nowLbl = formatNowClock(nowMs);
   const dayHint = dowBankHint(nowMs);
+  const mode = focusPack.opts && focusPack.opts.weekPlanMode;
   tips.push('<li><span class="tag lock">Clock</span>As of <strong>'
     + escapeHtml(nowLbl) + '</strong>'
     + (dayHint ? (' · ' + escapeHtml(dayHint)) : '')
     + '. Tip-order Recs and Bank floors use this clock'
-    + (gap > 0 ? (' · still <strong>' + gap + '</strong> locked FP short of ' + goal) : '')
+    + (mode === 'chase' ? ' · Rec chasing beat target'
+      : (mode === 'climb400' ? (' · Rec climbing weekly ' + weeklyGoal) : ' · plan protected'))
+    + (beatGap > 0 ? (' · <strong>' + beatGap + '</strong> short of beat ' + planTarget) : '')
     + '.</li>');
 
-  const weekPlan = buildWeekLockPlan(focusPack);
+  const weekPlan = buildWeekLockPlan(focusPack, {
+    planTarget: planTarget,
+    manual: focusPack.opts && focusPack.opts.planTargetManual,
+    autoTarget: focusPack.opts && focusPack.opts.planTargetAuto
+  });
   tips.push('<li><span class="tag lock">Banked</span><strong>'
-    + escapeHtml(focusSide.franchise.team) + '</strong> has <strong>' + lockedSum + ' / ' + goal
-    + '</strong> locked FP'
-    + (gap > 0 ? (' · <strong>' + gap + '</strong> short of the weekly floor') : ' · weekly goal hit')
+    + escapeHtml(focusSide.franchise.team) + '</strong> has <strong>' + lockedSum
+    + '</strong> locked FP · beat <strong>' + planTarget + '</strong>'
+    + (beatGap > 0 ? (' · <strong>' + beatGap + '</strong> short') : ' · beat on pace')
+    + ' · weekly <strong>' + weeklyGoal + '</strong>'
+    + (weeklyGap > 0 ? (' · <strong>' + weeklyGap + '</strong> short') : ' · weekly hit')
     + ' · <strong>' + lockedN + '/' + slots
     + '</strong> locked nights'
     + (focusPack.lockedScores.length
@@ -3252,17 +3304,21 @@ function renderAdvice(pair, leftPack, rightPack){
       : '')
     + '. Confirm scored nights above (Started + final Sleeper FP) — API scores never bank alone.</li>');
 
-  tips.push('<li><span class="tag lock">Week plan</span>From this roster, projecting <strong>'
+  tips.push('<li><span class="tag lock">Week plan</span>Projecting <strong>'
     + Math.round(weekPlan.projected) + '</strong> locked FP'
     + ' (locked ' + Math.round(weekPlan.lockedSum)
     + (weekPlan.slotsLeft > 0
       ? (' + ~' + Math.round(weekPlan.expectedAdd) + ' from ' + weekPlan.slotsLeft + ' more nights')
       : '')
-    + '). League floor is <strong>' + goal + '</strong>'
+    + '). Roster plan (beat opp) is <strong>' + planTarget + '</strong>'
+    + (weekPlan.manual ? ' (edited)' : ' (auto)')
     + (weekPlan.vsGoal >= -5
-      ? ' — on pace.'
-      : (' — about <strong>' + Math.round(Math.abs(weekPlan.vsGoal)) + '</strong> short unless banks smash.'))
-    + ' See the Week plan panel for the night-by-night map; it updates all week.</li>');
+      ? ' — on pace to beat.'
+      : (' — about <strong>' + Math.round(Math.abs(weekPlan.vsGoal)) + '</strong> short of beating.'))
+    + ' Weekly goal <strong>' + weeklyGoal + '</strong> is second'
+    + (weekPlan.vsWeekly >= -5 ? ' — on pace.' : (' — ~'
+      + Math.round(Math.abs(weekPlan.vsWeekly)) + ' shy.'))
+    + ' Edit the roster plan in the Week plan panel.</li>');
 
   const focusPts = focusSide.points;
   const oppPts = oppSide.points;
@@ -3571,7 +3627,7 @@ function playerRowHtml(r){
     + '</tr>';
 }
 
-const LOCK_FP_GOAL = 400; /* League weekly locked-in FP floor — aspirational every week. */
+const LOCK_FP_GOAL = 400; /* Weekly locked-in FP goal — secondary to beat-opponent plan. */
 
 function lockedFpTotal(pack){
   return (pack && pack.lockedScores || []).reduce((s, x) => {
@@ -3580,18 +3636,103 @@ function lockedFpTotal(pack){
   }, 0);
 }
 
+function planTargetStorageKey(matchupId){
+  return 'pb-matchup-plan-target:' + LEAGUE_ID
+    + ':w' + String(state.week || '')
+    + ':m' + String(matchupId == null ? '' : matchupId);
+}
+
+function loadPlanTargetManual(matchupId){
+  if (matchupId == null || matchupId === '') return null;
+  try {
+    const raw = localStorage.getItem(planTargetStorageKey(matchupId));
+    if (raw == null || raw === '') return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  } catch (e){ return null; }
+}
+
+function savePlanTargetManual(matchupId, value){
+  if (matchupId == null || matchupId === '') return;
+  try {
+    if (value == null || !Number.isFinite(Number(value)) || Number(value) <= 0){
+      localStorage.removeItem(planTargetStorageKey(matchupId));
+      return;
+    }
+    localStorage.setItem(planTargetStorageKey(matchupId), String(Math.round(Number(value))));
+  } catch (e){ /* ignore */ }
+}
+
+/* Score needed to beat the opponent: 1 more than their projected locks / live pts. */
+function defaultBeatOpponentTarget(oppSide, oppPack){
+  const oppPlan = oppPack ? buildWeekLockPlan(oppPack, {planTarget: null}) : null;
+  const oppProj = oppPlan && Number.isFinite(Number(oppPlan.projected))
+    ? Number(oppPlan.projected) : 0;
+  const live = oppSide && Number(oppSide.points);
+  const base = Math.max(oppProj, Number.isFinite(live) ? live : 0, 0);
+  return Math.max(1, Math.floor(base + 1e-9) + 1);
+}
+
+function resolvePlanTarget(pair, focusPack, oppPack, focusSide, oppSide){
+  const mid = pair && pair.id;
+  const manual = mid != null ? loadPlanTargetManual(mid) : null;
+  if (manual != null){
+    return {target: manual, manual: true, auto: defaultBeatOpponentTarget(oppSide, oppPack)};
+  }
+  const auto = defaultBeatOpponentTarget(oppSide, oppPack);
+  return {target: auto, manual: false, auto: auto};
+}
+
+function weekPlanModeFrom(plan){
+  if (!plan) return 'climb400';
+  const vsPlan = Number(plan.projected) - Number(plan.planTarget);
+  const vsWeekly = Number(plan.projected) - Number(plan.weeklyGoal);
+  /* Beat-opponent roster plan first; 400 weekly goal second. */
+  if (Number.isFinite(vsPlan) && vsPlan < -5) return 'chase';
+  if (Number.isFinite(vsWeekly) && vsWeekly < -5) return 'climb400';
+  return 'protect';
+}
+
+/* Apply beat-opponent plan + weekly-goal mode, then rebuild Focus Recs. */
+function applyWeekPlanPriority(focusPack, oppPack, pair, focusSide, oppSide){
+  if (!focusPack) return null;
+  const resolved = resolvePlanTarget(pair, focusPack, oppPack, focusSide, oppSide);
+  const plan = buildWeekLockPlan(focusPack, {
+    planTarget: resolved.target,
+    manual: resolved.manual,
+    autoTarget: resolved.auto
+  });
+  focusPack.opts = focusPack.opts || {};
+  focusPack.opts.planTarget = plan.planTarget;
+  focusPack.opts.planTargetManual = !!plan.manual;
+  focusPack.opts.planTargetAuto = plan.autoTarget;
+  focusPack.opts.weeklyGoal = plan.weeklyGoal;
+  focusPack.opts.weekPlanProjected = plan.projected;
+  focusPack.opts.weekPlanMode = weekPlanModeFrom(plan);
+  (focusPack.rows || []).forEach(r => { r.rec = buildRec(r, focusPack); });
+  if (typeof resolveUniqueSwitchRecs === 'function') resolveUniqueSwitchRecs(focusPack);
+  return plan;
+}
+
 /* Personnel week plan: locked FP + best remaining lockable nights from THIS
-   roster (Bank floors / scored bankable / Avg when no Bank). Updates as locks
-   land, scores confirm, and games tip off the slate. 400 is the league floor;
-   the projected total is what this roster is actually on pace for. */
-function buildWeekLockPlan(pack){
+   roster. Roster plan target = beat-opponent score (editable). Weekly goal
+   stays 400 and is secondary for pace / Rec priority. */
+function buildWeekLockPlan(pack, opts){
+  const options = opts || {};
   const slots = (window.LockInDist && LockInDist.LOCK_SLOTS) || 10;
-  const goal = LOCK_FP_GOAL;
+  const weeklyGoal = LOCK_FP_GOAL;
+  const planTarget = options.planTarget != null && Number.isFinite(Number(options.planTarget))
+    && Number(options.planTarget) > 0
+    ? Math.round(Number(options.planTarget))
+    : weeklyGoal;
+  const goal = planTarget; /* primary target for need / pace */
   const lockedSum = lockedFpTotal(pack);
   const lockedN = (pack && pack.lockedScores || []).length;
   const slotsLeft = Math.max(0, slots - lockedN);
   const need = Math.max(0, goal - lockedSum);
   const needPer = slotsLeft > 0 ? need / slotsLeft : 0;
+  const needWeekly = Math.max(0, weeklyGoal - lockedSum);
+  const needPerWeekly = slotsLeft > 0 ? needWeekly / slotsLeft : 0;
 
   const lockedLines = (pack && pack.rows || [])
     .filter(r => r && r.locked && r.lockPts != null && Number.isFinite(Number(r.lockPts)))
@@ -3620,7 +3761,8 @@ function buildWeekLockPlan(pack){
       : ((r.scout && r.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
     const tip = nextGamePhrase(r.scout);
     const name = shortPlayerName(r.p) || playerName(r.p);
-    const ready = meetsBank(scored, bank, style, r.dist);
+    const mode = packWeekPlanMode(pack);
+    const ready = meetsBank(scored, bank, style, r.dist, null, mode);
 
     if (ready && scored != null){
       cands.push({
@@ -3631,7 +3773,7 @@ function buildWeekLockPlan(pack){
         bank,
         tip,
         gamesLeft,
-        why: bankMeetPhrase(scored, bank, style, r.dist) || ('scored ' + formatFp(scored))
+        why: bankMeetPhrase(scored, bank, style, r.dist, null, mode) || ('scored ' + formatFp(scored))
       });
       return;
     }
@@ -3676,7 +3818,8 @@ function buildWeekLockPlan(pack){
   const expectedAdd = chosen.reduce((s, x) => s + (Number(x.exp) || 0), 0);
   const projected = lockedSum + expectedAdd;
   const avgPlan = chosen.length ? expectedAdd / chosen.length : 0;
-  const vsGoal = projected - goal;
+  const vsGoal = projected - goal; /* vs beat-opponent roster plan */
+  const vsWeekly = projected - weeklyGoal;
   let pace = 'thin';
   if (slotsLeft === 0){
     pace = lockedSum + 1e-9 >= goal ? 'hit' : 'short';
@@ -3690,17 +3833,29 @@ function buildWeekLockPlan(pack){
 
   return {
     goal,
+    planTarget: goal,
+    weeklyGoal,
+    manual: !!options.manual,
+    autoTarget: options.autoTarget != null ? Number(options.autoTarget) : goal,
     slots,
     lockedSum,
     lockedN,
     slotsLeft,
     need,
     needPer,
+    needWeekly,
+    needPerWeekly,
     expectedAdd,
     projected,
     avgPlan,
     vsGoal,
+    vsWeekly,
     pace,
+    mode: weekPlanModeFrom({
+      projected: projected,
+      planTarget: goal,
+      weeklyGoal: weeklyGoal
+    }),
     lockedLines,
     chosen,
     leftover: cands.slice(slotsLeft),
@@ -3710,14 +3865,18 @@ function buildWeekLockPlan(pack){
   };
 }
 
-function renderWeekPlan(focusSide, focusPack){
+function renderWeekPlan(focusSide, focusPack, plan){
   const root = document.getElementById('weekPlan');
   if (!root) return;
   if (!focusSide || !focusPack){
     root.hidden = true;
     return;
   }
-  const plan = buildWeekLockPlan(focusPack);
+  const built = plan || buildWeekLockPlan(focusPack, {
+    planTarget: focusPack.opts && focusPack.opts.planTarget,
+    manual: focusPack.opts && focusPack.opts.planTargetManual,
+    autoTarget: focusPack.opts && focusPack.opts.planTargetAuto
+  });
   root.hidden = false;
   const title = document.getElementById('weekPlanTitle');
   const paceEl = document.getElementById('weekPlanPace');
@@ -3729,72 +3888,129 @@ function renderWeekPlan(focusSide, focusPack){
   }
   if (paceEl){
     paceEl.className = 'pace'
-      + (plan.pace === 'on' || plan.pace === 'hit' ? ' on'
-        : (plan.pace === 'behind' || plan.pace === 'short' ? ' behind' : ''));
+      + (built.pace === 'on' || built.pace === 'hit' ? ' on'
+        : (built.pace === 'behind' || built.pace === 'short' ? ' behind' : ''));
     let paceTxt;
-    if (plan.pace === 'hit') paceTxt = 'Goal hit · ' + Math.round(plan.lockedSum) + ' locked';
-    else if (plan.pace === 'short'){
-      paceTxt = 'Slots full · ' + Math.round(plan.need) + ' short of ' + plan.goal;
-    } else if (plan.pace === 'on'){
-      paceTxt = 'On pace · projects <strong>' + Math.round(plan.projected) + '</strong> / ' + plan.goal;
-    } else if (plan.pace === 'close'){
-      paceTxt = 'Close · projects <strong>' + Math.round(plan.projected) + '</strong> / ' + plan.goal
-        + ' · ' + Math.round(Math.abs(plan.vsGoal)) + ' shy';
+    const modeBit = built.mode === 'chase' ? ' · chase opp'
+      : (built.mode === 'protect' ? ' · plan + ' + built.weeklyGoal + ' clear'
+        : ' · climb ' + built.weeklyGoal);
+    if (built.pace === 'hit'){
+      paceTxt = 'Beat target hit · ' + Math.round(built.lockedSum) + ' locked' + modeBit;
+    } else if (built.pace === 'short'){
+      paceTxt = 'Slots full · ' + Math.round(built.need) + ' short of beat ' + built.planTarget + modeBit;
+    } else if (built.pace === 'on'){
+      paceTxt = 'On pace to beat · projects <strong>' + Math.round(built.projected)
+        + '</strong> / ' + built.planTarget + modeBit;
+    } else if (built.pace === 'close'){
+      paceTxt = 'Close · projects <strong>' + Math.round(built.projected) + '</strong> / ' + built.planTarget
+        + ' · ' + Math.round(Math.abs(built.vsGoal)) + ' shy' + modeBit;
     } else {
-      paceTxt = 'Behind · projects <strong>' + Math.round(plan.projected) + '</strong> / ' + plan.goal
-        + ' · ' + Math.round(Math.abs(plan.vsGoal)) + ' short';
+      paceTxt = 'Behind opp · projects <strong>' + Math.round(built.projected) + '</strong> / ' + built.planTarget
+        + ' · ' + Math.round(Math.abs(built.vsGoal)) + ' short' + modeBit;
     }
     paceEl.innerHTML = paceTxt;
   }
   if (metrics){
+    const manualCls = built.manual ? ' manual' : '';
     metrics.innerHTML =
-      '<div class="m"><strong>' + Math.round(plan.lockedSum) + '</strong>'
+      '<div class="m"><strong>' + Math.round(built.lockedSum) + '</strong>'
         + '<span class="lbl">Locked FP</span></div>'
-      + '<div class="m"><strong>' + Math.round(plan.projected) + '</strong>'
-        + '<span class="lbl">Roster plan</span></div>'
-      + '<div class="m"><strong>' + plan.goal + '</strong>'
-        + '<span class="lbl">League floor</span></div>'
-      + '<div class="m"><strong>' + plan.lockedN + '/' + plan.slots + '</strong>'
+      + '<div class="m"><strong>' + Math.round(built.projected) + '</strong>'
+        + '<span class="lbl">Projects</span></div>'
+      + '<div class="m plan-edit">'
+        + '<div class="plan-edit-row">'
+        + '<input type="number" id="planTargetInput" min="1" step="1" inputmode="numeric" '
+        + 'value="' + escapeHtml(String(built.planTarget)) + '" '
+        + 'aria-label="Roster plan — score to beat opponent" />'
+        + '<button type="button" class="plan-auto" id="planTargetReset" title="Reset to auto beat-opponent target">Auto</button>'
+        + '</div>'
+        + '<span class="lbl' + manualCls + '">Roster plan · beat opp'
+        + (built.manual ? ' · edited' : '')
+        + '</span></div>'
+      + '<div class="m"><strong>' + built.weeklyGoal + '</strong>'
+        + '<span class="lbl">Weekly goal</span></div>'
+      + '<div class="m"><strong>' + built.lockedN + '/' + built.slots + '</strong>'
         + '<span class="lbl">Nights locked</span></div>'
-      + (plan.slotsLeft > 0
-        ? ('<div class="m"><strong>' + Math.round(plan.needPer) + '</strong>'
-          + '<span class="lbl">Need / remaining lock</span></div>')
+      + (built.slotsLeft > 0
+        ? ('<div class="m"><strong>' + Math.round(built.needPer) + '</strong>'
+          + '<span class="lbl">Need / lock · beat</span></div>')
         : '')
-      + (plan.rosterFloor != null && Number.isFinite(plan.rosterFloor)
-        ? ('<div class="m"><strong>' + Math.round(plan.rosterFloor) + '</strong>'
+      + (built.slotsLeft > 0 && built.needPerWeekly > 0
+        ? ('<div class="m"><strong>' + Math.round(built.needPerWeekly) + '</strong>'
+          + '<span class="lbl">Need / lock · ' + built.weeklyGoal + '</span></div>')
+        : '')
+      + (built.rosterFloor != null && Number.isFinite(built.rosterFloor)
+        ? ('<div class="m"><strong>' + Math.round(built.rosterFloor) + '</strong>'
           + '<span class="lbl">Remaining Bank bar</span></div>')
         : '');
+    const input = document.getElementById('planTargetInput');
+    const resetBtn = document.getElementById('planTargetReset');
+    if (input){
+      const commit = () => {
+        const pair = state.selectedPair;
+        if (!pair) return;
+        const n = Number(input.value);
+        if (!Number.isFinite(n) || n <= 0) return;
+        savePlanTargetManual(pair.id, n);
+        state.planTargetManual = Math.round(n);
+        render();
+      };
+      input.addEventListener('change', commit);
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter'){ ev.preventDefault(); commit(); }
+      });
+    }
+    if (resetBtn){
+      resetBtn.addEventListener('click', () => {
+        const pair = state.selectedPair;
+        if (!pair) return;
+        savePlanTargetManual(pair.id, null);
+        state.planTargetManual = null;
+        render();
+      });
+    }
   }
   if (copy){
     const bits = [];
-    if (plan.slotsLeft === 0){
-      bits.push(plan.lockedSum + 1e-9 >= plan.goal
-        ? ('All ' + plan.slots + ' locks in — cleared the ' + plan.goal + ' floor.')
-        : ('All ' + plan.slots + ' locks in at ' + Math.round(plan.lockedSum)
-          + ' — ' + Math.round(plan.need) + ' under the ' + plan.goal + ' floor.'));
+    if (built.slotsLeft === 0){
+      bits.push(built.lockedSum + 1e-9 >= built.planTarget
+        ? ('All ' + built.slots + ' locks in — beat target ' + built.planTarget + ' cleared.')
+        : ('All ' + built.slots + ' locks in at ' + Math.round(built.lockedSum)
+          + ' — ' + Math.round(built.need) + ' under beat target ' + built.planTarget + '.'));
+      if (built.lockedSum + 1e-9 >= built.planTarget && built.lockedSum + 1e-9 < built.weeklyGoal){
+        bits.push('Weekly goal ' + built.weeklyGoal + ' still open.');
+      }
     } else {
-      bits.push('From <strong>' + escapeHtml(focusSide.franchise.team)
-        + '</strong> personnel: bank the next <strong>' + plan.slotsLeft
-        + '</strong> night'
-        + (plan.slotsLeft === 1 ? '' : 's')
-        + ' at ~<strong>' + Math.round(plan.avgPlan) + '</strong> FP each to project '
-        + '<strong>' + Math.round(plan.projected) + '</strong>.');
-      if (plan.needPer > 0){
-        bits.push('Hitting <strong>' + plan.goal + '</strong> needs ~<strong>'
-          + Math.round(plan.needPer) + '</strong> FP per remaining lock'
-          + (plan.avgPlan + 1e-9 >= plan.needPer
-            ? ' — roster banks clear that bar.'
-            : ' — banks sit ~' + Math.round(plan.avgPlan)
-              + ', so you need upside nights or a smash.'));
+      bits.push('Beat opponent first: roster plan <strong>' + built.planTarget + '</strong>'
+        + (built.manual ? ' (edited)' : ' (auto)')
+        + '. Projecting <strong>' + Math.round(built.projected) + '</strong> from '
+        + '<strong>' + escapeHtml(focusSide.franchise.team) + '</strong> · next '
+        + '<strong>' + built.slotsLeft + '</strong> night'
+        + (built.slotsLeft === 1 ? '' : 's')
+        + ' at ~<strong>' + Math.round(built.avgPlan) + '</strong> FP each.');
+      if (built.needPer > 0){
+        bits.push('To beat needs ~<strong>' + Math.round(built.needPer)
+          + '</strong> FP per remaining lock'
+          + (built.avgPlan + 1e-9 >= built.needPer
+            ? ' — banks clear that bar.'
+            : ' — banks ~' + Math.round(built.avgPlan) + ', need upside.'));
+      }
+      if (built.mode === 'chase'){
+        bits.push('Rec is chasing the beat target (wider Bank near-miss).');
+      } else if (built.mode === 'climb400'){
+        bits.push('Beat target on pace — Rec climbs weekly goal <strong>'
+          + built.weeklyGoal + '</strong> next.');
+      } else {
+        bits.push('Beat target and weekly goal on pace — protect banks.');
       }
     }
-    bits.push('Plan refreshes as you lock, edit FP, and games tip.');
+    bits.push('Edit roster plan anytime; Auto resets to opponent pace + 1.');
     copy.innerHTML = bits.join(' ');
   }
   if (lines){
     const show = []
-      .concat(plan.lockedLines.map(x => Object.assign({section: 'locked'}, x)))
-      .concat(plan.chosen.map(x => Object.assign({}, x)));
+      .concat(built.lockedLines.map(x => Object.assign({section: 'locked'}, x)))
+      .concat(built.chosen.map(x => Object.assign({}, x)));
     if (!show.length){
       lines.innerHTML = '<li class="week-plan-empty">No lockable nights mapped yet — confirm scores or wait for tips.</li>';
     } else {
@@ -3834,20 +4050,31 @@ function renderSide(side, pack){
   const lockedN = pack.lockedScores.length;
   const slots = lockSlotLabels().length;
   const lockedSum = Math.round(lockedFpTotal(pack));
-  const goal = LOCK_FP_GOAL;
-  const gap = Math.max(0, goal - lockedSum);
-  const weekPlan = buildWeekLockPlan(pack);
+  const weeklyGoal = LOCK_FP_GOAL;
+  const planTarget = pack.opts && pack.opts.planTarget != null
+    ? Number(pack.opts.planTarget) : weeklyGoal;
+  const weekPlan = buildWeekLockPlan(pack, {
+    planTarget: planTarget,
+    manual: pack.opts && pack.opts.planTargetManual,
+    autoTarget: pack.opts && pack.opts.planTargetAuto
+  });
   const planTot = Math.round(weekPlan.projected);
+  const beatGap = Math.max(0, planTarget - lockedSum);
+  const weeklyGap = Math.max(0, weeklyGoal - lockedSum);
   const ptsTitle = lockedN
-    ? (lockedSum + ' locked FP · roster plan ' + planTot + ' · floor ' + goal
-      + (gap > 0 ? (' · ' + gap + ' short of floor') : ' · floor hit')
+    ? (lockedSum + ' locked FP · projects ' + planTot
+      + ' · beat ' + planTarget
+      + (beatGap > 0 ? (' · ' + beatGap + ' short of beat') : ' · beat on pace')
+      + ' · weekly ' + weeklyGoal
+      + (weeklyGap > 0 ? (' · ' + weeklyGap + ' short of weekly') : ' · weekly hit')
       + ' · ' + lockedN + '/' + slots + ' nights locked')
-    : ('0 locked · roster plan ' + planTot + ' · floor ' + goal
-      + ' · ' + lockedN + '/' + slots + ' locked');
+    : ('0 locked · projects ' + planTot + ' · beat ' + planTarget
+      + ' · weekly ' + weeklyGoal + ' · ' + lockedN + '/' + slots + ' locked');
   return '<div class="side" style="--team-color:' + escapeHtml(fr.color) + '">'
     + '<div class="side-head"><h3>' + escapeHtml(fr.team) + '</h3>'
     + '<span class="pts" title="' + escapeHtml(ptsTitle) + '">'
-    + lockedSum + ' locked · plan ' + planTot + ' · floor ' + goal
+    + lockedSum + ' locked · proj ' + planTot + ' · beat ' + planTarget
+    + ' · goal ' + weeklyGoal
     + ' · ' + lockedN + '/' + slots + '</span></div>'
     + '<table><thead><tr>'
     + '<th>Player</th>'
@@ -3886,12 +4113,20 @@ function render(){
 
   const leftPack = sidePlayerRows(pair.sides[0]);
   const rightPack = sidePlayerRows(pair.sides[1]);
+  /* Switch alerts / plan priority only for Focus team (not the opponent column). */
+  const focusSide = pair.sides.find(s => s.franchise.team === state.focusTeam) || pair.sides[0];
+  const oppSide = pair.sides.find(s => s !== focusSide) || pair.sides[1];
+  const focusPack = focusSide === pair.sides[0] ? leftPack : rightPack;
+  const oppPack = focusSide === pair.sides[0] ? rightPack : leftPack;
+  const weekPlan = applyWeekPlanPriority(focusPack, oppPack, pair, focusSide, oppSide);
+
   document.getElementById('detailTitle').textContent =
     pair.sides[0].franchise.team + ' vs ' + pair.sides[1].franchise.team;
   document.getElementById('detailSub').textContent =
     'Week ' + state.week
     + (state.nbaWeek && state.nbaWeek.weekLabel ? (' · ' + state.nbaWeek.weekLabel + ' Mon–Sun') : ' · Mon–Sun')
-    + ' · last score + Avg under names · Bank ≥ drives Rec · build ' + (window.MATCHUP_BUILD || '—');
+    + ' · beat-opp plan first · weekly goal ' + LOCK_FP_GOAL
+    + ' · build ' + (window.MATCHUP_BUILD || '—');
   document.getElementById('sides').innerHTML =
     renderSide(pair.sides[0], leftPack) + renderSide(pair.sides[1], rightPack);
   document.getElementById('sides').querySelectorAll('[data-lock-pid]').forEach(btn => {
@@ -3910,11 +4145,7 @@ function render(){
   });
   renderAdvice(pair, leftPack, rightPack);
   renderConfirmPanel(pair);
-
-  /* Switch alerts only for Focus team (not the opponent column). */
-  const focusSide = pair.sides.find(s => s.franchise.team === state.focusTeam) || pair.sides[0];
-  const focusPack = focusSide === pair.sides[0] ? leftPack : rightPack;
-  renderWeekPlan(focusSide, focusPack);
+  renderWeekPlan(focusSide, focusPack, weekPlan);
   processSwitchAlerts(focusPack);
 
   document.getElementById('footNote').textContent =
@@ -3923,11 +4154,12 @@ function render(){
     + 'Confirm locks pulls scored nights — you verify Started + final Sleeper FP, then Bankable or Lock now. '
     + 'API scores alone never bank. '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
-    + 'Week plan projects locked FP + best remaining Banks/Avgs from Focus personnel toward the '
-    + LOCK_FP_GOAL + ' floor — it updates as locks land and tips clear. '
+    + 'Roster plan is the editable beat-opponent target (auto = opp projected/live + 1). '
+    + 'Weekly goal stays ' + LOCK_FP_GOAL + '. Rec prioritizes beating the roster plan first, '
+    + 'then climbing ' + LOCK_FP_GOAL + ' (wider Bank near-miss while chasing). '
     + 'Under each name: last score (click to edit — sticky, API won’t overwrite) beside Avg (last 25), then next tip / games left. '
     + 'Rec shows Bank ≥; stars/starters lock within ' + BANK_CLOSE_STAR_FP
-    + ' FP or on a season/sample-best night (Bank won’t hunt above that high), fringe/stream need exact. '
+    + ' FP or on a season/sample-best night (Bank won’t hunt above that high), fringe/stream need exact unless chasing. '
     + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — never Lock below that day’s number. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
