@@ -419,7 +419,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261112-relock';
+    || '20261112-sarrpf';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2053,9 +2053,49 @@ function lockSlotForPlayer(r, openSlots){
   return null;
 }
 
+/* Bankable teammate sitting in G/F/UTIL who can take a freed primary, while
+   the bench star fits their flex (Sarr PF · Giannis F). */
+function bestRelocateHandoff(locker, pack, freed, bench){
+  if (!locker || !pack || !freed || !bench) return null;
+  const freedLab = String(freed.label || '').toUpperCase();
+  const freedIdx = Number(freed.index);
+  if (!isPrimaryPosSlotLabel(freedLab) || !Number.isFinite(freedIdx)) return null;
+  let best = null;
+  (pack.rows || []).forEach(mate => {
+    if (!mate || String(mate.pid) === String(locker.pid)) return;
+    if (String(mate.pid) === String(bench.pid)) return;
+    if (isBenchRow(mate) || isIrRow(mate) || isTaxiRow(mate) || isImmovable(mate)) return;
+    if (!isBankableNow(mate)) return;
+    const mateIdx = mate.slot != null && mate.slot !== 'BN' ? Number(mate.slot) : null;
+    const mateLab = mate.slotLabel ? String(mate.slotLabel).toUpperCase() : null;
+    if (!Number.isFinite(mateIdx) || !mateLab || mateLab === 'BN') return;
+    /* Only promote out of flex — don’t yank another primary locker. */
+    if (isPrimaryPosSlotLabel(mateLab)) return;
+    if (!(mateLab === 'G' || mateLab === 'F' || isUtilSlotLabel(mateLab))) return;
+    if (!fitsLockSlot(mate.p, freedLab)) return;
+    if (!fitsLockSlot(bench.p, mateLab)) return;
+    const scored = latestLockableFp(mate);
+    let score = (Number.isFinite(scored) ? scored : 0)
+      + (Number(mate.dist && mate.dist.mean) || 0);
+    if (mateLab === 'F' || mateLab === 'G') score += 20; /* prefer F/G over UTIL for star */
+    if (isUtilSlotLabel(mateLab)) score -= 10;
+    if (!best || score > best.score){
+      best = {
+        row: mate,
+        into: {index: freedIdx, label: freedLab},
+        vacate: {index: mateIdx, label: mateLab},
+        score: score
+      };
+    }
+  });
+  return best;
+}
+
 /* Bankable locker can move into a non-bankable starter’s slot when that frees
    their current slot for a clearly better bench player (e.g. Barrett PF→SF
-   so Giannis starts at PF over Tatum). Never moves into UTIL. */
+   so Giannis starts). Prefer handing the freed primary to another bankable
+   flex locker (Sarr→PF) and parking the bench star in that flex (Giannis@F).
+   Never moves into UTIL. */
 function bestRelocateLockForBench(locker, pack, openSlots){
   if (!locker || !pack || isBenchRow(locker) || isIrRow(locker) || isTaxiRow(locker)) return null;
   if (isImmovable(locker) || !isBankableNow(locker)) return null;
@@ -2081,12 +2121,17 @@ function bestRelocateLockForBench(locker, pack, openSlots){
     if (!fitsLockSlot(locker.p, intoLab)) return;
 
     const donorMean = Number(donor.dist && donor.dist.mean) || 0;
+    const freed = {index: curIdx, label: curLab};
     (pack.rows || []).forEach(bench => {
       if (!bench || !isBenchRow(bench) || isImmovable(bench)) return;
       const inj = bench.scout && bench.scout.injury;
       if (inj === 'OUT' || inj === 'O' || inj === 'IR') return;
       if (inj === 'DTD' || inj === 'Q' || inj === 'QUESTIONABLE') return;
-      if (!fitsLockSlot(bench.p, curLab)) return;
+      const handoff = bestRelocateHandoff(locker, pack, freed, bench);
+      const benchInto = handoff ? handoff.vacate : freed;
+      if (!fitsLockSlot(bench.p, benchInto.label)) return;
+      /* Without handoff, bench must be able to take the freed primary. */
+      if (!handoff && !fitsLockSlot(bench.p, curLab)) return;
       const benchMean = Number(bench.dist && bench.dist.mean) || 0;
       const meanGain = benchMean - donorMean;
       /* Need a real upgrade over the displaced starter (Giannis ≫ Tatum). */
@@ -2102,6 +2147,9 @@ function bestRelocateLockForBench(locker, pack, openSlots){
       /* Prefer parking the lock in a primary the locker already lists. */
       const elig = eligList(locker.p).map(String);
       if (elig.indexOf(intoLab) >= 0) score += 30;
+      /* Bankable flex takes the primary; star starts in flex — better than
+         parking Giannis on PF while Sarr locks F. */
+      if (handoff) score += 90 + (handoff.score || 0) * 0.01;
 
       if (!best || score > best.score){
         best = {
@@ -2109,6 +2157,8 @@ function bestRelocateLockForBench(locker, pack, openSlots){
           from: {index: curIdx, label: curLab},
           donor: donor,
           bench: bench,
+          handoff: handoff,
+          benchInto: {index: Number(benchInto.index), label: String(benchInto.label).toUpperCase()},
           score: score,
           meanGain: meanGain
         };
@@ -2569,8 +2619,8 @@ function demoteRelocateLock(locker){
 }
 
 /* After Lock slots settle: if a Lock relocated to free a bench star, pair the
-   displaced starter + bench (Tatum out · Giannis in @ freed PF) and win the
-   unique-Switch claim over weaker UTIL paths. One bench star → one chain. */
+   displaced starter + bench. With handoff: Sarr Lock · PF, Giannis In @ F,
+   Tatum out. Without: Giannis takes the freed primary. One bench star → one chain. */
 function resolveRelocateLockChains(pack){
   if (!pack || !pack.rows) return;
   const cands = [];
@@ -2583,6 +2633,13 @@ function resolveRelocateLockChains(pack){
     const donor = (pack.rows || []).find(x => x && String(x.pid) === String(rec.relocateDonorPid));
     const bench = (pack.rows || []).find(x => x && String(x.pid) === String(rec.relocateBenchPid));
     if (!donor || !bench) return;
+    const handoff = rec.relocateHandoffPid
+      ? (pack.rows || []).find(x => x && String(x.pid) === String(rec.relocateHandoffPid))
+      : null;
+    const benchIntoLab = String(rec.relocateBenchInto || fromLab).toUpperCase();
+    const benchIntoIdx = rec.relocateBenchIntoIndex != null
+      ? Number(rec.relocateBenchIntoIndex)
+      : fromIdx;
     const scored = latestLockableFp(locker);
     const meanGain = (Number(bench.dist && bench.dist.mean) || 0)
       - (Number(donor.dist && donor.dist.mean) || 0);
@@ -2591,11 +2648,15 @@ function resolveRelocateLockChains(pack){
       rec: rec,
       donor: donor,
       bench: bench,
+      handoff: handoff || null,
       fromLab: fromLab,
       fromIdx: fromIdx,
+      benchIntoLab: benchIntoLab,
+      benchIntoIdx: benchIntoIdx,
       intoLab: String(rec.lockSlotLabel || '').toUpperCase(),
       score: (Number.isFinite(scored) ? scored : 0) + meanGain * 10
         + (Number(bench.dist && bench.dist.mean) || 0)
+        + (handoff ? 50 : 0)
     });
   });
   if (!cands.length) return;
@@ -2603,51 +2664,85 @@ function resolveRelocateLockChains(pack){
     || String(a.locker.pid).localeCompare(String(b.locker.pid)));
   const benchTaken = new Set();
   const donorTaken = new Set();
+  const handoffTaken = new Set();
   cands.forEach(c => {
     const bPid = String(c.bench.pid);
     const dPid = String(c.donor.pid);
-    if (benchTaken.has(bPid) || donorTaken.has(dPid)){
+    const hPid = c.handoff ? String(c.handoff.pid) : null;
+    if (benchTaken.has(bPid) || donorTaken.has(dPid)
+      || (hPid && handoffTaken.has(hPid))){
       demoteRelocateLock(c.locker);
       return;
     }
     benchTaken.add(bPid);
     donorTaken.add(dPid);
+    if (hPid) handoffTaken.add(hPid);
     const lockerName = shortPlayerName(c.locker.p);
     const benchName = shortPlayerName(c.bench.p);
     const donorName = shortPlayerName(c.donor.p);
+    const handoffName = c.handoff ? shortPlayerName(c.handoff.p) : null;
+
+    /* Promote bankable flex onto the freed primary (Sarr Lock · PF). */
+    if (c.handoff && Number.isFinite(c.fromIdx)){
+      const hScored = latestLockableFp(c.handoff);
+      const hBank = c.handoff.bank && c.handoff.bank.mark != null
+        ? Number(c.handoff.bank.mark) : null;
+      const hStyle = c.handoff.bank && c.handoff.bank.style;
+      const dow = leagueDow(Date.now());
+      const dayHint = dowBankHint(Date.now());
+      const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
+      c.handoff.rec = {
+        action: 'lock',
+        label: 'Lock · ' + c.fromLab,
+        reason: bankMeetPhrase(hScored, hBank, hStyle, c.handoff.dist, dow)
+          + ' · use ' + c.fromLab
+          + ' · frees ' + c.benchIntoLab + ' for ' + benchName
+          + urgency,
+        cls: 'rec-lock',
+        lockSlotIndex: c.fromIdx,
+        lockSlotLabel: c.fromLab
+      };
+    }
+
     c.donor.rec = {
       action: 'switch',
-      label: 'Out · ' + benchName + ' @ ' + c.fromLab,
+      label: 'Out · ' + benchName + ' @ ' + c.benchIntoLab,
       reason: lockerName + ' locks @ ' + c.intoLab
-        + ' · start ' + benchName + ' @ ' + c.fromLab
+        + (handoffName ? (' · ' + handoffName + ' locks @ ' + c.fromLab) : '')
+        + ' · start ' + benchName + ' @ ' + c.benchIntoLab
         + ' over ' + donorName,
       cls: 'rec-switch',
       switchPid: bPid,
-      switchInto: c.fromLab,
+      switchInto: c.benchIntoLab,
       switchKind: 'relocate',
       switchScore: 50000 + (Number(c.bench.dist && c.bench.dist.mean) || 0)
     };
     c.bench.rec = {
       action: 'switch',
-      label: 'In · over ' + donorName + ' @ ' + c.fromLab,
-      reason: 'start @ ' + c.fromLab + ' · ' + lockerName + ' locks @ ' + c.intoLab,
+      label: 'In · over ' + donorName + ' @ ' + c.benchIntoLab,
+      reason: 'start @ ' + c.benchIntoLab
+        + ' · ' + lockerName + ' locks @ ' + c.intoLab
+        + (handoffName ? (' · ' + handoffName + ' locks @ ' + c.fromLab) : ''),
       cls: 'rec-switch',
       switchPid: dPid,
-      switchInto: c.fromLab,
+      switchInto: c.benchIntoLab,
       switchKind: 'relocate'
     };
   });
 }
 
-/* Slots freed by a relocate-Lock (Barrett leaves PF for Giannis) — other
-   Lock claims must not squat there. */
+/* Slots reserved for the inbound bench star after a relocate-Lock.
+   With handoff (Sarr→PF): reserve F for Giannis, not PF.
+   Without: reserve the freed primary. */
 function relocateReservedSlotIndexes(pack){
   const reserved = new Set();
   (pack.rows || []).forEach(r => {
     if (!r || !r.rec || r.rec.action !== 'lock') return;
-    if (r.rec.relocateFromIndex == null) return;
-    const n = Number(r.rec.relocateFromIndex);
-    if (Number.isFinite(n)) reserved.add(n);
+    if (r.rec.relocateBenchPid == null) return;
+    const into = r.rec.relocateBenchIntoIndex != null
+      ? Number(r.rec.relocateBenchIntoIndex)
+      : Number(r.rec.relocateFromIndex);
+    if (Number.isFinite(into)) reserved.add(into);
   });
   return reserved;
 }
@@ -2686,8 +2781,7 @@ function resolveUniqueLockSlotRecs(pack){
       || (b.keep ? 1 : 0) - (a.keep ? 1 : 0)
       || b.score - a.score
       || String(a.row.pid).localeCompare(String(b.row.pid)));
-    /* reservedFrom seeds slotTaken so Sarr can’t Lock · PF while Barrett
-       frees PF for Giannis. */
+    /* reservedFrom = bench inbound seat (F with handoff, else freed primary). */
     const slotTaken = new Set(reservedFrom);
     const winnerKeep = new Set();
     edges.forEach(e => {
@@ -2695,7 +2789,10 @@ function resolveUniqueLockSlotRecs(pack){
       if (slotTaken.has(e.slotIndex)) return;
       slotTaken.add(e.slotIndex);
       winnerKeep.add(String(e.row.pid));
-      if (e.row.rec && e.row.rec.relocateFromIndex != null){
+      /* Without handoff, freed primary stays reserved for the bench star.
+         With handoff, PF is free for Sarr — only F was seeded in reservedFrom. */
+      if (e.row.rec && e.row.rec.relocateFromIndex != null
+        && !e.row.rec.relocateHandoffPid){
         const fr = Number(e.row.rec.relocateFromIndex);
         if (Number.isFinite(fr)) slotTaken.add(fr);
       }
@@ -2719,7 +2816,7 @@ function resolveUniqueLockSlotRecs(pack){
       if (recClaimsLockSlot(r.rec) && !slotTaken.has(Number(r.rec.lockSlotIndex))){
         slotTaken.add(Number(r.rec.lockSlotIndex));
         winnerKeep.add(String(r.pid));
-        if (r.rec.relocateFromIndex != null){
+        if (r.rec.relocateFromIndex != null && !r.rec.relocateHandoffPid){
           const fr = Number(r.rec.relocateFromIndex);
           if (Number.isFinite(fr)) slotTaken.add(fr);
         }
@@ -3207,8 +3304,9 @@ function buildRec(r, pack, opts){
   /* Bankable night in a start slot — lock before anything else.
      Prefer a position slot over UTIL when recommending where to bank.
      Stars/starters: near-miss or season/sample-best (don’t hunt unicorns).
-     If locking here traps a better bench player out of a primary, relocate
-     the lock into a non-bankable starter’s slot (Barrett SF · Giannis PF). */
+     If locking here traps a better bench player, relocate into a non-bankable
+     starter’s slot (Barrett→SF). Prefer handing the freed primary to another
+     bankable flex (Sarr→PF) so the bench star starts in flex (Giannis@F). */
   if (meetsBank(scored, bank, bankStyle, r.dist, dowNow)){
     const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
     const relocate = bestRelocateLockForBench(r, pack, open);
@@ -3219,9 +3317,19 @@ function buildRec(r, pack, opts){
       const utilLast = isUtilSlotLabel(lockSlot.label) ? ' · UTIL last' : '';
       let moveBit = '';
       if (relocate && relocate.bench && relocate.donor){
-        moveBit = ' · move to ' + lockSlot.label
-          + ' · frees ' + relocate.from.label + ' for '
-          + shortPlayerName(relocate.bench.p);
+        const benchLab = (relocate.benchInto && relocate.benchInto.label)
+          || relocate.from.label;
+        if (relocate.handoff && relocate.handoff.row){
+          moveBit = ' · move to ' + lockSlot.label
+            + ' · ' + shortPlayerName(relocate.handoff.row.p) + ' locks '
+            + relocate.from.label
+            + ' · frees ' + benchLab + ' for '
+            + shortPlayerName(relocate.bench.p);
+        } else {
+          moveBit = ' · move to ' + lockSlot.label
+            + ' · frees ' + benchLab + ' for '
+            + shortPlayerName(relocate.bench.p);
+        }
       } else if (moved){
         moveBit = ' · use ' + lockSlot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : '');
       }
@@ -3238,6 +3346,12 @@ function buildRec(r, pack, opts){
         rec.relocateFromIndex = relocate.from.index;
         rec.relocateDonorPid = String(relocate.donor.pid);
         rec.relocateBenchPid = String(relocate.bench.pid);
+        const bi = relocate.benchInto || relocate.from;
+        rec.relocateBenchInto = bi.label;
+        rec.relocateBenchIntoIndex = bi.index;
+        if (relocate.handoff && relocate.handoff.row){
+          rec.relocateHandoffPid = String(relocate.handoff.row.pid);
+        }
       }
       return rec;
     }
