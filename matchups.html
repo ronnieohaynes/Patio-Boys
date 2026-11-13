@@ -419,7 +419,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261111-rookiescale';
+    || '20261112-uniquelock';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1934,6 +1934,7 @@ function sidePlayerRows(side){
     taxi: rows.filter(r => r.bucket === 'TX')
   };
   rows.forEach(r => { r.rec = buildRec(r, pack); });
+  resolveUniqueLockSlotRecs(pack);
   resolveUniqueSwitchRecs(pack);
   return pack;
 }
@@ -1963,9 +1964,10 @@ function latestLockableFp(r){
   return null;
 }
 
-function openLockSlots(pack){
+function openLockSlots(pack, excludeIndexes){
   const labels = lockSlotLabels();
   const taken = new Set();
+  const exclude = excludeIndexes || null;
   (pack.rows || []).forEach(r => {
     /* Locked nights freeze the lineup slot — not open for Switch/Lock-in. */
     if (!isImmovable(r)) return;
@@ -1976,6 +1978,12 @@ function openLockSlots(pack){
     const byLabel = labels.indexOf(lab);
     if (byLabel >= 0) taken.add(byLabel);
   });
+  if (exclude && typeof exclude.forEach === 'function'){
+    exclude.forEach(i => {
+      const n = Number(i);
+      if (Number.isFinite(n)) taken.add(n);
+    });
+  }
   return labels.map((lab, i) => ({index: i, label: lab, open: !taken.has(i)}))
     .filter(s => s.open);
 }
@@ -2458,6 +2466,75 @@ function attachSwitchMeta(rec, alt, starter){
   return rec;
 }
 
+/* True when Rec is banking (or starting-to-bank) into a specific lineup slot. */
+function recClaimsLockSlot(rec){
+  if (!rec) return false;
+  if (rec.lockSlotIndex == null || !Number.isFinite(Number(rec.lockSlotIndex))) return false;
+  if (rec.action === 'lock') return true;
+  /* Bench/TX "Start · PF then Lock" also reserves that slot. */
+  if (rec.action === 'switch' && rec.lockSlotLabel) return true;
+  return false;
+}
+
+/* One Lock target slot → one player. Prefer whoever already sits there, then
+   higher bankable FP. Losers re-Rec with that slot excluded (e.g. Sarr stays
+   at F instead of both Barrett + Sarr saying Lock · PF). */
+function resolveUniqueLockSlotRecs(pack){
+  if (!pack || !pack.rows) return;
+  const maxPasses = 6;
+  for (let pass = 0; pass < maxPasses; pass++){
+    const edges = [];
+    (pack.rows || []).forEach(r => {
+      if (!r || !recClaimsLockSlot(r.rec)) return;
+      const idx = Number(r.rec.lockSlotIndex);
+      const lab = String(r.rec.lockSlotLabel || '').toUpperCase();
+      const curIdx = r.slot != null && r.slot !== 'BN' ? Number(r.slot) : null;
+      const keep = Number.isFinite(curIdx) && curIdx === idx;
+      const scored = latestLockableFp(r);
+      edges.push({
+        row: r,
+        slotIndex: idx,
+        slotLabel: lab,
+        keep: keep,
+        score: Number.isFinite(scored) ? scored : -1
+      });
+    });
+    if (!edges.length) return;
+    edges.sort((a, b) =>
+      (b.keep ? 1 : 0) - (a.keep ? 1 : 0)
+      || b.score - a.score
+      || String(a.row.pid).localeCompare(String(b.row.pid)));
+    const slotTaken = new Set();
+    const winnerKeep = new Set();
+    edges.forEach(e => {
+      if (winnerKeep.has(String(e.row.pid))) return;
+      if (slotTaken.has(e.slotIndex)) return;
+      slotTaken.add(e.slotIndex);
+      winnerKeep.add(String(e.row.pid));
+    });
+    const losers = edges
+      .map(e => e.row)
+      .filter((r, i, arr) => arr.indexOf(r) === i)
+      .filter(r => !winnerKeep.has(String(r.pid)));
+    if (!losers.length) return;
+    let changed = false;
+    losers.forEach(r => {
+      const prevIdx = r.rec && r.rec.lockSlotIndex;
+      const prevLabel = r.rec && r.rec.label;
+      r.rec = buildRec(r, pack, {excludeSlotIndexes: slotTaken});
+      if ((r.rec && r.rec.lockSlotIndex) !== prevIdx
+        || (r.rec && r.rec.label) !== prevLabel){
+        changed = true;
+      }
+      if (recClaimsLockSlot(r.rec) && !slotTaken.has(Number(r.rec.lockSlotIndex))){
+        slotTaken.add(Number(r.rec.lockSlotIndex));
+        winnerKeep.add(String(r.pid));
+      }
+    });
+    if (!changed) return;
+  }
+}
+
 /* One bench sub → one starter Switch. Greedy best claim, then re-Rec losers
    without the claimed benches so the next-best sub (or Wait) surfaces. */
 function resolveUniqueSwitchRecs(pack){
@@ -2675,7 +2752,8 @@ function switchInLabel(over){
 /* Actionable recommendation: Lock / Switch / Wait (+ reason).
    Only starting slots score — bench Switch means switch THIS player in.
    Reasons cite the live clock when tip timing matters.
-   opts.excludeSwitchPids = bench pids already claimed by another Switch. */
+   opts.excludeSwitchPids = bench pids already claimed by another Switch.
+   opts.excludeSlotIndexes = lineup slots already claimed by another Lock. */
 function buildRec(r, pack, opts){
   const nowMs = Date.now();
   const switchOpts = opts || {};
@@ -2699,7 +2777,7 @@ function buildRec(r, pack, opts){
   const scored = latestLockableFp(r);
   const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   const bankStyle = r.bank && r.bank.style;
-  const open = openLockSlots(pack);
+  const open = openLockSlots(pack, switchOpts.excludeSlotIndexes);
   /* Position locks first; UTIL last (even if they’re currently sitting in UTIL). */
   const slot = lockSlotForPlayer(r, open);
   const nextLbl = nextGameLabel(r.scout);
@@ -2749,7 +2827,9 @@ function buildRec(r, pack, opts){
           label: 'Start · ' + slot.label + ' then Lock',
           reason: bankMeetPhrase(scored, bank, bankStyle, r.dist)
             + ' · can’t lock from TX · start @ ' + slot.label + ' first',
-          cls: 'rec-switch'
+          cls: 'rec-switch',
+          lockSlotIndex: slot.index,
+          lockSlotLabel: slot.label
         };
       }
       return {
@@ -2817,7 +2897,9 @@ function buildRec(r, pack, opts){
             + ' · can’t lock from BN · start @ ' + slot.label + ' first'
             + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : '')
             + (dayHint ? (' · ' + dayHint) : ''),
-          cls: 'rec-switch'
+          cls: 'rec-switch',
+          lockSlotIndex: slot.index,
+          lockSlotLabel: slot.label
         };
       }
       return {
@@ -2942,7 +3024,9 @@ function buildRec(r, pack, opts){
         action: 'lock',
         label: 'Lock · ' + slot.label,
         reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow) + moveBit + utilLast + urgency,
-        cls: 'rec-lock'
+        cls: 'rec-lock',
+        lockSlotIndex: slot.index,
+        lockSlotLabel: slot.label
       };
     }
     return {
