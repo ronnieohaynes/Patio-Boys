@@ -441,7 +441,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261113-chasebank';
+    || '20261113-slotpath';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1958,6 +1958,7 @@ function sidePlayerRows(side){
     taxi: rows.filter(r => r.bucket === 'TX')
   };
   rows.forEach(r => { r.rec = buildRec(r, pack); });
+  resolveUniqueLockSlotRecs(pack);
   resolveUniqueSwitchRecs(pack);
   return pack;
 }
@@ -1987,9 +1988,16 @@ function latestLockableFp(r){
   return null;
 }
 
-function openLockSlots(pack){
+function openLockSlots(pack, excludeSlotIndexes){
   const labels = lockSlotLabels();
   const taken = new Set();
+  const exclude = excludeSlotIndexes instanceof Set
+    ? excludeSlotIndexes
+    : new Set(excludeSlotIndexes || []);
+  exclude.forEach(i => {
+    const n = Number(i);
+    if (Number.isFinite(n)) taken.add(n);
+  });
   (pack.rows || []).forEach(r => {
     /* Locked nights freeze the lineup slot — not open for Switch/Lock-in. */
     if (!isImmovable(r)) return;
@@ -2017,29 +2025,13 @@ function fitsLockSlot(p, slotLabel){
   return elig.indexOf(lab) >= 0;
 }
 
-function preferSlotForPlayer(p, openSlots){
-  /* Position locks before UTIL — UTIL is the last place to bank a night. */
-  const order = ['PG', 'SG', 'SF', 'PF', 'C', 'G', 'F', 'UTIL'];
-  const ranked = (openSlots || []).slice().sort((a, b) =>
-    order.indexOf(a.label) - order.indexOf(b.label));
-  const elig = eligList(p).map(String);
-  for (let i = 0; i < ranked.length; i++){
-    const s = ranked[i];
-    if (s.label === 'UTIL') continue;
-    if (elig.indexOf(s.label) >= 0 && fitsLockSlot(p, s.label)) return s;
-  }
-  for (let i = 0; i < ranked.length; i++){
-    const s = ranked[i];
-    if ((s.label === 'G' || s.label === 'F') && fitsLockSlot(p, s.label)) return s;
-  }
-  for (let i = 0; i < ranked.length; i++){
-    if (fitsLockSlot(p, ranked[i].label)) return ranked[i];
-  }
-  return null;
-}
-
 function isUtilSlotLabel(lab){
   return String(lab || '').toUpperCase() === 'UTIL';
+}
+
+function isFlexSlotLabel(lab){
+  const s = String(lab || '').toUpperCase();
+  return s === 'G' || s === 'F';
 }
 
 function isPrimaryPosSlotLabel(lab){
@@ -2047,23 +2039,180 @@ function isPrimaryPosSlotLabel(lab){
   return s === 'PG' || s === 'SG' || s === 'SF' || s === 'PF' || s === 'C';
 }
 
-/* Where Rec should bank this player: keep a PG–C slot they’re already in,
-   otherwise pick the best open PG–C, then G/F, then UTIL last. */
-function lockSlotForPlayer(r, openSlots){
+function slotTierRank(lab){
+  if (isPrimaryPosSlotLabel(lab)) return 3;
+  if (isFlexSlotLabel(lab)) return 2;
+  if (isUtilSlotLabel(lab)) return 1;
+  return 0;
+}
+
+/* Unlocked roster mates who could still bank into this slot (not IR/taxi). */
+function unlockedSlotRivals(pack, slotLabel, excludePid){
+  const lab = String(slotLabel || '').toUpperCase();
+  const out = [];
+  (pack && pack.rows || []).forEach(o => {
+    if (!o || String(o.pid) === String(excludePid)) return;
+    if (o.locked || isImmovable(o)) return;
+    if (isIrRow(o) || isTaxiRow(o)) return;
+    if (!fitsLockSlot(o.p, lab)) return;
+    out.push(o);
+  });
+  return out;
+}
+
+/* Best other night that could fill this slot: bankable scored, else Avg if
+   they still have games (proxy for a later lock). */
+function bestRivalLockFp(pack, slotLabel, excludePid){
+  let best = null;
+  unlockedSlotRivals(pack, slotLabel, excludePid).forEach(o => {
+    const scored = latestLockableFp(o);
+    if (scored != null && Number.isFinite(Number(scored)) && isBankableNow(o, pack)){
+      const n = Number(scored);
+      if (best == null || n > best) best = n;
+      return;
+    }
+    const gamesLeft = o.scout && o.scout.gamesLeft != null
+      ? Number(o.scout.gamesLeft)
+      : ((o.scout && o.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
+    if (!(gamesLeft > 0)) return;
+    const mean = o.dist && o.dist.mean != null ? Number(o.dist.mean) : NaN;
+    if (!Number.isFinite(mean)) return;
+    if (best == null || mean > best) best = mean;
+  });
+  return best;
+}
+
+/* Path score for parking THIS night in a slot: prefer scarce primary slots
+   where no rival can lock a higher total. UTIL last even if still open. */
+function lockSlotPathScore(r, slot, pack){
+  const lab = String(slot && slot.label || '').toUpperCase();
+  const scored = latestLockableFp(r);
+  const my = scored != null && Number.isFinite(Number(scored)) ? Number(scored) : 0;
+  const tier = slotTierRank(lab);
+  const rival = bestRivalLockFp(pack, lab, r && r.pid);
+  const uniqueEdge = rival == null ? (500 + my) : (my - rival);
+  const rivals = unlockedSlotRivals(pack, lab, r && r.pid);
+  const scarcity = 1 / (1 + rivals.length);
+  const keep = r && r.slot != null && Number(r.slot) === Number(slot.index) ? 1 : 0;
+  /* Tier dominates; then unique edge (best remaining filler); then scarcity. */
+  return tier * 1e6 + uniqueEdge * 1e3 + scarcity * 100 + keep;
+}
+
+/* Short Rec reason: why this slot over another open fit (scarce C, etc.). */
+function lockSlotPathWhy(r, slot, pack, openSlots){
+  if (!r || !slot || !pack) return '';
+  const lab = String(slot.label || '').toUpperCase();
+  if (isUtilSlotLabel(lab)) return '';
+  const my = latestLockableFp(r);
+  const rival = bestRivalLockFp(pack, lab, r.pid);
+  const otherFits = (openSlots || []).filter(s =>
+    s && Number(s.index) !== Number(slot.index) && fitsLockSlot(r.p, s.label)
+    && !isUtilSlotLabel(s.label));
+  if (rival == null){
+    if (isPrimaryPosSlotLabel(lab) && otherFits.length){
+      return ' · best remaining ' + lab;
+    }
+    return '';
+  }
+  if (my != null && Number.isFinite(Number(my)) && Number(my) + 1e-9 >= rival){
+    return ' · best ' + lab + ' path';
+  }
+  return '';
+}
+
+function preferSlotForPlayer(p, openSlots, pack, row){
+  const eligible = (openSlots || []).filter(s => fitsLockSlot(p, s.label));
+  if (!eligible.length) return null;
+  if (!pack || !row){
+    /* Fallback without pack: fixed primary→flex→UTIL order. */
+    const order = ['PG', 'SG', 'SF', 'PF', 'C', 'G', 'F', 'UTIL'];
+    eligible.sort((a, b) => order.indexOf(a.label) - order.indexOf(b.label));
+    return eligible[0];
+  }
+  eligible.sort((a, b) =>
+    lockSlotPathScore(row, b, pack) - lockSlotPathScore(row, a, pack)
+    || String(a.label).localeCompare(String(b.label))
+    || a.index - b.index);
+  return eligible[0];
+}
+
+/* Where Rec should bank this player: scarce primary path first (e.g. best
+   remaining C → Lock · C even if PF/UTIL are open), UTIL last. */
+function lockSlotForPlayer(r, openSlots, pack){
   const open = openSlots || [];
-  const currentSlot = (r && r.slot != null && r.slot !== 'BN')
-    ? {index: Number(r.slot), label: String(r.slotLabel || '').toUpperCase()}
-    : null;
-  const currentOpen = currentSlot
-    && open.some(s => s.index === currentSlot.index)
-    && fitsLockSlot(r.p, currentSlot.label);
-  /* Already in an open PG–C slot — lock there. */
-  if (currentOpen && isPrimaryPosSlotLabel(currentSlot.label)) return currentSlot;
-  const preferred = preferSlotForPlayer(r && r.p, open);
+  const preferred = preferSlotForPlayer(r && r.p, open, pack, r);
   if (preferred) return preferred;
-  /* Last resort: their current G/F/UTIL if that’s all that’s left. */
-  if (currentOpen) return currentSlot;
   return null;
+}
+
+function recClaimsLockSlot(rec){
+  if (!rec || rec.action !== 'lock') return false;
+  return rec.lockSlotIndex != null && Number.isFinite(Number(rec.lockSlotIndex));
+}
+
+function attachLockSlotMeta(rec, slot){
+  if (!rec || !slot) return rec;
+  rec.lockSlotIndex = Number(slot.index);
+  rec.lockSlotLabel = String(slot.label || '').toUpperCase();
+  return rec;
+}
+
+/* One Lock · slot claim per lineup index. Higher scored night keeps the
+   scarce slot; losers re-Rec with that slot excluded (e.g. Sarr → C, Barrett → PF). */
+function resolveUniqueLockSlotRecs(pack){
+  if (!pack || !pack.rows) return;
+  const maxPasses = 6;
+  for (let pass = 0; pass < maxPasses; pass++){
+    const edges = [];
+    (pack.rows || []).forEach(r => {
+      if (!r || !recClaimsLockSlot(r.rec)) return;
+      const idx = Number(r.rec.lockSlotIndex);
+      const lab = String(r.rec.lockSlotLabel || '').toUpperCase();
+      const curIdx = r.slot != null && r.slot !== 'BN' ? Number(r.slot) : null;
+      const keep = Number.isFinite(curIdx) && curIdx === idx;
+      const scored = latestLockableFp(r);
+      edges.push({
+        row: r,
+        slotIndex: idx,
+        slotLabel: lab,
+        keep: keep,
+        score: Number.isFinite(scored) ? scored : -1
+      });
+    });
+    if (!edges.length) return;
+    edges.sort((a, b) =>
+      (b.keep ? 1 : 0) - (a.keep ? 1 : 0)
+      || b.score - a.score
+      || String(a.row.pid).localeCompare(String(b.row.pid)));
+    const slotTaken = new Set();
+    const winnerKeep = new Set();
+    edges.forEach(e => {
+      if (winnerKeep.has(String(e.row.pid))) return;
+      if (slotTaken.has(e.slotIndex)) return;
+      slotTaken.add(e.slotIndex);
+      winnerKeep.add(String(e.row.pid));
+    });
+    const losers = edges
+      .map(e => e.row)
+      .filter((r, i, arr) => arr.indexOf(r) === i)
+      .filter(r => !winnerKeep.has(String(r.pid)));
+    if (!losers.length) return;
+    let changed = false;
+    losers.forEach(r => {
+      const prevIdx = r.rec && r.rec.lockSlotIndex;
+      const prevLabel = r.rec && r.rec.label;
+      r.rec = buildRec(r, pack, {excludeSlotIndexes: slotTaken});
+      if ((r.rec && r.rec.lockSlotIndex) !== prevIdx
+        || (r.rec && r.rec.label) !== prevLabel){
+        changed = true;
+      }
+      if (recClaimsLockSlot(r.rec) && !slotTaken.has(Number(r.rec.lockSlotIndex))){
+        slotTaken.add(Number(r.rec.lockSlotIndex));
+        winnerKeep.add(String(r.pid));
+      }
+    });
+    if (!changed) return;
+  }
 }
 
 function shortPlayerName(p){
@@ -2793,9 +2942,9 @@ function buildRec(r, pack, opts){
   /* Chase/climb raises Bank ≥ to plan need/lock so Recs track the roster plan. */
   const bank = planRaisedBankMark(rawBank, pack);
   const bankStyle = r.bank && r.bank.style;
-  const open = openLockSlots(pack);
-  /* Position locks first; UTIL last (even if they’re currently sitting in UTIL). */
-  const slot = lockSlotForPlayer(r, open);
+  const open = openLockSlots(pack, switchOpts.excludeSlotIndexes);
+  /* Scarce primary path first (best remaining C → C); UTIL last. */
+  const slot = lockSlotForPlayer(r, open, pack);
   const nextLbl = nextGameLabel(r.scout);
   const nextPhrase = nextGamePhrase(r.scout, nowMs);
   const dayHint = dowBankHint(nowMs);
@@ -2909,6 +3058,7 @@ function buildRec(r, pack, opts){
           label: 'Start · ' + slot.label + ' then Lock',
           reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed)
             + ' · can’t lock from BN · start @ ' + slot.label + ' first'
+            + lockSlotPathWhy(r, slot, pack, open)
             + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : '')
             + (dayHint ? (' · ' + dayHint) : ''),
           cls: 'rec-switch'
@@ -3023,7 +3173,7 @@ function buildRec(r, pack, opts){
   }
 
   /* Bankable night in a start slot — lock before anything else.
-     Prefer a position slot over UTIL when recommending where to bank.
+     Slot = scarce path to max remaining lock points (not fixed PF-before-C).
      Stars/starters: near-miss or season/sample-best (don’t hunt unicorns). */
   if (meetsBank(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)){
     const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
@@ -3032,12 +3182,14 @@ function buildRec(r, pack, opts){
       const moved = curLab && slot.label !== curLab;
       const utilLast = isUtilSlotLabel(slot.label) ? ' · UTIL last' : '';
       const moveBit = moved ? (' · use ' + slot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : '')) : '';
-      return {
+      const pathBit = lockSlotPathWhy(r, slot, pack, open);
+      return attachLockSlotMeta({
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed) + moveBit + utilLast + urgency,
+        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)
+          + moveBit + pathBit + utilLast + urgency,
         cls: 'rec-lock'
-      };
+      }, slot);
     }
     return {
       action: 'lock',
@@ -3778,6 +3930,7 @@ function applyWeekPlanPriority(focusPack, oppPack, pair, focusSide, oppSide){
     }
     r.rec = buildRec(r, focusPack);
   });
+  if (typeof resolveUniqueLockSlotRecs === 'function') resolveUniqueLockSlotRecs(focusPack);
   if (typeof resolveUniqueSwitchRecs === 'function') resolveUniqueSwitchRecs(focusPack);
   return plan;
 }
