@@ -441,7 +441,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261114-benchforfeit';
+    || '20261114-outfill';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2378,7 +2378,32 @@ function dowBankHint(nowMs){
   return floorBit;
 }
 
-/* Next tip timestamp for tip-order lineup (earlier tip wins the start slot). */
+/* Tips within this window → start the better player (Avg), not strict tip order. */
+const TIP_CLOSE_MS = 30 * 60 * 1000;
+
+function tipsWithinCloseWindow(aMs, bMs){
+  if (aMs == null || bMs == null) return false;
+  const a = Number(aMs);
+  const b = Number(bMs);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return Math.abs(a - b) <= TIP_CLOSE_MS;
+}
+
+/* “Better” for close tip-times: higher Avg (then lockable FP as tie-break). */
+function playerStartQuality(r){
+  if (!r) return -Infinity;
+  const mean = r.dist && Number(r.dist.mean);
+  const scored = latestLockableFp(r);
+  const meanN = Number.isFinite(mean) ? mean : 0;
+  const scoredN = scored != null && Number.isFinite(Number(scored)) ? Number(scored) : 0;
+  return meanN * 1000 + scoredN;
+}
+
+function isBetterStarter(a, b){
+  return playerStartQuality(a) > playerStartQuality(b) + 1e-9;
+}
+
+/* Next tip timestamp for tip-order lineup (earlier tip wins when >30m apart). */
 function nextTipMs(scout){
   function fromTip(tipIso, ymd){
     if (tipIso){
@@ -2621,41 +2646,120 @@ function stayStartLockPhrase(r){
   return ' · stay start — benching forfeits this night\'s lock';
 }
 
+function isOutInjury(inj){
+  return inj === 'OUT' || inj === 'O' || inj === 'IR';
+}
+
+/* Start-slot player ruled OUT/IR — slot should be filled before tip-order
+   benches someone who still has a game (Allen UTIL Sit → Marshall there,
+   not Switch Marshall over Giannis @ F). */
+function isRuledOutStart(r){
+  if (!r || isBenchRow(r) || isIrRow(r) || isTaxiRow(r)) return false;
+  if (isImmovable(r)) return false;
+  return isOutInjury(r.scout && r.scout.injury);
+}
+
+function outStartsBenchCanFill(bench, pack){
+  if (!bench || !pack) return [];
+  const out = [];
+  (pack.rows || []).forEach(s => {
+    if (!isRuledOutStart(s)) return;
+    const lab = s.slotLabel && s.slotLabel !== 'BN'
+      ? String(s.slotLabel).toUpperCase() : null;
+    if (!lab || !fitsLockSlot(bench.p, lab)) return;
+    out.push(s);
+  });
+  return out;
+}
+
+/* OUT/IR start → any eligible bench fill (don’t Sit while Marshall sits on BN). */
+function outFillSwitchTarget(r, pack, opts){
+  if (!r || isImmovable(r) || isBenchRow(r)) return null;
+  const slotLabel = r.slotLabel && r.slotLabel !== 'BN'
+    ? String(r.slotLabel).toUpperCase() : null;
+  if (!slotLabel) return null;
+  const excluded = switchExcludeSet(opts);
+  const cands = [];
+  (pack.rows || []).forEach(o => {
+    if (!o || o.pid === r.pid || isImmovable(o) || !isBenchRow(o)) return;
+    if (excluded && excluded.has(String(o.pid))) return;
+    if (isOutInjury(o.scout && o.scout.injury)) return;
+    if (!fitsLockSlot(o.p, slotLabel)) return;
+    const tip = nextTipMs(o.scout);
+    const left = o.scout && o.scout.gamesLeft || 0;
+    const scored = latestScoredFp(o);
+    if (!(left > 0 || scored != null || tip != null)) return;
+    cands.push({
+      row: o,
+      tip: tip != null ? tip : Infinity,
+      mean: Number(o.dist && o.dist.mean) || 0
+    });
+  });
+  cands.sort((a, b) => a.tip - b.tip || b.mean - a.mean
+    || String(a.row.pid).localeCompare(String(b.row.pid)));
+  const best = cands[0];
+  if (!best) return null;
+  return {row: best.row, into: slotLabel, kind: 'out'};
+}
+
 /* Tip-order: if this starter isn’t banking now, free the slot for a bench
-   player who tips sooner. Benching forfeits any played night still unlockable;
-   they must be restarted to lock a later game. */
+   player who tips clearly sooner (>30m). Tips within 30m → better player
+   starts (higher Avg). Benching forfeits any played night still unlockable.
+   Never pull a bench piece that can fill an OUT/Sit start slot first. */
 function tipOrderSwitchTarget(r, pack, opts){
   if (isImmovable(r) || isBenchRow(r)) return null;
   /* Still bankable in a start slot — never bench (would forfeit the lock). */
   if (isBankableNow(r, pack)) return null;
+  /* OUT slots fill via outFillSwitchTarget — don’t tip-order over a live tip. */
+  if (isRuledOutStart(r)) return null;
   const myNext = nextTipMs(r.scout);
   if (myNext == null) return null;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null;
   const excluded = switchExcludeSet(opts);
-  const cands = (pack.rows || []).filter(o => {
-    if (!o || o.pid === r.pid || isImmovable(o)) return false;
-    if (excluded && excluded.has(String(o.pid))) return false;
-    if (!isBenchRow(o)) return false;
+  const cands = [];
+  (pack.rows || []).forEach(o => {
+    if (!o || o.pid === r.pid || isImmovable(o)) return;
+    if (excluded && excluded.has(String(o.pid))) return;
+    if (!isBenchRow(o)) return;
     const inj = o.scout && o.scout.injury;
-    if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
-    if (!fitsLockSlot(o.p, slotLabel)) return false;
+    if (isOutInjury(inj)) return;
+    if (!fitsLockSlot(o.p, slotLabel)) return;
+    /* Marshall → Allen’s OUT UTIL first, not over Giannis @ F. */
+    if (outStartsBenchCanFill(o, pack).length) return;
     const theirNext = nextTipMs(o.scout);
-    if (theirNext == null) return false;
-    return theirNext < myNext;
-  }).sort((a, b) => {
-    const ta = nextTipMs(a.scout) || 0;
-    const tb = nextTipMs(b.scout) || 0;
-    if (ta !== tb) return ta - tb;
-    return (Number(b.dist && b.dist.mean) || 0) - (Number(a.dist && a.dist.mean) || 0);
+    if (theirNext == null) return;
+    const close = tipsWithinCloseWindow(myNext, theirNext);
+    const clearlyEarlier = theirNext < myNext - TIP_CLOSE_MS;
+    if (close){
+      /* Within 30m — only Switch if bench is the better start. */
+      if (!isBetterStarter(o, r)) return;
+      cands.push({row: o, kind: 'close', tip: theirNext});
+      return;
+    }
+    if (clearlyEarlier){
+      cands.push({row: o, kind: 'tip', tip: theirNext});
+    }
+  });
+  cands.sort((a, b) => {
+    /* Prefer close-window upgrades, then earliest tip, then quality. */
+    if (a.kind !== b.kind) return a.kind === 'close' ? -1 : 1;
+    if (a.kind === 'close'){
+      return playerStartQuality(b.row) - playerStartQuality(a.row);
+    }
+    if (a.tip !== b.tip) return a.tip - b.tip;
+    return playerStartQuality(b.row) - playerStartQuality(a.row);
   });
   const best = cands[0] || null;
   if (!best) return null;
+  const hold = nextGamePhrase(r.scout) || nextGameLabel(r.scout) || 'next tip';
   return {
-    row: best,
+    row: best.row,
     into: slotLabel,
-    why: 'tip order · start before ' + (nextGamePhrase(r.scout) || nextGameLabel(r.scout) || 'next tip'),
-    kind: 'tip'
+    why: best.kind === 'close'
+      ? ('better start · tips within 30m of ' + hold)
+      : ('tip order · start before ' + hold),
+    kind: best.kind === 'close' ? 'close' : 'tip'
   };
 }
 
@@ -2700,12 +2804,18 @@ function betterSwitchTarget(r, pack, opts){
 function switchClaimScore(starter, alt){
   if (!starter || !alt || !alt.row) return -Infinity;
   let score = 0;
+  /* OUT/IR fills beat tip-order claims so Marshall isn’t stolen from Allen UTIL. */
+  if (isRuledOutStart(starter) || alt.kind === 'out') score += 30000;
   if (alt.into && !isUtilSlotLabel(alt.into)) score += 10000;
-  if (alt.kind === 'tip') score += 5000;
+  if (alt.kind === 'close') score += 5500;
+  else if (alt.kind === 'tip') score += 5000;
   else if (alt.kind === 'avg') score += 2000;
+  else if (alt.kind === 'out') score += 8000;
   const myTip = nextTipMs(starter.scout);
   const theirTip = nextTipMs(alt.row.scout);
-  if (myTip != null && theirTip != null && myTip > theirTip){
+  if (myTip != null && theirTip != null && tipsWithinCloseWindow(myTip, theirTip)){
+    score += Math.max(0, playerStartQuality(alt.row) - playerStartQuality(starter));
+  } else if (myTip != null && theirTip != null && myTip > theirTip){
     score += Math.min(72, (myTip - theirTip) / 3600000) * 40;
     /* Sooner free-slot (starter tips sooner) wins ties — use the night now. */
     score += Math.max(0, 48 - (myTip - Date.now()) / 3600000);
@@ -2897,8 +3007,15 @@ function benchSwitchInOver(r, pack){
     if (theirInj === 'OUT' || theirInj === 'O' || theirInj === 'IR'){
       why = (theirInj === 'IR' ? 'IR' : 'OUT') + ' starter';
       score = 1000 + myMean;
-    } else if (myNext != null && theirNext != null && myNext < theirNext && !isBankableNow(o, pack)){
-      /* Free a non-lock night for an earlier tip — Avg can be lower. */
+    } else if (myNext != null && theirNext != null && !isBankableNow(o, pack)
+      && tipsWithinCloseWindow(myNext, theirNext) && isBetterStarter(r, o)){
+      /* Tips within 30m — better player starts (not strict tip order). */
+      const theirLbl = nextGamePhrase(o.scout, nowMs) || nextGameLabel(o.scout) || 'their tip';
+      why = 'better start · tips within 30m of ' + theirLbl;
+      score = 850 + (myMean - theirMean);
+    } else if (myNext != null && theirNext != null && myNext < theirNext - TIP_CLOSE_MS
+      && !isBankableNow(o, pack)){
+      /* Clearly earlier tip (>30m) — take the slot even with lower Avg. */
       const theirLbl = nextGamePhrase(o.scout, nowMs) || nextGameLabel(o.scout) || 'later tip';
       why = 'earlier tip before their ' + theirLbl;
       score = 800 + Math.max(0, (theirNext - myNext) / 3600000);
@@ -3075,6 +3192,9 @@ function buildRec(r, pack, opts){
       let why = over.why || ('better than ' + shortPlayerName(over.row.p));
       if (over.why && over.why.indexOf('earlier tip') === 0 && overTip){
         why = 'tips ' + overTip + ' before their ' + (theirTip || 'later tip');
+      } else if (over.why && over.why.indexOf('better start') === 0 && overTip){
+        why = 'better start · tips ' + overTip
+          + (theirTip ? (' within 30m of ' + theirTip) : ' within 30m');
       }
       return {
         action: 'switch',
@@ -3154,7 +3274,10 @@ function buildRec(r, pack, opts){
 
   /* ——— Starters ——— */
   if (injury === 'OUT' || injury === 'O' || injury === 'IR'){
-    const alt = betterSwitchTarget(r, pack, switchOpts);
+    /* Fill OUT/Sit slots first — don’t leave Marshall on BN while tip-ordering
+       him over Giannis. */
+    const alt = outFillSwitchTarget(r, pack, switchOpts)
+      || betterSwitchTarget(r, pack, switchOpts);
     const tag = injury === 'IR' ? 'IR' : 'OUT';
     if (alt && alt.row){
       const altTip = nextGamePhrase(alt.row.scout, nowMs);
@@ -3163,7 +3286,8 @@ function buildRec(r, pack, opts){
         label: switchOutLabel(alt),
         reason: tag + ' — use ' + shortPlayerName(alt.row.p)
           + (alt.into ? (' @ ' + alt.into) : '')
-          + (altTip ? (' · tips ' + altTip) : ''),
+          + (altTip ? (' · tips ' + altTip) : '')
+          + ' · fill Sit slot first',
         cls: 'rec-switch'
       }, alt, r);
     }
