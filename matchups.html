@@ -441,7 +441,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261113-tipkeep';
+    || '20261114-benchforfeit';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2598,11 +2598,35 @@ function switchExcludeSet(opts){
   return new Set([].concat(raw).map(String));
 }
 
-/* You can only lock a night from a starting slot before tip. If this starter
-   isn’t banking now, free the slot for a bench player who tips sooner — even
-   with a lower Avg. A non-locked score costs nothing to sit. */
+/* League lock rule: you may only lock a played night if that player never
+   went start → bench after that game. Benching forfeits that night’s lock;
+   restart them later to lock a different game. Never treat sitting as free. */
+function playedNightLockAtRisk(r){
+  if (!r || r.locked || isImmovable(r)) return false;
+  const scored = latestLockableFp(r);
+  return scored != null && Number.isFinite(Number(scored));
+}
+
+function forfeitLockPhrase(r){
+  if (!playedNightLockAtRisk(r)) return '';
+  const scored = latestLockableFp(r);
+  const next = nextGamePhrase(r.scout) || nextGameLabel(r.scout);
+  return ' · bench forfeits '
+    + formatFp(scored) + ' lock'
+    + (next ? (' · restart later (' + next + ') to lock another') : ' · restart later to lock another');
+}
+
+function stayStartLockPhrase(r){
+  if (!playedNightLockAtRisk(r)) return '';
+  return ' · stay start — benching forfeits this night\'s lock';
+}
+
+/* Tip-order: if this starter isn’t banking now, free the slot for a bench
+   player who tips sooner. Benching forfeits any played night still unlockable;
+   they must be restarted to lock a later game. */
 function tipOrderSwitchTarget(r, pack, opts){
   if (isImmovable(r) || isBenchRow(r)) return null;
+  /* Still bankable in a start slot — never bench (would forfeit the lock). */
   if (isBankableNow(r, pack)) return null;
   const myNext = nextTipMs(r.scout);
   if (myNext == null) return null;
@@ -2783,12 +2807,14 @@ function syncBenchSwitchIns(pack, benchTaken, starterKeep){
       ? String(owner.slotLabel).toUpperCase()
       : (owner.rec && owner.rec.switchInto) || null;
     const over = {row: owner, into: into, why: 'paired Switch', score: 1};
+    const ownerForfeit = forfeitLockPhrase(owner);
     b.rec = {
       action: 'switch',
       label: switchInLabel(over),
       reason: 'start @ ' + (into || 'slot') + ' for '
         + (nextGamePhrase(b.scout) || nextGameLabel(b.scout) || 'earlier tip')
-        + ' · over ' + shortPlayerName(owner.p),
+        + ' · over ' + shortPlayerName(owner.p)
+        + ownerForfeit,
       cls: 'rec-switch',
       switchPid: String(owner.pid),
       switchInto: into,
@@ -3157,8 +3183,9 @@ function buildRec(r, pack, opts){
         action: 'switch',
         label: switchOutLabel(tipAltFloor),
         reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)
-          + ' · free slot until ' + holdUntil
-          + ' · start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first',
+          + ' · start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first'
+          + ' · slot back by ' + holdUntil
+          + forfeitLockPhrase(r),
         cls: 'rec-switch'
       }, tipAltFloor, r);
     }
@@ -3167,7 +3194,8 @@ function buildRec(r, pack, opts){
         action: 'wait',
         label: 'Wait',
         reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)
-          + (nextPhrase ? (' · next ' + nextPhrase) : (' · ' + gamesLeft + ' left')),
+          + (nextPhrase ? (' · next ' + nextPhrase) : (' · ' + gamesLeft + ' left'))
+          + stayStartLockPhrase(r),
         cls: 'rec-wait'
       };
     }
@@ -3206,9 +3234,8 @@ function buildRec(r, pack, opts){
     };
   }
 
-  /* Not locking this night → don’t park the slot until their next tip.
-     Start whoever tips sooner (even lower Avg); you lose nothing if the
-     current score isn’t being banked. */
+  /* Not locking this night → tip-order may free the slot for an earlier tip.
+     Benching forfeits any played night’s lock; restart later to lock another. */
   const tipAlt = tipOrderSwitchTarget(r, pack, switchOpts);
   if (tipAlt && tipAlt.row){
     const inName = shortPlayerName(tipAlt.row.p);
@@ -3216,12 +3243,13 @@ function buildRec(r, pack, opts){
     const holdUntil = nextPhrase || nextLbl || 'later';
     const bits = [];
     if (scored != null && bank != null) bits.push(formatFp(scored) + ' < Bank ' + bank);
-    bits.push('free slot until ' + holdUntil);
     bits.push('start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first');
+    bits.push('slot back by ' + holdUntil);
+    const forfeit = forfeitLockPhrase(r);
     return attachSwitchMeta({
       action: 'switch',
       label: switchOutLabel(tipAlt),
-      reason: bits.join(' · '),
+      reason: bits.join(' · ') + forfeit,
       cls: 'rec-switch'
     }, tipAlt, r);
   }
@@ -3240,7 +3268,8 @@ function buildRec(r, pack, opts){
         reason: formatFp(scored) + ' < Bank ' + bank
           + (alt.into ? (' · ' + alt.into + '-eligible') : '')
           + (altTip ? (' · ' + shortPlayerName(alt.row.p) + ' ' + altTip) : '')
-          + ' · after tip window',
+          + ' · after tip window'
+          + forfeitLockPhrase(r),
         cls: 'rec-switch'
       }, alt, r);
     }
@@ -3256,6 +3285,7 @@ function buildRec(r, pack, opts){
         label: 'Wait',
         reason: formatFp(scored) + ' < ' + bank
           + (nextPhrase ? (' · next ' + nextPhrase) : (' · ' + gamesLeft + ' left'))
+          + stayStartLockPhrase(r)
           + laterBit,
         cls: 'rec-wait'
       };
