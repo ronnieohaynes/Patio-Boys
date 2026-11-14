@@ -441,7 +441,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261114-benchforfeit';
+    || '20261114-tipclose';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2378,7 +2378,32 @@ function dowBankHint(nowMs){
   return floorBit;
 }
 
-/* Next tip timestamp for tip-order lineup (earlier tip wins the start slot). */
+/* Tips within this window → start the better player (Avg), not strict tip order. */
+const TIP_CLOSE_MS = 30 * 60 * 1000;
+
+function tipsWithinCloseWindow(aMs, bMs){
+  if (aMs == null || bMs == null) return false;
+  const a = Number(aMs);
+  const b = Number(bMs);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return Math.abs(a - b) <= TIP_CLOSE_MS;
+}
+
+/* “Better” for close tip-times: higher Avg (then lockable FP as tie-break). */
+function playerStartQuality(r){
+  if (!r) return -Infinity;
+  const mean = r.dist && Number(r.dist.mean);
+  const scored = latestLockableFp(r);
+  const meanN = Number.isFinite(mean) ? mean : 0;
+  const scoredN = scored != null && Number.isFinite(Number(scored)) ? Number(scored) : 0;
+  return meanN * 1000 + scoredN;
+}
+
+function isBetterStarter(a, b){
+  return playerStartQuality(a) > playerStartQuality(b) + 1e-9;
+}
+
+/* Next tip timestamp for tip-order lineup (earlier tip wins when >30m apart). */
 function nextTipMs(scout){
   function fromTip(tipIso, ymd){
     if (tipIso){
@@ -2622,8 +2647,8 @@ function stayStartLockPhrase(r){
 }
 
 /* Tip-order: if this starter isn’t banking now, free the slot for a bench
-   player who tips sooner. Benching forfeits any played night still unlockable;
-   they must be restarted to lock a later game. */
+   player who tips clearly sooner (>30m). Tips within 30m → better player
+   starts (higher Avg). Benching forfeits any played night still unlockable. */
 function tipOrderSwitchTarget(r, pack, opts){
   if (isImmovable(r) || isBenchRow(r)) return null;
   /* Still bankable in a start slot — never bench (would forfeit the lock). */
@@ -2633,29 +2658,47 @@ function tipOrderSwitchTarget(r, pack, opts){
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null;
   const excluded = switchExcludeSet(opts);
-  const cands = (pack.rows || []).filter(o => {
-    if (!o || o.pid === r.pid || isImmovable(o)) return false;
-    if (excluded && excluded.has(String(o.pid))) return false;
-    if (!isBenchRow(o)) return false;
+  const cands = [];
+  (pack.rows || []).forEach(o => {
+    if (!o || o.pid === r.pid || isImmovable(o)) return;
+    if (excluded && excluded.has(String(o.pid))) return;
+    if (!isBenchRow(o)) return;
     const inj = o.scout && o.scout.injury;
-    if (inj === 'OUT' || inj === 'O' || inj === 'IR') return false;
-    if (!fitsLockSlot(o.p, slotLabel)) return false;
+    if (inj === 'OUT' || inj === 'O' || inj === 'IR') return;
+    if (!fitsLockSlot(o.p, slotLabel)) return;
     const theirNext = nextTipMs(o.scout);
-    if (theirNext == null) return false;
-    return theirNext < myNext;
-  }).sort((a, b) => {
-    const ta = nextTipMs(a.scout) || 0;
-    const tb = nextTipMs(b.scout) || 0;
-    if (ta !== tb) return ta - tb;
-    return (Number(b.dist && b.dist.mean) || 0) - (Number(a.dist && a.dist.mean) || 0);
+    if (theirNext == null) return;
+    const close = tipsWithinCloseWindow(myNext, theirNext);
+    const clearlyEarlier = theirNext < myNext - TIP_CLOSE_MS;
+    if (close){
+      /* Within 30m — only Switch if bench is the better start. */
+      if (!isBetterStarter(o, r)) return;
+      cands.push({row: o, kind: 'close', tip: theirNext});
+      return;
+    }
+    if (clearlyEarlier){
+      cands.push({row: o, kind: 'tip', tip: theirNext});
+    }
+  });
+  cands.sort((a, b) => {
+    /* Prefer close-window upgrades, then earliest tip, then quality. */
+    if (a.kind !== b.kind) return a.kind === 'close' ? -1 : 1;
+    if (a.kind === 'close'){
+      return playerStartQuality(b.row) - playerStartQuality(a.row);
+    }
+    if (a.tip !== b.tip) return a.tip - b.tip;
+    return playerStartQuality(b.row) - playerStartQuality(a.row);
   });
   const best = cands[0] || null;
   if (!best) return null;
+  const hold = nextGamePhrase(r.scout) || nextGameLabel(r.scout) || 'next tip';
   return {
-    row: best,
+    row: best.row,
     into: slotLabel,
-    why: 'tip order · start before ' + (nextGamePhrase(r.scout) || nextGameLabel(r.scout) || 'next tip'),
-    kind: 'tip'
+    why: best.kind === 'close'
+      ? ('better start · tips within 30m of ' + hold)
+      : ('tip order · start before ' + hold),
+    kind: best.kind === 'close' ? 'close' : 'tip'
   };
 }
 
@@ -2701,11 +2744,14 @@ function switchClaimScore(starter, alt){
   if (!starter || !alt || !alt.row) return -Infinity;
   let score = 0;
   if (alt.into && !isUtilSlotLabel(alt.into)) score += 10000;
-  if (alt.kind === 'tip') score += 5000;
+  if (alt.kind === 'close') score += 5500;
+  else if (alt.kind === 'tip') score += 5000;
   else if (alt.kind === 'avg') score += 2000;
   const myTip = nextTipMs(starter.scout);
   const theirTip = nextTipMs(alt.row.scout);
-  if (myTip != null && theirTip != null && myTip > theirTip){
+  if (myTip != null && theirTip != null && tipsWithinCloseWindow(myTip, theirTip)){
+    score += Math.max(0, playerStartQuality(alt.row) - playerStartQuality(starter));
+  } else if (myTip != null && theirTip != null && myTip > theirTip){
     score += Math.min(72, (myTip - theirTip) / 3600000) * 40;
     /* Sooner free-slot (starter tips sooner) wins ties — use the night now. */
     score += Math.max(0, 48 - (myTip - Date.now()) / 3600000);
@@ -2897,8 +2943,15 @@ function benchSwitchInOver(r, pack){
     if (theirInj === 'OUT' || theirInj === 'O' || theirInj === 'IR'){
       why = (theirInj === 'IR' ? 'IR' : 'OUT') + ' starter';
       score = 1000 + myMean;
-    } else if (myNext != null && theirNext != null && myNext < theirNext && !isBankableNow(o, pack)){
-      /* Free a non-lock night for an earlier tip — Avg can be lower. */
+    } else if (myNext != null && theirNext != null && !isBankableNow(o, pack)
+      && tipsWithinCloseWindow(myNext, theirNext) && isBetterStarter(r, o)){
+      /* Tips within 30m — better player starts (not strict tip order). */
+      const theirLbl = nextGamePhrase(o.scout, nowMs) || nextGameLabel(o.scout) || 'their tip';
+      why = 'better start · tips within 30m of ' + theirLbl;
+      score = 850 + (myMean - theirMean);
+    } else if (myNext != null && theirNext != null && myNext < theirNext - TIP_CLOSE_MS
+      && !isBankableNow(o, pack)){
+      /* Clearly earlier tip (>30m) — take the slot even with lower Avg. */
       const theirLbl = nextGamePhrase(o.scout, nowMs) || nextGameLabel(o.scout) || 'later tip';
       why = 'earlier tip before their ' + theirLbl;
       score = 800 + Math.max(0, (theirNext - myNext) / 3600000);
@@ -3075,6 +3128,9 @@ function buildRec(r, pack, opts){
       let why = over.why || ('better than ' + shortPlayerName(over.row.p));
       if (over.why && over.why.indexOf('earlier tip') === 0 && overTip){
         why = 'tips ' + overTip + ' before their ' + (theirTip || 'later tip');
+      } else if (over.why && over.why.indexOf('better start') === 0 && overTip){
+        why = 'better start · tips ' + overTip
+          + (theirTip ? (' within 30m of ' + theirTip) : ' within 30m');
       }
       return {
         action: 'switch',
