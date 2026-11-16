@@ -2448,19 +2448,23 @@
   }
 
   /* Fetch one season's smash dist map (season totals + game samples).
-     Prefers ESPN box-score snapshot; falls back to Sleeper weekly rows. */
-  async function loadSeasonDistMap(statsSeason, scoring, fetchImpl, marks){
+     Prefers ESPN box-score snapshot; falls back to Sleeper weekly rows.
+     opts.lastN overrides the default LAST_N_GAMES window (FA uses 5). */
+  async function loadSeasonDistMap(statsSeason, scoring, fetchImpl, marks, opts){
     const fetchFn = fetchImpl || (typeof fetch === 'function' ? fetch : null);
     if (!statsSeason) throw new Error('statsSeason required');
     if (!fetchFn) throw new Error('fetch unavailable');
     const useMarks = marks && marks.length ? marks : DEFAULT_MARKS;
     const scoreSettings = scoring || {};
+    const lastN = opts && opts.lastN != null && Number(opts.lastN) > 0
+      ? Math.floor(Number(opts.lastN))
+      : LAST_N_GAMES;
 
     try { await ensureGamelogsLoaded(); }
     catch (e) { /* fall back to Sleeper weekly samples */ }
 
     await yieldToMain();
-    const boxPack = await buildSamplesFromGamelogsAsync(String(statsSeason), scoreSettings);
+    const boxPack = await buildSamplesFromGamelogsAsync(String(statsSeason), scoreSettings, {lastN});
     await yieldToMain();
     const usingBox = !!(boxPack && boxPack.samplesByPlayer
       && Object.keys(boxPack.samplesByPlayer).length);
@@ -2492,7 +2496,7 @@
       const rawWeekly = buildSamplesByPlayer(weeklyResults, scoreSettings);
       samplesByPlayer = {};
       Object.keys(rawWeekly || {}).forEach(pid => {
-        samplesByPlayer[pid] = takeLastN(rawWeekly[pid], LAST_N_GAMES);
+        samplesByPlayer[pid] = takeLastN(rawWeekly[pid], lastN);
       });
       sampleSource = 'weekly';
     }
@@ -2503,7 +2507,7 @@
     const distPids = Object.keys(distMap);
     for (let i = 0; i < distPids.length; i++){
       const pid = distPids[i];
-      distMap[pid].sampleWindow = LAST_N_GAMES;
+      distMap[pid].sampleWindow = lastN;
       distMap[pid].sampleSource = sampleSource;
       distMap[pid].seasonAvg = distMap[pid].mean;
       distMap[pid].seasonGp = distMap[pid].n;
@@ -2526,7 +2530,7 @@
       weeksFound,
       sampleSource,
       gamesFound: weeksFound,
-      lastN: LAST_N_GAMES,
+      lastN: lastN,
       seasonAvgCount: distPids.length
     };
   }
@@ -2631,14 +2635,18 @@
       ? String(priorSeasonNum)
       : null;
     const skipPrior = options.skipPriorSeason === true || !priorSeason;
+    const lastN = options.lastN != null && Number(options.lastN) > 0
+      ? Math.floor(Number(options.lastN))
+      : LAST_N_GAMES;
+    const seasonOpts = {lastN};
 
     /* Sequential seasons (not Promise.all) so yields between them keep HQ clickable. */
     return withHeavyLock(async function(){
-      const primary = await loadSeasonDistMap(statsSeason, scoring, fetchImpl);
+      const primary = await loadSeasonDistMap(statsSeason, scoring, fetchImpl, null, seasonOpts);
       await yieldToMain();
       const priorPack = skipPrior
         ? null
-        : await loadSeasonDistMap(priorSeason, scoring, fetchImpl).catch(() => null);
+        : await loadSeasonDistMap(priorSeason, scoring, fetchImpl, null, seasonOpts).catch(() => null);
       await yieldToMain();
 
       const distMap = primary.distMap;
@@ -2689,6 +2697,7 @@
         weeksFound: primary.weeksFound,
         priorWeeksFound: priorPack ? priorPack.weeksFound : 0,
         sampleSource: primary.sampleSource || 'weekly',
+        lastN: lastN,
         scored,
         seasonAvgCount: primary.seasonAvgCount,
         rookieSeeded: [...rookieIds].filter(id => distMap[id] && distMap[id].projOnly).length

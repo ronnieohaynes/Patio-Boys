@@ -248,7 +248,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261001-bench10';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261116-falock5';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -329,6 +329,8 @@ const SORT_KEY_TO_SELECT = {
   age: 'age'
 };
 
+/* FA Lock uses a short window — role players' minutes swing fast. */
+const FA_LOCK_LAST_N = 5;
 const ADD_GAIN = 0.5;
 const ADD_PROJ_EDGE = 0.5;
 const FA_FPM_ELITE = (window.LockInDist && LockInDist.FPM_ELITE) || 1.00;
@@ -546,6 +548,7 @@ function makeRecord(pid, playerDb, projById, lockDist, effectiveOrders){
       ? LockInDist.readFpPerMin(lock)
       : (lock && lock.avgFpPerMin != null ? Number(lock.avgFpPerMin) : null),
     sampleN: lock && lock.n != null ? lock.n : null,
+    sampleWindow: lock && lock.sampleWindow != null ? Number(lock.sampleWindow) : FA_LOCK_LAST_N,
     role
   };
 }
@@ -561,6 +564,8 @@ function tradeStarsHtml(n){
 function lockCellHtml(a){
   if (a.lockOvr == null) return '<td class="num lock">—</td>';
   const bits = ['Lock OVR ' + a.lockOvr];
+  const win = a.sampleWindow != null ? Number(a.sampleWindow) : FA_LOCK_LAST_N;
+  if (Number.isFinite(win) && win > 0) bits.push('last ' + win + ' games');
   if (a.lockTier) bits.push(a.lockTier);
   if (a.lockOvrUnsignedFloor) bits.push('unsigned floor — no NBA team to lock');
   if (a.situationNote) bits.push(a.situationNote);
@@ -927,7 +932,7 @@ function render(){
   const color = TEAM_COLORS[team.team] || 'var(--gold)';
   document.getElementById('teamTitle').textContent = team.team + (team.team === MY_TEAM ? ' (you)' : '');
   document.getElementById('teamSub').textContent =
-    'Top 3 by Lock · who to drop · depth-chart fit';
+    'Top 3 by Lock (last ' + FA_LOCK_LAST_N + ' games) · who to drop · depth-chart fit';
 
   document.querySelectorAll('.team-chip').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.team === team.team);
@@ -1115,10 +1120,13 @@ async function load(){
           playerDb,
           projById,
           playerIds: prelimAgents.concat(rosterIds),
-          twoKSnapshot: TWO_K
+          twoKSnapshot: TWO_K,
+          /* Role-player FA form — shorter window than roster Lock (25). */
+          lastN: FA_LOCK_LAST_N
         });
         lockDist = lockPack.distMap || {};
         state.lockStatsSeason = lockPack.statsSeason;
+        state.lockLastN = lockPack.lastN != null ? lockPack.lastN : FA_LOCK_LAST_N;
       } catch (le){
         status.textContent = 'Lock values unavailable (' + (le.message || le) + '); showing proj / 2K only.';
       }
@@ -1236,7 +1244,8 @@ async function load(){
     status.textContent = 'Add / pass with taxi stash (players with <'
       + ((state.taxiYears != null ? state.taxiYears : 2) + 1)
       + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots) or Lock-ranked drop target (off depth chart). '
-      + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR / Trade \u2605'
+      + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR (last '
+      + (state.lockLastN || FA_LOCK_LAST_N) + ' games) / Trade \u2605'
       + (state.lockStatsSeason ? ' (' + state.lockStatsSeason + ' smash)' : '')
       + '.';
     render();
