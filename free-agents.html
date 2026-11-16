@@ -231,7 +231,6 @@
           <tr>
             <th>#</th>
             <th data-sort="name" data-label="Player">Player</th>
-            <th data-sort="metric" data-label="Proj">Proj</th>
             <th data-sort="lockOvr" data-label="Lock">Lock</th>
             <th data-sort="tradeScore" data-label="Trade ★">Trade ★</th>
             <th class="role hide-sm" data-sort="role" data-label="Role">Role</th>
@@ -248,7 +247,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261001-bench10';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261116-noproj';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -985,7 +984,6 @@ function render(){
       + '<span class="sub">' + escapeHtml(a.pos) + ' \u00b7 ' + escapeHtml(a.nbaTeam || 'FA')
       + (a.injuryStatus ? ' \u00b7 ' + escapeHtml(a.injuryStatus) : '')
       + '</span></td>'
-      + '<td class="num">' + (a.metric != null ? a.metric.toFixed(1) : '\u2014') + '</td>'
       + lockCellHtml(a)
       + '<td class="trade">' + tradeStarsHtml(a.tradeStars) + '</td>'
       + '<td class="role hide-sm">' + escapeHtml(a.role || '—') + '</td>'
