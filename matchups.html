@@ -4466,7 +4466,13 @@ function buildWeekLockPlan(pack, opts){
     const name = shortPlayerName(r.p) || playerName(r.p);
     const mode = packWeekPlanMode(pack);
     const rowNeed = packRecNeedPer(pack);
-    const ready = meetsBank(scored, bank, style, r.dist, null, mode, rowNeed);
+    const openSlots = openLockSlots(pack);
+    const planSlot = lockSlotForPlayer(r, openSlots, pack);
+    const bankReady = meetsBank(scored, bank, style, r.dist, null, mode, rowNeed);
+    const leftReady = !bankReady && planSlot
+      ? isBestLeftLock(r, pack, planSlot, scored, gamesLeft)
+      : false;
+    const ready = bankReady || leftReady;
 
     if (ready && scored != null){
       cands.push({
@@ -4477,7 +4483,10 @@ function buildWeekLockPlan(pack, opts){
         bank,
         tip,
         gamesLeft,
-        why: bankMeetPhrase(scored, bank, style, r.dist, null, mode, rowNeed) || ('scored ' + formatFp(scored))
+        why: (bankReady
+          ? bankMeetPhrase(scored, bank, style, r.dist, null, mode, rowNeed)
+          : bestLeftLockPhrase(r, pack, planSlot, scored))
+          || ('scored ' + formatFp(scored))
       });
       return;
     }
