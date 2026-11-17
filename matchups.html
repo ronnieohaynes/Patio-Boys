@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261116-grpmed';
+    || '20261116-grpavg';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -832,8 +832,9 @@ function medianOf(nums){
   return (a[mid - 1] + a[mid]) / 2;
 }
 
-/* Season locked-FP median by group (Guards / Forwards / Center / Utility).
-   Groups absorb SF↔F↔PF and PG↔SG↔G movement; median resists one-off spikes. */
+/* Season locked-FP average by group (Guards / Forwards / Center / Utility).
+   Groups absorb SF↔F↔PF and PG↔SG↔G movement. Mean (not median) — with
+   2 star forward locks most weeks, median sat too high as a pace bar. */
 function seasonLockAvgByGroup(){
   const samples = collectSeasonLockSamples();
   const by = {};
@@ -855,26 +856,28 @@ function seasonLockAvgByGroup(){
         slots: g.slots.slice(),
         avg: null,
         median: null,
+        mean: null,
         n: 0,
         sum: 0
       };
     }
+    const mean = b.sum / b.n;
     const med = medianOf(b.pts);
     return {
       key: g.key,
       label: g.label,
       badge: g.badge,
       slots: g.slots.slice(),
-      avg: med,
+      avg: mean,
+      mean: mean,
       median: med,
-      mean: b.sum / b.n,
       n: b.n,
       sum: b.sum
     };
   });
 }
 
-/* Per-slot view for pacing: each concrete slot inherits its group's median. */
+/* Per-slot view for pacing: each concrete slot inherits its group's average. */
 function seasonLockAvgBySlot(){
   const groups = seasonLockAvgByGroup();
   const byKey = {};
@@ -884,7 +887,7 @@ function seasonLockAvgBySlot(){
     if (!g || !g.n) return {label: label, avg: null, median: null, n: 0, sum: 0, group: g || null};
     return {
       label: label,
-      avg: g.median,
+      avg: g.avg,
       median: g.median,
       mean: g.mean,
       n: g.n,
@@ -2759,7 +2762,7 @@ function packRecNeedPerFlat(pack){
 
 function seasonSlotAvgMap(){
   const map = {};
-  /* Every concrete slot (PG, SF, …) inherits its group median. */
+  /* Every concrete slot (PG, SF, …) inherits its group average. */
   seasonLockAvgBySlot().forEach(row => {
     if (!row || !row.label) return;
     if (row.n > 0 && row.avg != null && Number.isFinite(Number(row.avg)) && Number(row.avg) > 0){
@@ -2770,7 +2773,7 @@ function seasonSlotAvgMap(){
 }
 
 /* Weight for allocating remaining plan need across open slots.
-   Prefer group lock median (Guards/Forwards/Center/UTIL); else occupant Avg. */
+   Prefer group lock average (Guards/Forwards/Center/UTIL); else occupant Avg. */
 function slotPlanWeight(slotLabel, pack, flatNeed){
   const lab = String(slotLabel || '').toUpperCase();
   const avgs = seasonSlotAvgMap();
@@ -2787,7 +2790,7 @@ function slotPlanWeight(slotLabel, pack, flatNeed){
 
 /* Split remaining need across open starting slots so the TEAM averages
    needPer, while forward/guard groups carry more than UTIL.
-   Slot weights use group lock medians (outlier-resistant). */
+   Slot weights use group lock averages. */
 function buildPlanNeedShares(pack, needPer, needTotal, slotsLeft){
   const flat = needPer != null ? Number(needPer) : NaN;
   const total = needTotal != null ? Number(needTotal) : NaN;
@@ -4836,11 +4839,11 @@ function renderWeekPlan(focusSide, focusPack, plan){
     slotAvgsEl.hidden = false;
     if (!totalN){
       slotAvgsEl.innerHTML =
-        '<p class="slot-avgs-head">Season lock median by group</p>'
-        + '<p class="slot-avgs-empty">Confirm locks through the season — Guards / Forwards / Center / Utility medians build from banked nights.</p>';
+        '<p class="slot-avgs-head">Season lock avg by group</p>'
+        + '<p class="slot-avgs-empty">Confirm locks through the season — Guards / Forwards / Center / Utility averages build from banked nights.</p>';
     } else {
       slotAvgsEl.innerHTML =
-        '<p class="slot-avgs-head">Season lock median by group · ' + totalN + ' night'
+        '<p class="slot-avgs-head">Season lock avg by group · ' + totalN + ' night'
         + (totalN === 1 ? '' : 's')
         + (showPace
           ? (' · chase Banks pace to avg '
@@ -4851,8 +4854,8 @@ function renderWeekPlan(focusSide, focusPack, plan){
         + '<div class="slot-avg-row">'
         + rows.map(r => {
           const cls = r.badge || 'bn';
-          const med = r.median != null ? r.median : r.avg;
-          const avgTxt = r.n > 0 ? formatFp(med) : '—';
+          const avgVal = r.avg != null ? r.avg : r.mean;
+          const avgTxt = r.n > 0 ? formatFp(avgVal) : '—';
           let pace = null;
           if (showPace && sharePack.byLabel && r.slots && r.slots.length){
             const paceVals = r.slots
@@ -4870,8 +4873,8 @@ function renderWeekPlan(focusSide, focusPack, plan){
           const slotBit = (r.slots && r.slots.length) ? r.slots.join('/') : r.key;
           return '<div class="slot-avg" title="'
             + escapeHtml(r.label + ' (' + slotBit + ')' + (r.n > 0
-              ? (' · median ' + formatFp(med) + ' over ' + r.n + ' locked night' + (r.n === 1 ? '' : 's')
-                + (r.mean != null ? (' · mean ' + formatFp(r.mean)) : ''))
+              ? (' · avg ' + formatFp(avgVal) + ' over ' + r.n + ' locked night' + (r.n === 1 ? '' : 's')
+                + (r.median != null ? (' · median ' + formatFp(r.median)) : ''))
               : ' · no locked nights yet')
               + (pace != null ? (' · chase Bank pace ' + formatFp(pace)) : ''))
             + '">'
@@ -5077,8 +5080,8 @@ function render(){
     + ' FP or on a season/sample-best night (Bank won’t hunt above that high), fringe/stream need exact unless chasing. '
     + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — never Lock below that day’s number. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
-    + 'Season lock median by group (Guards / Forwards / Center / Utility) rolls banked nights — groups absorb SF↔F↔PF movement; median resists outliers. '
-    + 'Avg need/lock is the TEAM pace — chase/climb Banks follow each group’s median share (forwards/guards higher, UTIL lower), not a flat bar on every player. '
+    + 'Season lock avg by group (Guards / Forwards / Center / Utility) rolls banked nights — groups absorb SF↔F↔PF movement. '
+    + 'Avg need/lock is the TEAM pace — chase/climb Banks follow each group’s average share (forwards/guards higher, UTIL lower), not a flat bar on every player. '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
     + 'Only starting-slot nights can lock — BN / IR / TX never bank (Start then Lock). '
