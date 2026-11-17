@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261117-bestleft';
+    || '20261117-bestleft2';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2346,19 +2346,20 @@ function bestRivalLockFp(pack, slotLabel, excludePid){
 }
 
 /* Good-not-great night that still deserves Lock: clears DOW floor and beats
-   (or ties) every other realistic fill for this slot — early-week Bey 37 at F
-   when nobody else is likely to top it. Stars with games left still wait on
-   their own Bank/Avg rather than banking a mediocre night as “best left.” */
+   (or ties) every other realistic fill for this slot — e.g. role-player 37 at F
+   when nobody else is likely to top it. Stars/starters with games left always
+   wait for their own Bank (PG 34 / Tatum 39 with 3 left must not best-left). */
 function isBestLeftLock(r, pack, slot, scored, gamesLeft){
   const s = scored != null ? Number(scored) : NaN;
   if (!r || !pack || !slot || !Number.isFinite(s)) return false;
   if (!clearsAbsoluteMinLock(s)) return false;
   const left = gamesLeft != null ? Number(gamesLeft) : 0;
   const mean = r.dist && r.dist.mean != null ? Number(r.dist.mean) : NaN;
-  const rawBank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : NaN;
-  /* Own upside still available — don’t crown a soft star/starter night. */
-  if (left > 0 && Number.isFinite(mean) && s + 1e-9 < mean - 4) return false;
-  if (left > 0 && Number.isFinite(rawBank) && s + 1e-9 < rawBank - 6) return false;
+  const style = r.bank && r.bank.style;
+  /* Paul / Tatum / Giannis-tier with more games — only meetsBank may Lock. */
+  if (left > 0 && isStarBankStyle(style)) return false;
+  /* Role players: night must already be a plus for THEM before beating rivals. */
+  if (left > 0 && Number.isFinite(mean) && s + 1e-9 < mean) return false;
   const lab = String(slot.label || '').toUpperCase();
   const rival = bestRivalLockFp(pack, lab, r.pid);
   if (rival == null) return true;
@@ -4923,7 +4924,7 @@ function render(){
     + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — never Lock below that day’s number. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Season lock avg by group (Guards / Forwards / Center / Utility) is display-only context — Rec does not chase those numbers. '
-    + 'Rec also Locks a good-not-great night when it’s the best remaining fill for that slot (rivals’ scored nights / Avgs aren’t likely to beat it) — stars with games left still wait on their own Bank. '
+    + 'Rec also Locks a good-not-great role-player night when it’s the best remaining fill for that slot — stars/starters with games left never best-left (they wait on Bank). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
     + 'Only starting-slot nights can lock — BN / IR / TX never bank (Start then Lock). '
