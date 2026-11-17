@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261116-grpavg';
+    || '20261116-grpshow';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -654,20 +654,8 @@ function clearLockMarks(){
   syncSeasonLockBookFromWeekly();
 }
 
-/* Unique starter position labels in lineup order (UTIL once, not ×3). */
-function starterSlotPositions(){
-  const seen = new Set();
-  const out = [];
-  lockSlotLabels().forEach(lab => {
-    const u = String(lab || '').toUpperCase();
-    if (!u || u === 'BN' || u === 'IR' || u === 'TAXI' || seen.has(u)) return;
-    seen.add(u);
-    out.push(u);
-  });
-  return out.length ? out : ['PG', 'SG', 'G', 'SF', 'PF', 'F', 'C', 'UTIL'];
-}
-
-/* Broader lock groups — players bounce across PG/SG/G and SF/PF/F. */
+/* Broader lock groups — players bounce across PG/SG/G and SF/PF/F.
+   Display-only season avgs; Rec does not chase these numbers. */
 const LOCK_SLOT_GROUPS = [
   {key: 'G', label: 'Guards', slots: ['PG', 'SG', 'G'], badge: 'g'},
   {key: 'F', label: 'Forwards', slots: ['SF', 'PF', 'F'], badge: 'f'},
@@ -682,14 +670,6 @@ function lockSlotGroupKey(slotLabel){
   if (lab === 'C') return 'C';
   if (lab === 'UTIL') return 'UTIL';
   return null;
-}
-
-function lockSlotGroupMeta(slotLabelOrKey){
-  const key = lockSlotGroupKey(slotLabelOrKey)
-    || (LOCK_SLOT_GROUPS.some(g => g.key === String(slotLabelOrKey || '').toUpperCase())
-      ? String(slotLabelOrKey).toUpperCase()
-      : null);
-  return LOCK_SLOT_GROUPS.find(g => g.key === key) || null;
 }
 
 function normalizeLockSlotLabel(mark){
@@ -873,26 +853,6 @@ function seasonLockAvgByGroup(){
       median: med,
       n: b.n,
       sum: b.sum
-    };
-  });
-}
-
-/* Per-slot view for pacing: each concrete slot inherits its group's average. */
-function seasonLockAvgBySlot(){
-  const groups = seasonLockAvgByGroup();
-  const byKey = {};
-  groups.forEach(g => { byKey[g.key] = g; });
-  return starterSlotPositions().map(label => {
-    const g = byKey[lockSlotGroupKey(label)];
-    if (!g || !g.n) return {label: label, avg: null, median: null, n: 0, sum: 0, group: g || null};
-    return {
-      label: label,
-      avg: g.avg,
-      median: g.median,
-      mean: g.mean,
-      n: g.n,
-      sum: g.sum,
-      group: g
     };
   });
 }
@@ -2745,8 +2705,8 @@ function packWeekPlanMode(pack){
 }
 
 /* Flat avg need/lock from the active plan mode (beat target or weekly 400).
-   Team still paces to this average — individual slots are NOT all held to it. */
-function packRecNeedPerFlat(pack){
+   Group season avgs are display-only — Rec does not chase those numbers. */
+function packRecNeedPer(pack){
   const mode = packWeekPlanMode(pack);
   if (!pack || !pack.opts) return null;
   if (mode === 'chase'){
@@ -2760,126 +2720,10 @@ function packRecNeedPerFlat(pack){
   return null;
 }
 
-function seasonSlotAvgMap(){
-  const map = {};
-  /* Every concrete slot (PG, SF, …) inherits its group average. */
-  seasonLockAvgBySlot().forEach(row => {
-    if (!row || !row.label) return;
-    if (row.n > 0 && row.avg != null && Number.isFinite(Number(row.avg)) && Number(row.avg) > 0){
-      map[String(row.label).toUpperCase()] = Number(row.avg);
-    }
-  });
-  return map;
-}
-
-/* Weight for allocating remaining plan need across open slots.
-   Prefer group lock average (Guards/Forwards/Center/UTIL); else occupant Avg. */
-function slotPlanWeight(slotLabel, pack, flatNeed){
-  const lab = String(slotLabel || '').toUpperCase();
-  const avgs = seasonSlotAvgMap();
-  if (avgs[lab] != null && avgs[lab] > 0) return avgs[lab];
-  const occ = (pack && pack.rows || []).find(r => {
-    if (!r || r.locked || isIrRow(r) || isTaxiRow(r)) return false;
-    return String(r.slotLabel || '').toUpperCase() === lab;
-  });
-  const mean = occ && occ.dist && Number(occ.dist.mean);
-  if (Number.isFinite(mean) && mean > 0) return mean;
-  const flat = flatNeed != null ? Number(flatNeed) : NaN;
-  return Number.isFinite(flat) && flat > 0 ? flat : 40;
-}
-
-/* Split remaining need across open starting slots so the TEAM averages
-   needPer, while forward/guard groups carry more than UTIL.
-   Slot weights use group lock averages. */
-function buildPlanNeedShares(pack, needPer, needTotal, slotsLeft){
-  const flat = needPer != null ? Number(needPer) : NaN;
-  const total = needTotal != null ? Number(needTotal) : NaN;
-  const left = slotsLeft != null ? Number(slotsLeft) : 0;
-  if (!(Number.isFinite(flat) && flat > 0) || !(left > 0)) return null;
-  const open = openLockSlots(pack);
-  const slots = open.length ? open : [];
-  /* If openLockSlots is empty but slotsLeft > 0 (edge), fall back to all starter labels. */
-  const use = slots.length
-    ? slots
-    : lockSlotLabels().map((lab, i) => ({index: i, label: lab}));
-  if (!use.length) return null;
-  const weights = use.map(s => ({
-    index: Number(s.index),
-    label: String(s.label || '').toUpperCase(),
-    weight: slotPlanWeight(s.label, pack, flat)
-  }));
-  const sumW = weights.reduce((s, x) => s + x.weight, 0);
-  if (!(sumW > 0)) return null;
-  const byIndex = {};
-  const byLabel = {};
-  weights.forEach(w => {
-    /* Scale so mean(share) == flat need/lock (sum of shares == needTotal when
-       open count matches slotsLeft; otherwise proportional to weights). */
-    const share = Number.isFinite(total) && total > 0 && weights.length === left
-      ? total * (w.weight / sumW)
-      : flat * (w.weight / (sumW / weights.length));
-    byIndex[w.index] = share;
-    if (!byLabel[w.label]) byLabel[w.label] = {sum: 0, n: 0};
-    byLabel[w.label].sum += share;
-    byLabel[w.label].n += 1;
-  });
-  const labelAvg = {};
-  Object.keys(byLabel).forEach(lab => {
-    labelAvg[lab] = byLabel[lab].sum / byLabel[lab].n;
-  });
-  return {
-    byIndex: byIndex,
-    byLabel: labelAvg,
-    needPer: flat,
-    scale: (sumW / weights.length) > 0 ? flat / (sumW / weights.length) : 1
-  };
-}
-
-function planNeedShareMaps(pack){
-  return pack && pack.opts && pack.opts.planNeedShares
-    ? pack.opts.planNeedShares
-    : null;
-}
-
-/* Per-lock FP pressure for THIS player/slot. Averages to the flat need/lock
-   across remaining slots — does not hold every player to that flat bar. */
-function packRecNeedPer(pack, row, slotHint){
-  const flat = packRecNeedPerFlat(pack);
-  if (flat == null) return null;
-  const mode = packWeekPlanMode(pack);
-  const shares = planNeedShareMaps(pack);
-  const map = shares
-    ? (mode === 'climb400' ? shares.weeklyByIndex : shares.beatByIndex)
-    : null;
-  let idx = null;
-  if (slotHint && slotHint.index != null && Number.isFinite(Number(slotHint.index))){
-    idx = Number(slotHint.index);
-  } else if (row && row.slot != null && row.slot !== 'BN' && Number.isFinite(Number(row.slot))){
-    idx = Number(row.slot);
-  }
-  if (map && idx != null && map[idx] != null && Number.isFinite(Number(map[idx]))
-    && Number(map[idx]) > 0){
-    return Number(map[idx]);
-  }
-  /* Bench / unknown slot: scale personal Avg so the roster still paces to flat. */
-  if (row && row.dist && Number(row.dist.mean) > 0){
-    const scale = shares && Number(shares.scale) > 0 ? Number(shares.scale) : 1;
-    return Number(row.dist.mean) * scale;
-  }
-  if (slotHint && slotHint.label){
-    const byLab = shares
-      ? (mode === 'climb400' ? shares.weeklyByLabel : shares.beatByLabel)
-      : null;
-    const lab = String(slotHint.label).toUpperCase();
-    if (byLab && byLab[lab] != null && Number(byLab[lab]) > 0) return Number(byLab[lab]);
-  }
-  return flat;
-}
-
-/* When chasing beat target / climbing 400, Bank ≥ = max(player bank, slot pace need). */
-function planRaisedBankMark(mark, pack, row, slotHint){
+/* When chasing beat target / climbing 400, Bank ≥ = max(player bank, flat plan need). */
+function planRaisedBankMark(mark, pack){
   const b = mark != null ? Number(mark) : NaN;
-  const need = packRecNeedPer(pack, row, slotHint);
+  const need = packRecNeedPer(pack);
   if (need != null && Number.isFinite(need) && need > 0){
     const raised = Math.ceil(need - 1e-9);
     if (Number.isFinite(b)) return Math.max(b, raised);
@@ -3010,7 +2854,7 @@ function isBankableNow(r, pack){
   const scored = latestLockableFp(r);
   const bank = r && r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   return meetsBank(scored, bank, r && r.bank && r.bank.style, r && r.dist,
-    null, packWeekPlanMode(pack), packRecNeedPer(pack, r));
+    null, packWeekPlanMode(pack), packRecNeedPer(pack));
 }
 
 function isBenchRow(r){
@@ -3373,7 +3217,7 @@ function starterTipOpportunityOpen(starter, nowMs, pack){
   /* Tip window closed with a miss — slot free for later higher-Avg benches. */
   if (scored != null && bank != null
     && !meetsBank(scored, bank, starter.bank && starter.bank.style, starter.dist,
-      null, packWeekPlanMode(pack), packRecNeedPer(pack, starter))) return false;
+      null, packWeekPlanMode(pack), packRecNeedPer(pack))) return false;
   return false;
 }
 
@@ -3513,9 +3357,9 @@ function buildRec(r, pack, opts){
   const open = openLockSlots(pack, switchOpts.excludeSlotIndexes);
   /* Scarce primary path first (best remaining C → C); UTIL last. */
   const slot = lockSlotForPlayer(r, open, pack);
-  /* Chase/climb raises Bank ≥ to THIS slot’s pace share (team still avgs need/lock). */
-  const weekNeed = packRecNeedPer(pack, r, slot);
-  const bank = planRaisedBankMark(rawBank, pack, r, slot);
+  /* Chase/climb raises Bank ≥ to flat plan need/lock (group avgs are display-only). */
+  const weekNeed = packRecNeedPer(pack);
+  const bank = planRaisedBankMark(rawBank, pack);
   const nextLbl = nextGameLabel(r.scout);
   const nextPhrase = nextGamePhrase(r.scout, nowMs);
   const dayHint = dowBankHint(nowMs);
@@ -4514,22 +4358,11 @@ function applyWeekPlanPriority(focusPack, oppPack, pair, focusSide, oppSide){
   focusPack.opts.weekPlanNeedPer = plan.needPer;
   focusPack.opts.weekPlanNeedPerWeekly = plan.needPerWeekly;
   focusPack.opts.weekPlanMode = weekPlanModeFrom(plan);
-  focusPack.opts.planNeedShares = {
-    beatByIndex: plan.needSharesBeat && plan.needSharesBeat.byIndex || null,
-    beatByLabel: plan.needSharesBeat && plan.needSharesBeat.byLabel || null,
-    weeklyByIndex: plan.needSharesWeekly && plan.needSharesWeekly.byIndex || null,
-    weeklyByLabel: plan.needSharesWeekly && plan.needSharesWeekly.byLabel || null,
-    scale: plan.needSharesBeat && plan.needSharesBeat.scale != null
-      ? plan.needSharesBeat.scale
-      : (plan.needSharesWeekly && plan.needSharesWeekly.scale != null
-        ? plan.needSharesWeekly.scale
-        : 1)
-  };
   /* Rebuild every unlocked player's Lock/Switch/Wait from the new plan target.
-     Stamp recMark so Bank ≥ in the UI matches the slot-paced chase/climb bar. */
+     Stamp recMark so Bank ≥ in the UI matches the flat chase/climb bar. */
   (focusPack.rows || []).forEach(r => {
     if (r && r.bank){
-      r.bank.recMark = planRaisedBankMark(r.bank.mark, focusPack, r);
+      r.bank.recMark = planRaisedBankMark(r.bank.mark, focusPack);
     }
     r.rec = buildRec(r, focusPack);
   });
@@ -4557,23 +4390,9 @@ function buildWeekLockPlan(pack, opts){
   const needPer = slotsLeft > 0 ? need / slotsLeft : 0;
   const needWeekly = Math.max(0, weeklyGoal - lockedSum);
   const needPerWeekly = slotsLeft > 0 ? needWeekly / slotsLeft : 0;
-  const needSharesBeat = buildPlanNeedShares(pack, needPer, need, slotsLeft);
-  const needSharesWeekly = buildPlanNeedShares(pack, needPerWeekly, needWeekly, slotsLeft);
-  /* Expose shares so packRecNeedPer can use slot pace during cand / Rec builds. */
   pack.opts = pack.opts || {};
   pack.opts.weekPlanNeedPer = needPer;
   pack.opts.weekPlanNeedPerWeekly = needPerWeekly;
-  pack.opts.planNeedShares = {
-    beatByIndex: needSharesBeat && needSharesBeat.byIndex || null,
-    beatByLabel: needSharesBeat && needSharesBeat.byLabel || null,
-    weeklyByIndex: needSharesWeekly && needSharesWeekly.byIndex || null,
-    weeklyByLabel: needSharesWeekly && needSharesWeekly.byLabel || null,
-    scale: needSharesBeat && needSharesBeat.scale != null
-      ? needSharesBeat.scale
-      : (needSharesWeekly && needSharesWeekly.scale != null
-        ? needSharesWeekly.scale
-        : 1)
-  };
 
   const lockedLines = (pack && pack.rows || [])
     .filter(r => r && r.locked && r.lockPts != null && Number.isFinite(Number(r.lockPts)))
@@ -4603,7 +4422,7 @@ function buildWeekLockPlan(pack, opts){
     const tip = nextGamePhrase(r.scout);
     const name = shortPlayerName(r.p) || playerName(r.p);
     const mode = packWeekPlanMode(pack);
-    const rowNeed = packRecNeedPer(pack, r);
+    const rowNeed = packRecNeedPer(pack);
     const ready = meetsBank(scored, bank, style, r.dist, null, mode, rowNeed);
 
     if (ready && scored != null){
@@ -4626,14 +4445,10 @@ function buildWeekLockPlan(pack, opts){
 
     let exp = null;
     let why = '';
-    const pacedBank = planRaisedBankMark(bank, pack, r);
+    const pacedBank = planRaisedBankMark(bank, pack);
     if (pacedBank != null && Number.isFinite(pacedBank)){
       exp = pacedBank;
       why = 'Bank ≥' + formatFp(pacedBank)
-        + (rowNeed != null && Number.isFinite(rowNeed)
-          && Math.ceil(rowNeed - 1e-9) + 1e-9 >= (bank != null ? Number(bank) : 0)
-          ? ' · slot pace'
-          : '')
         + (tip ? (' · ' + tip) : (' · ' + gamesLeft + ' left'));
     } else if (mean != null && Number.isFinite(mean) && mean > 0){
       exp = Math.round(mean);
@@ -4692,8 +4507,6 @@ function buildWeekLockPlan(pack, opts){
     needPer,
     needWeekly,
     needPerWeekly,
-    needSharesBeat,
-    needSharesWeekly,
     expectedAdd,
     projected,
     avgPlan,
@@ -4784,11 +4597,11 @@ function renderWeekPlan(focusSide, focusPack, plan){
         + '<span class="lbl">Nights locked</span></div>'
       + (built.slotsLeft > 0
         ? ('<div class="m"><strong>' + Math.round(built.needPer) + '</strong>'
-          + '<span class="lbl">Avg need / lock · beat</span></div>')
+          + '<span class="lbl">Need / lock · beat</span></div>')
         : '')
       + (built.slotsLeft > 0 && built.needPerWeekly > 0
         ? ('<div class="m"><strong>' + Math.round(built.needPerWeekly) + '</strong>'
-          + '<span class="lbl">Avg need / lock · ' + built.weeklyGoal + '</span></div>')
+          + '<span class="lbl">Need / lock · ' + built.weeklyGoal + '</span></div>')
         : '')
       + (built.rosterFloor != null && Number.isFinite(built.rosterFloor)
         ? ('<div class="m"><strong>' + Math.round(built.rosterFloor) + '</strong>'
@@ -4831,44 +4644,23 @@ function renderWeekPlan(focusSide, focusPack, plan){
   if (slotAvgsEl){
     const rows = seasonLockAvgByGroup();
     const totalN = seasonLockSampleCount();
-    const sharePack = built.mode === 'climb400'
-      ? built.needSharesWeekly
-      : built.needSharesBeat;
-    const showPace = (built.mode === 'chase' || built.mode === 'climb400')
-      && sharePack && sharePack.byLabel;
     slotAvgsEl.hidden = false;
     if (!totalN){
       slotAvgsEl.innerHTML =
-        '<p class="slot-avgs-head">Season lock avg by group</p>'
-        + '<p class="slot-avgs-empty">Confirm locks through the season — Guards / Forwards / Center / Utility averages build from banked nights.</p>';
+        '<p class="slot-avgs-head">Season lock avg by group · display only</p>'
+        + '<p class="slot-avgs-empty">Confirm locks through the season — Guards / Forwards / Center / Utility averages build from banked nights. Rec does not chase these.</p>';
     } else {
       slotAvgsEl.innerHTML =
         '<p class="slot-avgs-head">Season lock avg by group · ' + totalN + ' night'
         + (totalN === 1 ? '' : 's')
-        + (showPace
-          ? (' · chase Banks pace to avg '
-            + Math.round(built.mode === 'climb400' ? built.needPerWeekly : built.needPer)
-            + ' (not flat)')
-          : '')
-        + '</p>'
+        + ' · display only</p>'
         + '<div class="slot-avg-row">'
         + rows.map(r => {
           const cls = r.badge || 'bn';
           const avgVal = r.avg != null ? r.avg : r.mean;
           const avgTxt = r.n > 0 ? formatFp(avgVal) : '—';
-          let pace = null;
-          if (showPace && sharePack.byLabel && r.slots && r.slots.length){
-            const paceVals = r.slots
-              .map(lab => sharePack.byLabel[lab])
-              .filter(n => n != null && Number.isFinite(Number(n)))
-              .map(Number);
-            if (paceVals.length){
-              pace = paceVals.reduce((a, b) => a + b, 0) / paceVals.length;
-            }
-          }
           const nTxt = r.n > 0
-            ? (r.n + ' lock' + (r.n === 1 ? '' : 's')
-              + (pace != null ? (' · pace ' + formatFp(pace)) : ''))
+            ? (r.n + ' lock' + (r.n === 1 ? '' : 's'))
             : 'no locks';
           const slotBit = (r.slots && r.slots.length) ? r.slots.join('/') : r.key;
           return '<div class="slot-avg" title="'
@@ -4876,7 +4668,7 @@ function renderWeekPlan(focusSide, focusPack, plan){
               ? (' · avg ' + formatFp(avgVal) + ' over ' + r.n + ' locked night' + (r.n === 1 ? '' : 's')
                 + (r.median != null ? (' · median ' + formatFp(r.median)) : ''))
               : ' · no locked nights yet')
-              + (pace != null ? (' · chase Bank pace ' + formatFp(pace)) : ''))
+              + ' · display only, not a Rec target')
             + '">'
             + '<span class="pos ' + cls + '">' + escapeHtml(r.label) + '</span>'
             + '<strong class="' + (r.n > 0 ? '' : 'empty') + '">' + escapeHtml(avgTxt) + '</strong>'
@@ -4906,18 +4698,16 @@ function renderWeekPlan(focusSide, focusPack, plan){
         + ' at ~<strong>' + Math.round(built.avgPlan) + '</strong> FP each.');
       if (built.needPer > 0){
         bits.push('To beat needs ~<strong>' + Math.round(built.needPer)
-          + '</strong> FP <em>average</em> per remaining lock'
-          + ' — stronger slots carry more, UTIL/role less'
+          + '</strong> FP average per remaining lock'
           + (built.avgPlan + 1e-9 >= built.needPer
             ? ' · banks clear that team pace.'
             : ' · banks ~' + Math.round(built.avgPlan) + ', need upside.'));
       }
       if (built.mode === 'chase'){
-        bits.push('Rec chases the beat target with slot-paced Bank bars (not a flat '
-          + Math.round(built.needPer) + ' on everyone).');
+        bits.push('Rec is chasing the beat target.');
       } else if (built.mode === 'climb400'){
         bits.push('Beat target on pace — Rec climbs weekly goal <strong>'
-          + built.weeklyGoal + '</strong> next with slot-paced Banks.');
+          + built.weeklyGoal + '</strong> next.');
       } else {
         bits.push('Beat target and weekly goal on pace — protect banks.');
       }
@@ -5080,8 +4870,7 @@ function render(){
     + ' FP or on a season/sample-best night (Bank won’t hunt above that high), fringe/stream need exact unless chasing. '
     + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — never Lock below that day’s number. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
-    + 'Season lock avg by group (Guards / Forwards / Center / Utility) rolls banked nights — groups absorb SF↔F↔PF movement. '
-    + 'Avg need/lock is the TEAM pace — chase/climb Banks follow each group’s average share (forwards/guards higher, UTIL lower), not a flat bar on every player. '
+    + 'Season lock avg by group (Guards / Forwards / Center / Utility) is display-only context — Rec does not chase those numbers. '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
     + 'Only starting-slot nights can lock — BN / IR / TX never bank (Start then Lock). '
