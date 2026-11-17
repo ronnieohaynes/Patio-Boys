@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261117-bestleft2';
+    || '20261117-nobank40';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2727,39 +2727,23 @@ function nextTipMs(scout){
    also bank a season/sample-best night — don’t pass on Melo’s first 40 hoping
    for Bank 41. Fringe/stream stay exact.
    Absolute DOW floor (Mon 35 … Sun 29) still wins — never Lock below it.
-   Chasing a high roster plan raises Bank ≥ to need/lock — it does NOT soften
-   Lock with extra near-miss slack (that was locking 37.5 under Bank 40 at 435). */
+   Roster-plan need/lock is display-only — Rec does NOT raise Bank ≥ to that flat
+   bar (was forcing everyone to ~40 while chasing). */
 const BANK_CLOSE_STAR_FP = 1;
 
 function packWeekPlanMode(pack){
   return (pack && pack.opts && pack.opts.weekPlanMode) || null;
 }
 
-/* Flat avg need/lock from the active plan mode (beat target or weekly 400).
-   Group season avgs are display-only — Rec does not chase those numbers. */
-function packRecNeedPer(pack){
-  const mode = packWeekPlanMode(pack);
-  if (!pack || !pack.opts) return null;
-  if (mode === 'chase'){
-    const n = Number(pack.opts.weekPlanNeedPer);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  }
-  if (mode === 'climb400'){
-    const n = Number(pack.opts.weekPlanNeedPerWeekly);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  }
+/* Week-plan need/lock is display-only team pace — Rec must NOT raise Bank ≥ to
+   that flat ~40 (or any plan need). Personal Bank / best-left / DOW floor only. */
+function packRecNeedPer(/* pack */){
   return null;
 }
 
-/* When chasing beat target / climbing 400, Bank ≥ = max(player bank, flat plan need). */
-function planRaisedBankMark(mark, pack){
+/* Rec Bank mark = personal bank only (no plan need/lock raise). */
+function planRaisedBankMark(mark /* , pack */){
   const b = mark != null ? Number(mark) : NaN;
-  const need = packRecNeedPer(pack);
-  if (need != null && Number.isFinite(need) && need > 0){
-    const raised = Math.ceil(need - 1e-9);
-    if (Number.isFinite(b)) return Math.max(b, raised);
-    return raised;
-  }
   return Number.isFinite(b) ? b : null;
 }
 
@@ -2811,36 +2795,22 @@ function clearsAbsoluteMinLock(scored, dow){
   return s + 1e-9 >= min;
 }
 
-function meetsBank(scored, bank, style, dist, dow, mode, needPer){
+function meetsBank(scored, bank, style, dist, dow, mode /* , needPer */){
   const s = scored != null ? Number(scored) : NaN;
   if (!Number.isFinite(s)) return false;
   const day = dow != null && Number.isFinite(Number(dow)) ? Number(dow) : leagueDow();
   /* Hard DOW floor — near-miss / season-high cannot undercut Mon…Sun min. */
   if (!clearsAbsoluteMinLock(s, day)) return false;
-  const need = needPer != null ? Number(needPer) : NaN;
-  const raw = bank != null ? Number(bank) : NaN;
-  /* Chase/climb raises the Lock bar to need/lock — never softens below it. */
-  let eff = Number.isFinite(raw) ? raw : NaN;
-  if ((mode === 'chase' || mode === 'climb400')
-    && Number.isFinite(need) && need > 0){
-    const raised = Math.ceil(need - 1e-9);
-    eff = Number.isFinite(eff) ? Math.max(eff, raised) : raised;
-  }
+  const eff = bank != null && Number.isFinite(Number(bank)) ? Number(bank) : NaN;
   if (Number.isFinite(eff) && s + 1e-9 >= eff - bankCloseFp(style, mode)){
     return true;
   }
-  /* Season/sample high still banks — but not below plan need while chasing. */
-  if (isObservedBestNight(scored, style, dist)){
-    if ((mode === 'chase' || mode === 'climb400')
-      && Number.isFinite(need) && need > 0 && s + 1e-9 < need){
-      return false;
-    }
-    return true;
-  }
+  /* Season/sample high still banks for stars/starters. */
+  if (isObservedBestNight(scored, style, dist)) return true;
   return false;
 }
 
-function bankMeetPhrase(scored, bank, style, dist, dow, mode, needPer){
+function bankMeetPhrase(scored, bank, style, dist, dow, mode /* , needPer */){
   const s = Number(scored);
   const raw = Number(bank);
   if (!Number.isFinite(s)) return '';
@@ -2851,33 +2821,20 @@ function bankMeetPhrase(scored, bank, style, dist, dow, mode, needPer){
     const d = ((Math.floor(day) % 7) + 7) % 7;
     return formatFp(s) + ' < ' + names[d] + ' floor ' + absMin;
   }
-  const need = needPer != null ? Number(needPer) : NaN;
-  let b = Number.isFinite(raw) ? raw : NaN;
-  let planBit = '';
-  if ((mode === 'chase' || mode === 'climb400')
-    && Number.isFinite(need) && need > 0){
-    const raised = Math.ceil(need - 1e-9);
-    const tag = mode === 'chase' ? 'plan need' : '400 need';
-    if (!Number.isFinite(b) || raised > b + 1e-9){
-      b = raised;
-      planBit = ' · ' + tag + ' ' + formatFp(raised);
-    } else if (Number.isFinite(raw) && raised + 1e-9 >= raw){
-      planBit = ' · ' + tag;
-    }
-  }
+  const b = Number.isFinite(raw) ? raw : NaN;
   if (Number.isFinite(b) && s + 1e-9 >= b){
-    return formatFp(s) + ' ≥ Bank ' + formatFp(b) + planBit;
+    return formatFp(s) + ' ≥ Bank ' + formatFp(b);
   }
   const close = bankCloseFp(style, mode);
   if (Number.isFinite(b) && close > 0 && s + 1e-9 >= b - close){
-    return formatFp(s) + ' ≈ Bank ' + formatFp(b) + ' (within ' + close + ')' + planBit;
+    return formatFp(s) + ' ≈ Bank ' + formatFp(b) + ' (within ' + close + ')';
   }
   if (isObservedBestNight(scored, style, dist)){
     const live = dist && dist.liveSamples && dist.liveSamples.length;
     return formatFp(s) + (live ? ' season high' : ' sample high')
-      + (Number.isFinite(b) ? (' · Bank ' + formatFp(b)) : '') + planBit;
+      + (Number.isFinite(b) ? (' · Bank ' + formatFp(b)) : '');
   }
-  if (Number.isFinite(b)) return formatFp(s) + ' < Bank ' + formatFp(b) + planBit;
+  if (Number.isFinite(b)) return formatFp(s) + ' < Bank ' + formatFp(b);
   return formatFp(s);
 }
 
@@ -3388,7 +3345,7 @@ function buildRec(r, pack, opts){
   const open = openLockSlots(pack, switchOpts.excludeSlotIndexes);
   /* Scarce primary path first (best remaining C → C); UTIL last. */
   const slot = lockSlotForPlayer(r, open, pack);
-  /* Chase/climb raises Bank ≥ to flat plan need/lock (group avgs are display-only). */
+  /* Personal Bank only — week-plan need/lock does not raise Rec Bank ≥. */
   const weekNeed = packRecNeedPer(pack);
   const bank = planRaisedBankMark(rawBank, pack);
   const nextLbl = nextGameLabel(r.scout);
@@ -4283,18 +4240,15 @@ function playerRowHtml(r){
       ? (' · yr ' + (yearsExp + 1)) : '');
   const badgeSlot = (r.bucket === 'IR' || r.bucket === 'TX') ? r.slotLabel : r.slot;
   const rawBankN = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
-  const bankN = r.bank && r.bank.recMark != null ? Number(r.bank.recMark) : rawBankN;
+  /* Personal Bank only — recMark must not raise to flat need/lock (~40). */
+  const bankN = rawBankN;
   const closeFp = bankCloseFp(r.bank && r.bank.style);
-  const raisedBit = bankN != null && rawBankN != null && bankN > rawBankN + 1e-9
-    ? (' · raised from ' + formatFp(rawBankN) + ' for roster plan need/lock')
-    : '';
   const bankTitle = (r.bank && r.bank.why) || (bankN != null
     ? ('Bank ≥' + formatFp(bankN)
       + (closeFp > 0
         ? (' — Lock from ≥' + formatFp(Math.max(0, bankN - closeFp))
           + ' (star/starter within ' + closeFp + ')')
-        : ' — exact floor for fringe/stream')
-      + raisedBit)
+        : ' — exact floor for fringe/stream'))
     : '');
   const bankLine = bankN != null
     ? ('<span class="rec-bank" title="' + escapeHtml(bankTitle) + '">Bank ≥'
@@ -4402,8 +4356,8 @@ function applyWeekPlanPriority(focusPack, oppPack, pair, focusSide, oppSide){
   focusPack.opts.weekPlanNeedPer = plan.needPer;
   focusPack.opts.weekPlanNeedPerWeekly = plan.needPerWeekly;
   focusPack.opts.weekPlanMode = weekPlanModeFrom(plan);
-  /* Rebuild every unlocked player's Lock/Switch/Wait from the new plan target.
-     Stamp recMark so Bank ≥ in the UI matches the flat chase/climb bar. */
+  /* Rebuild every unlocked player's Lock/Switch/Wait. Bank ≥ stays personal
+     (need/lock on the week plan is display-only team pace). */
   (focusPack.rows || []).forEach(r => {
     if (r && r.bank){
       r.bank.recMark = planRaisedBankMark(r.bank.mark, focusPack);
@@ -4917,7 +4871,7 @@ function render(){
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Roster plan is the editable beat-opponent target (auto = opp projected/live + 1). '
     + 'Weekly goal stays ' + LOCK_FP_GOAL + '. Rec prioritizes beating the roster plan first, '
-    + 'then climbing ' + LOCK_FP_GOAL + ' (wider Bank near-miss while chasing). '
+    + 'then climbing ' + LOCK_FP_GOAL + '. Need/lock on the week plan is team pace only — Rec Bank ≥ stays personal. '
     + 'Under each name: last score (click to edit — sticky, API won’t overwrite) beside Avg (last 25), then next tip / games left. '
     + 'Rec shows Bank ≥; stars/starters lock within ' + BANK_CLOSE_STAR_FP
     + ' FP or on a season/sample-best night (Bank won’t hunt above that high), fringe/stream need exact unless chasing. '
