@@ -265,13 +265,27 @@
     return out;
   }
 
-  /* Last LAST_N_GAMES box scores across seasons (oldest→newest), scored under league settings. */
+  /* Resolve which gamelog season keys to score. Default = all seasons
+     (oldest→newest). opts.seasonOnly limits to statsSeason only (FA last-5). */
+  function gamelogSeasonKeysForOpts(statsSeason, opts){
+    const all = gamelogSeasonKeysAscending();
+    if (!(opts && opts.seasonOnly)) return all;
+    const key = statsSeason != null ? String(statsSeason) : '';
+    if (!key) return [];
+    const snap = gamelogSnapshot();
+    if (snap && snap.seasons && snap.seasons[key]) return [key];
+    /* Exact key missing — still prefer a matching numeric year if present. */
+    return all.filter(sk => sk === key);
+  }
+
+  /* Last LAST_N_GAMES box scores across seasons (oldest→newest), scored under league settings.
+     Pass opts.seasonOnly to keep the window inside statsSeason only. */
   function buildSamplesFromGamelogs(statsSeason, scoring, opts){
     const options = opts || {};
     const lastN = options.lastN != null ? Number(options.lastN) : LAST_N_GAMES;
     const snap = gamelogSnapshot();
     if (!snap || !snap.seasons) return null;
-    const seasonKeys = gamelogSeasonKeysAscending();
+    const seasonKeys = gamelogSeasonKeysForOpts(statsSeason, options);
     if (!seasonKeys.length) return null;
     const fields = snap.fields || GAMELOG_FIELDS;
     const pidSet = new Set();
@@ -303,7 +317,7 @@
     });
     return {
       samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer,
-      lastN: lastN, seasons: seasonKeys
+      lastN: lastN, seasons: seasonKeys, seasonOnly: !!options.seasonOnly
     };
   }
 
@@ -314,7 +328,7 @@
     const lastN = options.lastN != null ? Number(options.lastN) : LAST_N_GAMES;
     const snap = gamelogSnapshot();
     if (!snap || !snap.seasons) return null;
-    const seasonKeys = gamelogSeasonKeysAscending();
+    const seasonKeys = gamelogSeasonKeysForOpts(statsSeason, options);
     if (!seasonKeys.length) return null;
     const fields = snap.fields || GAMELOG_FIELDS;
     const pidSet = new Set();
@@ -350,7 +364,7 @@
     }
     return {
       samplesByPlayer, per30ByPlayer, per36ByPlayer, mpgByPlayer, fpPerMinByPlayer,
-      lastN: lastN, seasons: seasonKeys
+      lastN: lastN, seasons: seasonKeys, seasonOnly: !!options.seasonOnly
     };
   }
 
@@ -2449,7 +2463,8 @@
 
   /* Fetch one season's smash dist map (season totals + game samples).
      Prefers ESPN box-score snapshot; falls back to Sleeper weekly rows.
-     opts.lastN overrides the default LAST_N_GAMES window (FA uses 5). */
+     opts.lastN overrides the default LAST_N_GAMES window (FA uses 5).
+     opts.seasonOnly keeps box samples inside statsSeason (no prior-year pad). */
   async function loadSeasonDistMap(statsSeason, scoring, fetchImpl, marks, opts){
     const fetchFn = fetchImpl || (typeof fetch === 'function' ? fetch : null);
     if (!statsSeason) throw new Error('statsSeason required');
@@ -2459,12 +2474,16 @@
     const lastN = opts && opts.lastN != null && Number(opts.lastN) > 0
       ? Math.floor(Number(opts.lastN))
       : LAST_N_GAMES;
+    const seasonOnly = !!(opts && opts.seasonOnly);
 
     try { await ensureGamelogsLoaded(); }
     catch (e) { /* fall back to Sleeper weekly samples */ }
 
     await yieldToMain();
-    const boxPack = await buildSamplesFromGamelogsAsync(String(statsSeason), scoreSettings, {lastN});
+    const boxPack = await buildSamplesFromGamelogsAsync(String(statsSeason), scoreSettings, {
+      lastN,
+      seasonOnly
+    });
     await yieldToMain();
     const usingBox = !!(boxPack && boxPack.samplesByPlayer
       && Object.keys(boxPack.samplesByPlayer).length);
@@ -2531,6 +2550,7 @@
       sampleSource,
       gamesFound: weeksFound,
       lastN: lastN,
+      seasonOnly: seasonOnly,
       seasonAvgCount: distPids.length
     };
   }
@@ -2638,15 +2658,18 @@
     const lastN = options.lastN != null && Number(options.lastN) > 0
       ? Math.floor(Number(options.lastN))
       : LAST_N_GAMES;
-    const seasonOpts = {lastN};
+    const seasonOnly = options.seasonOnly === true;
+    const seasonOpts = {lastN, seasonOnly};
 
     /* Sequential seasons (not Promise.all) so yields between them keep HQ clickable. */
     return withHeavyLock(async function(){
       const primary = await loadSeasonDistMap(statsSeason, scoring, fetchImpl, null, seasonOpts);
       await yieldToMain();
+      /* Prior-season blend pack always uses that season alone (never pads further back). */
+      const priorOpts = {lastN, seasonOnly: true};
       const priorPack = skipPrior
         ? null
-        : await loadSeasonDistMap(priorSeason, scoring, fetchImpl, null, seasonOpts).catch(() => null);
+        : await loadSeasonDistMap(priorSeason, scoring, fetchImpl, null, priorOpts).catch(() => null);
       await yieldToMain();
 
       const distMap = primary.distMap;
@@ -2698,6 +2721,7 @@
         priorWeeksFound: priorPack ? priorPack.weeksFound : 0,
         sampleSource: primary.sampleSource || 'weekly',
         lastN: lastN,
+        seasonOnly: seasonOnly,
         scored,
         seasonAvgCount: primary.seasonAvgCount,
         rookieSeeded: [...rookieIds].filter(id => distMap[id] && distMap[id].projOnly).length
