@@ -231,7 +231,6 @@
           <tr>
             <th>#</th>
             <th data-sort="name" data-label="Player">Player</th>
-            <th data-sort="metric" data-label="Proj">Proj</th>
             <th data-sort="lockOvr" data-label="Lock">Lock</th>
             <th data-sort="tradeScore" data-label="Trade ★">Trade ★</th>
             <th class="role hide-sm" data-sort="role" data-label="Role">Role</th>
@@ -248,7 +247,7 @@
 
 <script>
 (function(){
-  var v = new URLSearchParams(location.search).get('nocache') || '20261116-falock5';
+  var v = new URLSearchParams(location.search).get('nocache') || '20261117-faseason5';
   /* nba-gamelogs-snapshot.js is lazy-loaded by LockInDist (~1.4MB). */
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js','table-sort.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -565,7 +564,10 @@ function lockCellHtml(a){
   if (a.lockOvr == null) return '<td class="num lock">—</td>';
   const bits = ['Lock OVR ' + a.lockOvr];
   const win = a.sampleWindow != null ? Number(a.sampleWindow) : FA_LOCK_LAST_N;
-  if (Number.isFinite(win) && win > 0) bits.push('last ' + win + ' games');
+  if (Number.isFinite(win) && win > 0){
+    bits.push('last ' + win + ' this season'
+      + (a.sampleN != null ? ' (' + a.sampleN + ' played)' : ''));
+  }
   if (a.lockTier) bits.push(a.lockTier);
   if (a.lockOvrUnsignedFloor) bits.push('unsigned floor — no NBA team to lock');
   if (a.situationNote) bits.push(a.situationNote);
@@ -932,7 +934,7 @@ function render(){
   const color = TEAM_COLORS[team.team] || 'var(--gold)';
   document.getElementById('teamTitle').textContent = team.team + (team.team === MY_TEAM ? ' (you)' : '');
   document.getElementById('teamSub').textContent =
-    'Top 3 by Lock (last ' + FA_LOCK_LAST_N + ' games) · who to drop · depth-chart fit';
+    'Top 3 by Lock (last ' + FA_LOCK_LAST_N + ' this season) · who to drop · depth-chart fit';
 
   document.querySelectorAll('.team-chip').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.team === team.team);
@@ -990,7 +992,6 @@ function render(){
       + '<span class="sub">' + escapeHtml(a.pos) + ' \u00b7 ' + escapeHtml(a.nbaTeam || 'FA')
       + (a.injuryStatus ? ' \u00b7 ' + escapeHtml(a.injuryStatus) : '')
       + '</span></td>'
-      + '<td class="num">' + (a.metric != null ? a.metric.toFixed(1) : '\u2014') + '</td>'
       + lockCellHtml(a)
       + '<td class="trade">' + tradeStarsHtml(a.tradeStars) + '</td>'
       + '<td class="role hide-sm">' + escapeHtml(a.role || '—') + '</td>'
@@ -1102,13 +1103,8 @@ async function load(){
       return false;
     }).map(([pid]) => String(pid));
 
-    let statsSeason = season;
-    if (league.previous_league_id){
-      try {
-        const prevRes = await fetch('https://api.sleeper.app/v1/league/' + league.previous_league_id);
-        if (prevRes.ok) statsSeason = (await prevRes.json()).season || statsSeason;
-      } catch (e){ /* keep current */ }
-    }
+    /* FA Lock = last N games from this league season only (no prior-year pad). */
+    const statsSeason = season;
 
     let lockDist = {};
     if (window.LockInDist && typeof LockInDist.fetchLockValueIndex === 'function'){
@@ -1121,8 +1117,11 @@ async function load(){
           projById,
           playerIds: prelimAgents.concat(rosterIds),
           twoKSnapshot: TWO_K,
-          /* Role-player FA form — shorter window than roster Lock (25). */
-          lastN: FA_LOCK_LAST_N
+          /* Role-player FA form — shorter window than roster Lock (25),
+             current season only (do not backfill with last year’s games). */
+          lastN: FA_LOCK_LAST_N,
+          seasonOnly: true,
+          skipPriorSeason: true
         });
         lockDist = lockPack.distMap || {};
         state.lockStatsSeason = lockPack.statsSeason;
@@ -1245,9 +1244,9 @@ async function load(){
       + ((state.taxiYears != null ? state.taxiYears : 2) + 1)
       + ' seasons · ' + (state.taxiSlots || 2) + ' taxi spots) or Lock-ranked drop target (off depth chart). '
       + state.agents.length + ' free agents · ' + withLock + ' with Lock OVR (last '
-      + (state.lockLastN || FA_LOCK_LAST_N) + ' games) / Trade \u2605'
-      + (state.lockStatsSeason ? ' (' + state.lockStatsSeason + ' smash)' : '')
-      + '.';
+      + (state.lockLastN || FA_LOCK_LAST_N) + ' this season'
+      + (state.lockStatsSeason ? ', ' + state.lockStatsSeason : '')
+      + ') / Trade \u2605.';
     render();
     if (window.PatioBoysLoader) PatioBoysLoader.signalReady({page: 'free-agents'});
   } catch (e){
