@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261116-grpshow';
+    || '20261117-bestleft';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2324,16 +2324,15 @@ function unlockedSlotRivals(pack, slotLabel, excludePid){
   return out;
 }
 
-/* Best other night that could fill this slot: bankable scored, else Avg if
-   they still have games (proxy for a later lock). */
+/* Best other night that could fill this slot: any scored lockable night,
+   else Avg if they still have games (proxy for a later lock). */
 function bestRivalLockFp(pack, slotLabel, excludePid){
   let best = null;
   unlockedSlotRivals(pack, slotLabel, excludePid).forEach(o => {
     const scored = latestLockableFp(o);
-    if (scored != null && Number.isFinite(Number(scored)) && isBankableNow(o, pack)){
+    if (scored != null && Number.isFinite(Number(scored))){
       const n = Number(scored);
       if (best == null || n > best) best = n;
-      return;
     }
     const gamesLeft = o.scout && o.scout.gamesLeft != null
       ? Number(o.scout.gamesLeft)
@@ -2344,6 +2343,37 @@ function bestRivalLockFp(pack, slotLabel, excludePid){
     if (best == null || mean > best) best = mean;
   });
   return best;
+}
+
+/* Good-not-great night that still deserves Lock: clears DOW floor and beats
+   (or ties) every other realistic fill for this slot — early-week Bey 37 at F
+   when nobody else is likely to top it. Stars with games left still wait on
+   their own Bank/Avg rather than banking a mediocre night as “best left.” */
+function isBestLeftLock(r, pack, slot, scored, gamesLeft){
+  const s = scored != null ? Number(scored) : NaN;
+  if (!r || !pack || !slot || !Number.isFinite(s)) return false;
+  if (!clearsAbsoluteMinLock(s)) return false;
+  const left = gamesLeft != null ? Number(gamesLeft) : 0;
+  const mean = r.dist && r.dist.mean != null ? Number(r.dist.mean) : NaN;
+  const rawBank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : NaN;
+  /* Own upside still available — don’t crown a soft star/starter night. */
+  if (left > 0 && Number.isFinite(mean) && s + 1e-9 < mean - 4) return false;
+  if (left > 0 && Number.isFinite(rawBank) && s + 1e-9 < rawBank - 6) return false;
+  const lab = String(slot.label || '').toUpperCase();
+  const rival = bestRivalLockFp(pack, lab, r.pid);
+  if (rival == null) return true;
+  return s + 1e-9 >= Number(rival);
+}
+
+function bestLeftLockPhrase(r, pack, slot, scored){
+  const s = Number(scored);
+  const lab = String(slot && slot.label || '').toUpperCase();
+  const rival = bestRivalLockFp(pack, lab, r && r.pid);
+  if (rival == null){
+    return formatFp(s) + ' best left @ ' + lab + ' · no better path';
+  }
+  return formatFp(s) + ' best left @ ' + lab
+    + ' · beats ' + formatFp(rival) + ' remaining';
 }
 
 /* Path score for parking THIS night in a slot: prefer scarce primary slots
@@ -3469,14 +3499,21 @@ function buildRec(r, pack, opts){
       };
     }
     /* Bench can’t lock — only starting slots bank. Point them at a start slot. */
-    if (meetsBank(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed)){
+    const benchBankHit = meetsBank(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed);
+    const benchBestLeft = !benchBankHit && slot
+      ? isBestLeftLock(r, pack, slot, scored, gamesLeft)
+      : false;
+    if (benchBankHit || benchBestLeft){
+      const whyCore = benchBankHit
+        ? bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed)
+        : bestLeftLockPhrase(r, pack, slot, scored);
       if (slot){
         return {
           action: 'switch',
           label: 'Start · ' + slot.label + ' then Lock',
-          reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed)
+          reason: whyCore
             + ' · can’t lock from BN · start @ ' + slot.label + ' first'
-            + lockSlotPathWhy(r, slot, pack, open)
+            + (benchBankHit ? lockSlotPathWhy(r, slot, pack, open) : '')
             + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : '')
             + (dayHint ? (' · ' + dayHint) : ''),
           cls: 'rec-switch'
@@ -3485,8 +3522,7 @@ function buildRec(r, pack, opts){
       return {
         action: 'wait',
         label: 'Wait',
-        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed)
-          + ' · can’t lock from BN · no open start slot',
+        reason: whyCore + ' · can’t lock from BN · no open start slot',
         cls: 'rec-wait'
       };
     }
@@ -3596,29 +3632,36 @@ function buildRec(r, pack, opts){
     };
   }
 
-  /* Bankable night in a start slot — lock before anything else.
+  /* Bankable night OR best remaining fill for this slot — lock before Switch/Wait.
      Slot = scarce path to max remaining lock points (not fixed PF-before-C).
-     Stars/starters: near-miss or season/sample-best (don’t hunt unicorns). */
-  if (meetsBank(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)){
+     Stars/starters: near-miss or season/sample-best (don’t hunt unicorns).
+     Best-left: good early-week night that rivals aren’t likely to beat here. */
+  const bankHit = meetsBank(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed);
+  const bestLeft = !bankHit && slot
+    ? isBestLeftLock(r, pack, slot, scored, gamesLeft)
+    : false;
+  if (bankHit || bestLeft){
     const urgency = dayHint ? (' · ' + dayHint) : ' · bank now';
+    const whyCore = bankHit
+      ? bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)
+      : bestLeftLockPhrase(r, pack, slot, scored);
     if (slot){
       const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
       const moved = curLab && slot.label !== curLab;
       const utilLast = isUtilSlotLabel(slot.label) ? ' · UTIL last' : '';
       const moveBit = moved ? (' · use ' + slot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : '')) : '';
-      const pathBit = lockSlotPathWhy(r, slot, pack, open);
+      const pathBit = bankHit ? lockSlotPathWhy(r, slot, pack, open) : '';
       return attachLockSlotMeta({
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)
-          + moveBit + pathBit + utilLast + urgency,
+        reason: whyCore + moveBit + pathBit + utilLast + urgency,
         cls: 'rec-lock'
       }, slot);
     }
     return {
       action: 'lock',
       label: 'Lock',
-      reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed) + ' · no open slot' + urgency,
+      reason: whyCore + ' · no open slot' + urgency,
       cls: 'rec-lock'
     };
   }
@@ -4871,6 +4914,7 @@ function render(){
     + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — never Lock below that day’s number. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Season lock avg by group (Guards / Forwards / Center / Utility) is display-only context — Rec does not chase those numbers. '
+    + 'Rec also Locks a good-not-great night when it’s the best remaining fill for that slot (rivals’ scored nights / Avgs aren’t likely to beat it) — stars with games left still wait on their own Bank. '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
     + 'Only starting-slot nights can lock — BN / IR / TX never bank (Start then Lock). '
