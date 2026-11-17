@@ -231,6 +231,43 @@
   .week-plan-empty{
     font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);margin:0;
   }
+  .week-plan-slot-avgs{
+    margin:0 0 12px;padding:10px 0 0;border-top:1px solid var(--hairline);
+  }
+  .week-plan-slot-avgs .slot-avgs-head{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--ink-dim);margin:0 0 8px;
+  }
+  .week-plan-slot-avgs .slot-avg-row{
+    display:flex;flex-wrap:wrap;gap:8px 10px;align-items:stretch;
+  }
+  .week-plan-slot-avgs .slot-avg{
+    min-width:3.6rem;padding:6px 8px;border:1px solid var(--hairline);border-radius:4px;
+    background:rgba(255,255,255,.02);font-family:'IBM Plex Mono',monospace;
+    font-variant-numeric:tabular-nums;text-align:center;
+  }
+  .week-plan-slot-avgs .slot-avg .pos{
+    display:block;font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--ink-dim);margin-bottom:2px;
+  }
+  .week-plan-slot-avgs .slot-avg .pos.pg{color:#5B9BD5}
+  .week-plan-slot-avgs .slot-avg .pos.sg{color:#7CB8E8}
+  .week-plan-slot-avgs .slot-avg .pos.sf{color:#6FCF97}
+  .week-plan-slot-avgs .slot-avg .pos.pf{color:#F2C94C}
+  .week-plan-slot-avgs .slot-avg .pos.c{color:#EB5757}
+  .week-plan-slot-avgs .slot-avg .pos.g{color:#56CCF2}
+  .week-plan-slot-avgs .slot-avg .pos.f{color:#BB6BD9}
+  .week-plan-slot-avgs .slot-avg .pos.util{color:var(--gold)}
+  .week-plan-slot-avgs .slot-avg strong{
+    display:block;font-size:16px;color:var(--ink);font-weight:600;line-height:1.2;
+  }
+  .week-plan-slot-avgs .slot-avg strong.empty{color:var(--ink-dim);font-weight:500}
+  .week-plan-slot-avgs .slot-avg .n{
+    display:block;font-size:9px;color:var(--ink-dim);margin-top:2px;letter-spacing:.04em;
+  }
+  .week-plan-slot-avgs .slot-avgs-empty{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-dim);margin:0;
+  }
 
   .sides{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   @media (max-width:820px){.sides{grid-template-columns:1fr}}
@@ -423,6 +460,7 @@
         <p class="pace" id="weekPlanPace"></p>
       </div>
       <div class="week-plan-metrics" id="weekPlanMetrics"></div>
+      <div class="week-plan-slot-avgs" id="weekPlanSlotAvgs" hidden></div>
       <p class="week-plan-copy" id="weekPlanCopy"></p>
       <ul class="week-plan-lines" id="weekPlanLines"></ul>
     </div>
@@ -441,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261114-outfill';
+    || '20261116-slotavg';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -559,6 +597,18 @@ function eligHtml(p){
 function lockStorageKey(){
   return 'pb-matchup-locks:' + LEAGUE_ID + ':w' + String(state.week || '');
 }
+function lockStorageKeyPrefix(){
+  return 'pb-matchup-locks:' + LEAGUE_ID + ':w';
+}
+function seasonLockBookKey(){
+  const season = String(
+    (state.league && state.league.season)
+    || (state.nbaState && state.nbaState.league_season)
+    || (state.nbaState && state.nbaState.season)
+    || ''
+  );
+  return 'pb-matchup-lock-slot-season:' + LEAGUE_ID + ':' + season;
+}
 function loadLockMarks(){
   try {
     const raw = localStorage.getItem(lockStorageKey());
@@ -581,6 +631,7 @@ function loadLockMarks(){
     state.slashMarks = {};
     state.fpOverrides = {};
   }
+  syncSeasonLockBookFromWeekly();
 }
 function saveLockMarks(){
   try {
@@ -591,6 +642,7 @@ function saveLockMarks(){
       fp: state.fpOverrides || {}
     }));
   } catch (e){ /* ignore quota */ }
+  syncSeasonLockBookFromWeekly();
 }
 function clearLockMarks(){
   state.lockMarks = {};
@@ -599,6 +651,173 @@ function clearLockMarks(){
   state.fpOverrides = {};
   try { localStorage.removeItem(lockStorageKey()); }
   catch (e){ /* ignore */ }
+  syncSeasonLockBookFromWeekly();
+}
+
+/* Unique starter position labels in lineup order (UTIL once, not ×3). */
+function starterSlotPositions(){
+  const seen = new Set();
+  const out = [];
+  lockSlotLabels().forEach(lab => {
+    const u = String(lab || '').toUpperCase();
+    if (!u || u === 'BN' || u === 'IR' || u === 'TAXI' || seen.has(u)) return;
+    seen.add(u);
+    out.push(u);
+  });
+  return out.length ? out : ['PG', 'SG', 'G', 'SF', 'PF', 'F', 'C', 'UTIL'];
+}
+
+function normalizeLockSlotLabel(mark){
+  if (!mark) return null;
+  if (mark.slotLabel){
+    const lab = String(mark.slotLabel).toUpperCase();
+    if (lab && lab !== 'BN' && lab !== 'IR' && lab !== 'TAXI' && lab !== 'TX') return lab;
+  }
+  if (mark.slot === 'BN' || mark.slot == null) return null;
+  const lab = String(slotDisplayLabel(mark.slot) || '').toUpperCase();
+  if (!lab || lab === 'BN' || lab === 'IR' || lab === 'TAXI' || lab === 'TX') return null;
+  return lab;
+}
+
+function locksMapFromWeeklyPayload(parsed){
+  if (!parsed || typeof parsed !== 'object') return {};
+  if (parsed.locks || parsed.open || parsed.slash || parsed.fp) return parsed.locks || {};
+  return parsed;
+}
+
+/* Season book mirrors every week’s starting-slot locks so slot avgs survive
+   week switches. Weekly localStorage remains source of truth. */
+function syncSeasonLockBookFromWeekly(){
+  const key = seasonLockBookKey();
+  /* Skip until season is known — avoid a blank-season orphan key. */
+  if (!key || /:$/.test(key)) return;
+  const prefix = lockStorageKeyPrefix();
+  const weeks = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++){
+      const lsKey = localStorage.key(i);
+      if (!lsKey || lsKey.indexOf(prefix) !== 0) continue;
+      const week = lsKey.slice(prefix.length);
+      if (!week) continue;
+      let parsed = {};
+      try { parsed = JSON.parse(localStorage.getItem(lsKey) || '{}') || {}; }
+      catch (e){ continue; }
+      const locks = (String(week) === String(state.week))
+        ? (state.lockMarks || {})
+        : locksMapFromWeeklyPayload(parsed);
+      const weekMap = {};
+      Object.keys(locks || {}).forEach(pid => {
+        const m = locks[pid];
+        if (!m || m.pts == null || !Number.isFinite(Number(m.pts))) return;
+        const slotLabel = normalizeLockSlotLabel(m);
+        if (!slotLabel) return;
+        weekMap[String(pid)] = {
+          pts: Math.round(Number(m.pts) * 100) / 100,
+          slot: m.slot == null ? null : m.slot,
+          slotLabel: slotLabel,
+          name: m.name || null,
+          eventId: m.eventId != null ? String(m.eventId) : null,
+          source: m.source || null
+        };
+      });
+      weeks[String(week)] = weekMap;
+    }
+    /* Live week may not be written yet — still include state.lockMarks. */
+    if (state.week != null && state.week !== ''){
+      const w = String(state.week);
+      if (!weeks[w]){
+        const weekMap = {};
+        Object.keys(state.lockMarks || {}).forEach(pid => {
+          const m = state.lockMarks[pid];
+          if (!m || m.pts == null || !Number.isFinite(Number(m.pts))) return;
+          const slotLabel = normalizeLockSlotLabel(m);
+          if (!slotLabel) return;
+          weekMap[String(pid)] = {
+            pts: Math.round(Number(m.pts) * 100) / 100,
+            slot: m.slot == null ? null : m.slot,
+            slotLabel: slotLabel,
+            name: m.name || null,
+            eventId: m.eventId != null ? String(m.eventId) : null,
+            source: m.source || null
+          };
+        });
+        weeks[w] = weekMap;
+      }
+    }
+    localStorage.setItem(key, JSON.stringify({
+      season: String(
+        (state.league && state.league.season)
+        || (state.nbaState && state.nbaState.league_season)
+        || (state.nbaState && state.nbaState.season)
+        || ''
+      ),
+      updatedAt: new Date().toISOString(),
+      weeks: weeks
+    }));
+  } catch (e){ /* ignore quota / private mode */ }
+}
+
+function loadSeasonLockBook(){
+  try {
+    const raw = localStorage.getItem(seasonLockBookKey());
+    if (!raw) return {weeks: {}};
+    const parsed = JSON.parse(raw) || {};
+    return {
+      season: parsed.season || '',
+      updatedAt: parsed.updatedAt || null,
+      weeks: parsed.weeks || {}
+    };
+  } catch (e){
+    return {weeks: {}};
+  }
+}
+
+function collectSeasonLockSamples(){
+  const book = loadSeasonLockBook();
+  const samples = [];
+  Object.keys(book.weeks || {}).forEach(week => {
+    const weekMap = book.weeks[week] || {};
+    Object.keys(weekMap).forEach(pid => {
+      const m = weekMap[pid];
+      if (!m || m.pts == null || !Number.isFinite(Number(m.pts))) return;
+      const slotLabel = normalizeLockSlotLabel(m);
+      if (!slotLabel) return;
+      samples.push({
+        week: String(week),
+        pid: String(pid),
+        pts: Number(m.pts),
+        slotLabel: slotLabel,
+        name: m.name || null
+      });
+    });
+  });
+  return samples;
+}
+
+/* Season average locked FP per starting position (UTIL pooled). */
+function seasonLockAvgBySlot(){
+  const samples = collectSeasonLockSamples();
+  const by = {};
+  samples.forEach(s => {
+    const lab = s.slotLabel;
+    if (!by[lab]) by[lab] = {sum: 0, n: 0};
+    by[lab].sum += s.pts;
+    by[lab].n += 1;
+  });
+  return starterSlotPositions().map(label => {
+    const b = by[label];
+    if (!b || !b.n) return {label: label, avg: null, n: 0, sum: 0};
+    return {
+      label: label,
+      avg: b.sum / b.n,
+      n: b.n,
+      sum: b.sum
+    };
+  });
+}
+
+function seasonLockSampleCount(){
+  return collectSeasonLockSamples().length;
 }
 
 function fpOverrideFor(pid){
@@ -819,11 +1038,13 @@ function setManualLock(pid, pts, opts){
   const p = state.players[id] || {};
   const rounded = Math.round(n * 100) / 100;
   state.lockMarks = state.lockMarks || {};
+  const slotLabel = slot == null || slot === 'BN' ? 'BN' : slotDisplayLabel(slot);
   state.lockMarks[id] = {
     pts: rounded,
     source: options.source || 'manual',
     name: playerName(p),
     slot: slot == null ? 'BN' : slot,
+    slotLabel: slotLabel,
     bankAtLock: computeBankAtLockForPid(id),
     eventId: options.eventId != null ? String(options.eventId) : null,
     date: options.date || null,
@@ -843,11 +1064,13 @@ function setConfirmOpen(pid, pts, opts){
   const slot = slotKeyForPidOnSide(side, id);
   const p = state.players[id] || {};
   state.openLockMarks = state.openLockMarks || {};
+  const slotLabel = slot == null || slot === 'BN' ? 'BN' : slotDisplayLabel(slot);
   state.openLockMarks[id] = {
     pts: Math.round(n * 100) / 100,
     source: 'confirm',
     name: playerName(p),
     slot: slot == null ? 'BN' : slot,
+    slotLabel: slotLabel,
     eventId: options.eventId != null ? String(options.eventId) : null,
     date: options.date || null,
     opp: options.opp || null
@@ -4263,6 +4486,8 @@ function renderWeekPlan(focusSide, focusPack, plan){
   if (!root) return;
   if (!focusSide || !focusPack){
     root.hidden = true;
+    const slotAvgsHide = document.getElementById('weekPlanSlotAvgs');
+    if (slotAvgsHide) slotAvgsHide.hidden = true;
     return;
   }
   const built = plan || buildWeekLockPlan(focusPack, {
@@ -4367,6 +4592,37 @@ function renderWeekPlan(focusSide, focusPack, plan){
         state.planTargetManual = null;
         render();
       });
+    }
+  }
+  const slotAvgsEl = document.getElementById('weekPlanSlotAvgs');
+  if (slotAvgsEl){
+    const rows = seasonLockAvgBySlot();
+    const totalN = seasonLockSampleCount();
+    slotAvgsEl.hidden = false;
+    if (!totalN){
+      slotAvgsEl.innerHTML =
+        '<p class="slot-avgs-head">Season lock avg by slot</p>'
+        + '<p class="slot-avgs-empty">Confirm locks through the season — slot averages build from banked nights.</p>';
+    } else {
+      slotAvgsEl.innerHTML =
+        '<p class="slot-avgs-head">Season lock avg by slot · ' + totalN + ' night'
+        + (totalN === 1 ? '' : 's') + '</p>'
+        + '<div class="slot-avg-row">'
+        + rows.map(r => {
+          const cls = slotBadgeClass(r.label);
+          const avgTxt = r.n > 0 ? formatFp(r.avg) : '—';
+          const nTxt = r.n > 0 ? (r.n + ' lock' + (r.n === 1 ? '' : 's')) : 'no locks';
+          return '<div class="slot-avg" title="'
+            + escapeHtml(r.label + (r.n > 0
+              ? (' · ' + formatFp(r.avg) + ' avg over ' + r.n + ' locked night' + (r.n === 1 ? '' : 's'))
+              : ' · no locked nights yet'))
+            + '">'
+            + '<span class="pos ' + cls + '">' + escapeHtml(r.label) + '</span>'
+            + '<strong class="' + (r.n > 0 ? '' : 'empty') + '">' + escapeHtml(avgTxt) + '</strong>'
+            + '<span class="n">' + escapeHtml(nTxt) + '</span>'
+            + '</div>';
+        }).join('')
+        + '</div>';
     }
   }
   if (copy){
@@ -4561,6 +4817,7 @@ function render(){
     + ' FP or on a season/sample-best night (Bank won’t hunt above that high), fringe/stream need exact unless chasing. '
     + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — never Lock below that day’s number. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
+    + 'Season lock avg by slot rolls every banked starting-slot night (UTIL pooled) across weeks. '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
     + 'Only starting-slot nights can lock — BN / IR / TX never bank (Start then Lock). '
@@ -5739,7 +5996,9 @@ async function runOcrOnImage(file){
         pts: h.pts != null && Number.isFinite(Number(h.pts)) ? Number(h.pts) : null,
         source: 'ocr-open',
         name: h.name,
-        slot: h.slot == null ? 'BN' : h.slot
+        slot: h.slot == null ? 'BN' : h.slot,
+        slotLabel: h.slotLabel || (h.slot == null || h.slot === 'BN'
+          ? 'BN' : slotDisplayLabel(h.slot))
       };
     });
     hits.forEach(h => {
@@ -5771,6 +6030,8 @@ async function runOcrOnImage(file){
         source: 'ocr',
         name: h.name,
         slot: h.slot == null ? 'BN' : h.slot,
+        slotLabel: h.slotLabel || (h.slot == null || h.slot === 'BN'
+          ? 'BN' : slotDisplayLabel(h.slot)),
         bankAtLock: bankAtLock
       };
     });
