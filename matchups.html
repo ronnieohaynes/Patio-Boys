@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261116-slotpace';
+    || '20261116-slotmed';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -794,22 +794,41 @@ function collectSeasonLockSamples(){
   return samples;
 }
 
-/* Season average locked FP per starting position (UTIL pooled). */
+/* Median of numeric samples. Odd n → middle value; even n → mean of the two
+   middle values. One star-at-flex outlier does not pull the center. */
+function medianOf(nums){
+  const a = (nums || [])
+    .map(Number)
+    .filter(n => Number.isFinite(n))
+    .sort((x, y) => x - y);
+  if (!a.length) return null;
+  const mid = Math.floor(a.length / 2);
+  if (a.length % 2) return a[mid];
+  return (a[mid - 1] + a[mid]) / 2;
+}
+
+/* Season locked-FP center per starting position (UTIL pooled).
+   Uses median so Giannis-at-F (etc.) does not inflate flex/role slots. */
 function seasonLockAvgBySlot(){
   const samples = collectSeasonLockSamples();
   const by = {};
   samples.forEach(s => {
     const lab = s.slotLabel;
-    if (!by[lab]) by[lab] = {sum: 0, n: 0};
-    by[lab].sum += s.pts;
+    if (!by[lab]) by[lab] = {pts: [], sum: 0, n: 0};
+    by[lab].pts.push(Number(s.pts));
+    by[lab].sum += Number(s.pts);
     by[lab].n += 1;
   });
   return starterSlotPositions().map(label => {
     const b = by[label];
-    if (!b || !b.n) return {label: label, avg: null, n: 0, sum: 0};
+    if (!b || !b.n) return {label: label, avg: null, median: null, n: 0, sum: 0};
+    const med = medianOf(b.pts);
     return {
       label: label,
-      avg: b.sum / b.n,
+      /* `avg` kept as the pacing field — value is median, not mean. */
+      avg: med,
+      median: med,
+      mean: b.sum / b.n,
       n: b.n,
       sum: b.sum
     };
@@ -2691,7 +2710,7 @@ function seasonSlotAvgMap(){
 }
 
 /* Weight for allocating remaining plan need across open slots.
-   Prefer season lock avg for that position; else occupant Avg; else flat need. */
+   Prefer season lock median for that position; else occupant Avg; else flat need. */
 function slotPlanWeight(slotLabel, pack, flatNeed){
   const lab = String(slotLabel || '').toUpperCase();
   const avgs = seasonSlotAvgMap();
@@ -2707,7 +2726,8 @@ function slotPlanWeight(slotLabel, pack, flatNeed){
 }
 
 /* Split remaining need across open starting slots so the TEAM averages
-   needPer, while SF/star slots carry more and UTIL/role slots less. */
+   needPer, while SF/star slots carry more and UTIL/role slots less.
+   Slot weights use season lock median (outlier-resistant). */
 function buildPlanNeedShares(pack, needPer, needTotal, slotsLeft){
   const flat = needPer != null ? Number(needPer) : NaN;
   const total = needTotal != null ? Number(needTotal) : NaN;
@@ -4756,11 +4776,11 @@ function renderWeekPlan(focusSide, focusPack, plan){
     slotAvgsEl.hidden = false;
     if (!totalN){
       slotAvgsEl.innerHTML =
-        '<p class="slot-avgs-head">Season lock avg by slot</p>'
-        + '<p class="slot-avgs-empty">Confirm locks through the season — slot averages build from banked nights.</p>';
+        '<p class="slot-avgs-head">Season lock median by slot</p>'
+        + '<p class="slot-avgs-empty">Confirm locks through the season — slot medians build from banked nights.</p>';
     } else {
       slotAvgsEl.innerHTML =
-        '<p class="slot-avgs-head">Season lock avg by slot · ' + totalN + ' night'
+        '<p class="slot-avgs-head">Season lock median by slot · ' + totalN + ' night'
         + (totalN === 1 ? '' : 's')
         + (showPace
           ? (' · chase Banks pace to avg '
@@ -4771,7 +4791,8 @@ function renderWeekPlan(focusSide, focusPack, plan){
         + '<div class="slot-avg-row">'
         + rows.map(r => {
           const cls = slotBadgeClass(r.label);
-          const avgTxt = r.n > 0 ? formatFp(r.avg) : '—';
+          const med = r.median != null ? r.median : r.avg;
+          const avgTxt = r.n > 0 ? formatFp(med) : '—';
           const pace = showPace && sharePack.byLabel[r.label] != null
             ? Number(sharePack.byLabel[r.label])
             : null;
@@ -4781,7 +4802,8 @@ function renderWeekPlan(focusSide, focusPack, plan){
             : 'no locks';
           return '<div class="slot-avg" title="'
             + escapeHtml(r.label + (r.n > 0
-              ? (' · ' + formatFp(r.avg) + ' avg over ' + r.n + ' locked night' + (r.n === 1 ? '' : 's'))
+              ? (' · median ' + formatFp(med) + ' over ' + r.n + ' locked night' + (r.n === 1 ? '' : 's')
+                + (r.mean != null ? (' · mean ' + formatFp(r.mean)) : ''))
               : ' · no locked nights yet')
               + (pace != null ? (' · chase Bank pace ' + formatFp(pace)) : ''))
             + '">'
@@ -4987,8 +5009,8 @@ function render(){
     + ' FP or on a season/sample-best night (Bank won’t hunt above that high), fringe/stream need exact unless chasing. '
     + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — never Lock below that day’s number. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
-    + 'Season lock avg by slot rolls every banked starting-slot night (UTIL pooled) across weeks. '
-    + 'Avg need/lock is the TEAM pace — chase/climb Banks follow each slot’s share (stars higher, UTIL lower), not a flat bar on every player. '
+    + 'Season lock median by slot rolls every banked starting-slot night (UTIL pooled) across weeks — median so star-at-flex outliers don’t inflate F/UTIL. '
+    + 'Avg need/lock is the TEAM pace — chase/climb Banks follow each slot’s median share (stars higher, UTIL lower), not a flat bar on every player. '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
     + 'Only starting-slot nights can lock — BN / IR / TX never bank (Start then Lock). '
