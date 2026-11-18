@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261117-nobank40';
+    || '20261118-lockpos';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -654,22 +654,37 @@ function clearLockMarks(){
   syncSeasonLockBookFromWeekly();
 }
 
-/* Broader lock groups — players bounce across PG/SG/G and SF/PF/F.
-   Display-only season avgs; Rec does not chase these numbers. */
-const LOCK_SLOT_GROUPS = [
+/* Display-only season avgs by the player's first fantasy position
+   (Guards / Forwards / Center). Rec does not chase these numbers.
+   Lock lineup slot (incl. UTIL) is ignored — multi-elig players always
+   count under fantasy_positions[0] / position. */
+const LOCK_POS_GROUPS = [
   {key: 'G', label: 'Guards', slots: ['PG', 'SG', 'G'], badge: 'g'},
   {key: 'F', label: 'Forwards', slots: ['SF', 'PF', 'F'], badge: 'f'},
-  {key: 'C', label: 'Center', slots: ['C'], badge: 'c'},
-  {key: 'UTIL', label: 'Utility', slots: ['UTIL'], badge: 'util'}
+  {key: 'C', label: 'Center', slots: ['C'], badge: 'c'}
 ];
 
-function lockSlotGroupKey(slotLabel){
-  const lab = String(slotLabel || '').toUpperCase();
+function playerFirstPos(p){
+  const raw = (p && (p.fantasy_positions || (p.position ? [p.position] : []))) || [];
+  for (let i = 0; i < raw.length; i++){
+    const lab = String(raw[i] || '').toUpperCase();
+    if (!lab || lab === 'BN' || lab === 'IR' || lab === 'TAXI' || lab === 'TX' || lab === 'UTIL') continue;
+    return lab;
+  }
+  return null;
+}
+
+function lockPosGroupKey(posLabel){
+  const lab = String(posLabel || '').toUpperCase();
   if (lab === 'PG' || lab === 'SG' || lab === 'G') return 'G';
   if (lab === 'SF' || lab === 'PF' || lab === 'F') return 'F';
   if (lab === 'C') return 'C';
-  if (lab === 'UTIL') return 'UTIL';
   return null;
+}
+
+/* Legacy alias — season book may still carry slotLabel from older locks. */
+function lockSlotGroupKey(slotLabel){
+  return lockPosGroupKey(slotLabel);
 }
 
 function normalizeLockSlotLabel(mark){
@@ -690,8 +705,25 @@ function locksMapFromWeeklyPayload(parsed){
   return parsed;
 }
 
-/* Season book mirrors every week’s starting-slot locks so slot avgs survive
-   week switches. Weekly localStorage remains source of truth. */
+function seasonBookEntryFromMark(pid, m){
+  if (!m || m.pts == null || !Number.isFinite(Number(m.pts))) return null;
+  const slotLabel = normalizeLockSlotLabel(m);
+  if (!slotLabel) return null;
+  const p = (state.players && state.players[String(pid)]) || {};
+  const firstPos = playerFirstPos(p) || (m.firstPos ? String(m.firstPos).toUpperCase() : null);
+  return {
+    pts: Math.round(Number(m.pts) * 100) / 100,
+    slot: m.slot == null ? null : m.slot,
+    slotLabel: slotLabel,
+    firstPos: firstPos,
+    name: m.name || null,
+    eventId: m.eventId != null ? String(m.eventId) : null,
+    source: m.source || null
+  };
+}
+
+/* Season book mirrors every week’s locks so position avgs survive week
+   switches. Weekly localStorage remains source of truth. */
 function syncSeasonLockBookFromWeekly(){
   const key = seasonLockBookKey();
   /* Skip until season is known — avoid a blank-season orphan key. */
@@ -712,18 +744,8 @@ function syncSeasonLockBookFromWeekly(){
         : locksMapFromWeeklyPayload(parsed);
       const weekMap = {};
       Object.keys(locks || {}).forEach(pid => {
-        const m = locks[pid];
-        if (!m || m.pts == null || !Number.isFinite(Number(m.pts))) return;
-        const slotLabel = normalizeLockSlotLabel(m);
-        if (!slotLabel) return;
-        weekMap[String(pid)] = {
-          pts: Math.round(Number(m.pts) * 100) / 100,
-          slot: m.slot == null ? null : m.slot,
-          slotLabel: slotLabel,
-          name: m.name || null,
-          eventId: m.eventId != null ? String(m.eventId) : null,
-          source: m.source || null
-        };
+        const entry = seasonBookEntryFromMark(pid, locks[pid]);
+        if (entry) weekMap[String(pid)] = entry;
       });
       weeks[String(week)] = weekMap;
     }
@@ -733,18 +755,8 @@ function syncSeasonLockBookFromWeekly(){
       if (!weeks[w]){
         const weekMap = {};
         Object.keys(state.lockMarks || {}).forEach(pid => {
-          const m = state.lockMarks[pid];
-          if (!m || m.pts == null || !Number.isFinite(Number(m.pts))) return;
-          const slotLabel = normalizeLockSlotLabel(m);
-          if (!slotLabel) return;
-          weekMap[String(pid)] = {
-            pts: Math.round(Number(m.pts) * 100) / 100,
-            slot: m.slot == null ? null : m.slot,
-            slotLabel: slotLabel,
-            name: m.name || null,
-            eventId: m.eventId != null ? String(m.eventId) : null,
-            source: m.source || null
-          };
+          const entry = seasonBookEntryFromMark(pid, state.lockMarks[pid]);
+          if (entry) weekMap[String(pid)] = entry;
         });
         weeks[w] = weekMap;
       }
@@ -777,6 +789,17 @@ function loadSeasonLockBook(){
   }
 }
 
+function resolveSampleFirstPos(pid, m){
+  if (m && m.firstPos){
+    const stamped = String(m.firstPos).toUpperCase();
+    if (lockPosGroupKey(stamped)) return stamped;
+  }
+  const p = (state.players && state.players[String(pid)]) || {};
+  const live = playerFirstPos(p);
+  if (live) return live;
+  return null;
+}
+
 function collectSeasonLockSamples(){
   const book = loadSeasonLockBook();
   const samples = [];
@@ -787,11 +810,13 @@ function collectSeasonLockSamples(){
       if (!m || m.pts == null || !Number.isFinite(Number(m.pts))) return;
       const slotLabel = normalizeLockSlotLabel(m);
       if (!slotLabel) return;
+      const firstPos = resolveSampleFirstPos(pid, m);
       samples.push({
         week: String(week),
         pid: String(pid),
         pts: Number(m.pts),
         slotLabel: slotLabel,
+        firstPos: firstPos,
         name: m.name || null
       });
     });
@@ -812,21 +837,20 @@ function medianOf(nums){
   return (a[mid - 1] + a[mid]) / 2;
 }
 
-/* Season locked-FP average by group (Guards / Forwards / Center / Utility).
-   Groups absorb SF↔F↔PF and PG↔SG↔G movement. Mean (not median) — with
-   2 star forward locks most weeks, median sat too high as a pace bar. */
+/* Season locked-FP average by player first position → Guards / Forwards /
+   Center. Lineup slot (UTIL etc.) does not move the bucket. Mean (not median). */
 function seasonLockAvgByGroup(){
   const samples = collectSeasonLockSamples();
   const by = {};
   samples.forEach(s => {
-    const gKey = lockSlotGroupKey(s.slotLabel);
+    const gKey = lockPosGroupKey(s.firstPos);
     if (!gKey) return;
     if (!by[gKey]) by[gKey] = {pts: [], sum: 0, n: 0};
     by[gKey].pts.push(Number(s.pts));
     by[gKey].sum += Number(s.pts);
     by[gKey].n += 1;
   });
-  return LOCK_SLOT_GROUPS.map(g => {
+  return LOCK_POS_GROUPS.map(g => {
     const b = by[g.key];
     if (!b || !b.n){
       return {
@@ -858,7 +882,7 @@ function seasonLockAvgByGroup(){
 }
 
 function seasonLockSampleCount(){
-  return collectSeasonLockSamples().length;
+  return collectSeasonLockSamples().filter(s => lockPosGroupKey(s.firstPos)).length;
 }
 
 function fpOverrideFor(pid){
@@ -4654,11 +4678,11 @@ function renderWeekPlan(focusSide, focusPack, plan){
     slotAvgsEl.hidden = false;
     if (!totalN){
       slotAvgsEl.innerHTML =
-        '<p class="slot-avgs-head">Season lock avg by group · display only</p>'
-        + '<p class="slot-avgs-empty">Confirm locks through the season — Guards / Forwards / Center / Utility averages build from banked nights. Rec does not chase these.</p>';
+        '<p class="slot-avgs-head">Season lock avg by player position · display only</p>'
+        + '<p class="slot-avgs-empty">Confirm locks through the season — Guards / Forwards / Center averages use each player\u2019s first listed position (not the lineup slot). Rec does not chase these.</p>';
     } else {
       slotAvgsEl.innerHTML =
-        '<p class="slot-avgs-head">Season lock avg by group · ' + totalN + ' night'
+        '<p class="slot-avgs-head">Season lock avg by player position · ' + totalN + ' night'
         + (totalN === 1 ? '' : 's')
         + ' · display only</p>'
         + '<div class="slot-avg-row">'
@@ -4671,11 +4695,11 @@ function renderWeekPlan(focusSide, focusPack, plan){
             : 'no locks';
           const slotBit = (r.slots && r.slots.length) ? r.slots.join('/') : r.key;
           return '<div class="slot-avg" title="'
-            + escapeHtml(r.label + ' (' + slotBit + ')' + (r.n > 0
+            + escapeHtml(r.label + ' (1st pos ' + slotBit + ')' + (r.n > 0
               ? (' · avg ' + formatFp(avgVal) + ' over ' + r.n + ' locked night' + (r.n === 1 ? '' : 's')
                 + (r.median != null ? (' · median ' + formatFp(r.median)) : ''))
               : ' · no locked nights yet')
-              + ' · display only, not a Rec target')
+              + ' · by player first position, not lineup slot · display only')
             + '">'
             + '<span class="pos ' + cls + '">' + escapeHtml(r.label) + '</span>'
             + '<strong class="' + (r.n > 0 ? '' : 'empty') + '">' + escapeHtml(avgTxt) + '</strong>'
@@ -4877,7 +4901,7 @@ function render(){
     + ' FP or on a season/sample-best night (Bank won’t hunt above that high), fringe/stream need exact unless chasing. '
     + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — never Lock below that day’s number. '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
-    + 'Season lock avg by group (Guards / Forwards / Center / Utility) is display-only context — Rec does not chase those numbers. '
+    + 'Season lock avg by player first position (Guards / Forwards / Center) is display-only — Rec does not chase those numbers. '
     + 'Rec also Locks a good-not-great role-player night when it’s the best remaining fill for that slot — stars/starters with games left never best-left (they wait on Bank). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
