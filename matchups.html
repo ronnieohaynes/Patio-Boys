@@ -2820,7 +2820,7 @@ function clearsAbsoluteMinLock(scored, dow){
   return s + 1e-9 >= min;
 }
 
-function meetsBank(scored, bank, style, dist, dow, mode /* , needPer */, gamesLeft){
+function meetsBank(scored, bank, style, dist, dow, mode, gamesLeft){
   const s = scored != null ? Number(scored) : NaN;
   if (!Number.isFinite(s)) return false;
   const day = dow != null && Number.isFinite(Number(dow)) ? Number(dow) : leagueDow();
@@ -2880,7 +2880,7 @@ function isBankableNow(r, pack){
   const scored = latestLockableFp(r);
   const bank = r && r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   return meetsBank(scored, bank, r && r.bank && r.bank.style, r && r.dist,
-    null, packWeekPlanMode(pack), packRecNeedPer(pack), rowGamesLeft(r));
+    null, packWeekPlanMode(pack), rowGamesLeft(r));
 }
 
 function isBenchRow(r){
@@ -3317,7 +3317,7 @@ function starterTipOpportunityOpen(starter, nowMs, pack){
   /* Tip window closed with a miss — slot free for later higher-Avg benches. */
   if (scored != null && bank != null
     && !meetsBank(scored, bank, starter.bank && starter.bank.style, starter.dist,
-      null, packWeekPlanMode(pack), packRecNeedPer(pack), rowGamesLeft(starter))) return false;
+      null, packWeekPlanMode(pack), rowGamesLeft(starter))) return false;
   return false;
 }
 
@@ -3502,7 +3502,7 @@ function buildRec(r, pack, opts){
         cls: 'rec-switch'
       };
     }
-    if (meetsBank(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed, gamesLeft)){
+    if (meetsBank(scored, bank, bankStyle, r.dist, null, weekMode, gamesLeft)){
       if (slot){
         return {
           action: 'switch',
@@ -3571,7 +3571,7 @@ function buildRec(r, pack, opts){
       };
     }
     /* Bench can’t lock — only starting slots bank. Point them at a start slot. */
-    const benchBankHit = meetsBank(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed, gamesLeft);
+    const benchBankHit = meetsBank(scored, bank, bankStyle, r.dist, null, weekMode, gamesLeft);
     const benchBestLeft = !benchBankHit && slot
       ? isBestLeftLock(r, pack, slot, scored, gamesLeft)
       : false;
@@ -3709,7 +3709,7 @@ function buildRec(r, pack, opts){
      Stars/starters: full Bank or season/sample-best; near-miss only with no
      games left (soft ≈Bank with upside left is opportunity cost).
      Best-left: good early-week night that rivals aren’t likely to beat here. */
-  const bankHit = meetsBank(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed, gamesLeft);
+  const bankHit = meetsBank(scored, bank, bankStyle, r.dist, dowNow, weekMode, gamesLeft);
   const bestLeft = !bankHit && slot
     ? isBestLeftLock(r, pack, slot, scored, gamesLeft)
     : false;
@@ -4545,7 +4545,7 @@ function buildWeekLockPlan(pack, opts){
     const rowNeed = packRecNeedPer(pack);
     const openSlots = openLockSlots(pack);
     const planSlot = lockSlotForPlayer(r, openSlots, pack);
-    const bankReady = meetsBank(scored, bank, style, r.dist, null, mode, rowNeed, gamesLeft);
+    const bankReady = meetsBank(scored, bank, style, r.dist, null, mode, gamesLeft);
     const leftReady = !bankReady && planSlot
       ? isBestLeftLock(r, pack, planSlot, scored, gamesLeft)
       : false;
