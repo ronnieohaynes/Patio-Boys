@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261118-beatdecide';
+    || '20261118-bnforfeit';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1092,7 +1092,8 @@ function computeBankAtLockForPid(pid){
   return null;
 }
 
-/* Confirm / manual bank of a night. Slots still mirror Sleeper. */
+/* Confirm / manual bank of a night. Slots still mirror Sleeper.
+   Player must still be started — sitting forfeits the night. */
 function setManualLock(pid, pts, opts){
   const options = opts || {};
   const id = String(pid);
@@ -1100,15 +1101,16 @@ function setManualLock(pid, pts, opts){
   if (!Number.isFinite(n) || n < 0 || n > 120) return false;
   const side = sideForPid(id);
   const slot = slotKeyForPidOnSide(side, id);
+  if (slot == null || slot === 'BN') return false;
   const p = state.players[id] || {};
   const rounded = Math.round(n * 100) / 100;
   state.lockMarks = state.lockMarks || {};
-  const slotLabel = slot == null || slot === 'BN' ? 'BN' : slotDisplayLabel(slot);
+  const slotLabel = slotDisplayLabel(slot);
   state.lockMarks[id] = {
     pts: rounded,
     source: options.source || 'manual',
     name: playerName(p),
-    slot: slot == null ? 'BN' : slot,
+    slot: slot,
     slotLabel: slotLabel,
     bankAtLock: computeBankAtLockForPid(id),
     eventId: options.eventId != null ? String(options.eventId) : null,
@@ -1127,14 +1129,16 @@ function setConfirmOpen(pid, pts, opts){
   if (!Number.isFinite(n) || n < 0 || n > 120) return false;
   const side = sideForPid(id);
   const slot = slotKeyForPidOnSide(side, id);
+  /* Must still be started — benching forfeits the night; BN cannot be bankable. */
+  if (slot == null || slot === 'BN') return false;
   const p = state.players[id] || {};
   state.openLockMarks = state.openLockMarks || {};
-  const slotLabel = slot == null || slot === 'BN' ? 'BN' : slotDisplayLabel(slot);
+  const slotLabel = slotDisplayLabel(slot);
   state.openLockMarks[id] = {
     pts: Math.round(n * 100) / 100,
     source: 'confirm',
     name: playerName(p),
-    slot: slot == null ? 'BN' : slot,
+    slot: slot,
     slotLabel: slotLabel,
     eventId: options.eventId != null ? String(options.eventId) : null,
     date: options.date || null,
@@ -1414,12 +1418,12 @@ function renderConfirmPanel(pair){
       const meta = {eventId: eventId, date: date, opp: opp, source: 'confirm'};
       if (act === 'lock'){
         if (!setManualLock(pid, n, meta)){
-          window.alert('Could not lock that score.');
+          window.alert('Could not lock that score — player must still be in a starting slot (benching forfeits the night).');
           return;
         }
       } else if (act === 'open'){
         if (!setConfirmOpen(pid, n, meta)){
-          window.alert('Could not mark that night bankable.');
+          window.alert('Could not mark bankable — player must still be started. If they’re on the bench, that night is forfeited.');
           return;
         }
       }
@@ -2235,6 +2239,8 @@ function sidePlayerRows(side){
     r.bank = enforceBankAbsFloor(plan, opts.dow);
   });
   if (freezeDirty) saveLockMarks();
+  /* Sitting players forfeit any unbanked open/OCR night before Rec runs. */
+  clearForfeitedOpenLocks(rows);
 
   const pack = {
     rows,
@@ -2264,11 +2270,37 @@ function latestScoredFp(r){
   return null;
 }
 
+/* Currently in a starting lineup slot (not BN / IR / taxi). */
+function isStartSlotRow(r){
+  if (!r) return false;
+  if (r.bucket === 'IR' || r.bucket === 'TX' || r.bucket === 'BN') return false;
+  if (r.slot === 'BN' || r.slotLabel === 'BN') return false;
+  if (isBenchRow(r) || isIrRow(r) || isTaxiRow(r)) return false;
+  return !!(r.starter || r.bucket === 'ST');
+}
+
+/* Drop open/OCR bankable marks once a player sits — benching forfeits that night. */
+function clearForfeitedOpenLocks(rows){
+  let dirty = false;
+  (rows || []).forEach(r => {
+    if (!r || r.locked) return;
+    if (isStartSlotRow(r)) return;
+    const id = String(r.pid);
+    if (state.openLockMarks && state.openLockMarks[id]){
+      delete state.openLockMarks[id];
+      dirty = true;
+    }
+  });
+  if (dirty) saveLockMarks();
+}
+
 /* Lockable scored night — locked chip, then sticky manual edit, then open confirm.
-   Manual edits must beat stale OCR/open marks so Rec matches the edited chip. */
+   Only start-slot nights: if the player is on the bench (or went start→bench),
+   the night is forfeited and no longer bankable. */
 function latestLockableFp(r){
   if (!r) return null;
   if (r.lockPts != null && Number.isFinite(Number(r.lockPts))) return Number(r.lockPts);
+  if (!isStartSlotRow(r)) return null;
   const ovPts = fpOverridePts(r.pid);
   if (ovPts != null) return ovPts;
   const open = openLockPtsFor(r.pid);
@@ -4448,25 +4480,32 @@ function playerRowHtml(r){
   const src = lockMarkSource(r.pid);
   const openSrc = (state.openLockMarks && state.openLockMarks[String(r.pid)]
     && state.openLockMarks[String(r.pid)].source) || null;
-  const canLock = r.locked || hasOpenLockIn(r.pid) || openPts != null || ovPts != null;
+  /* Bankable only while still started — BN / start→bench forfeits the night. */
+  const stillStart = isStartSlotRow(r);
+  const openBankable = stillStart && (hasOpenLockIn(r.pid) || openPts != null);
+  const canLock = r.locked || openBankable || (stillStart && ovPts != null);
   const pillCls = r.locked
     ? ((src === 'manual' || src === 'confirm') ? 'manual' : 'locked')
     : (canLock ? 'open' : 'none');
   const pillTxt = r.locked
     ? (src === 'confirm' ? 'Confirmed' : (src === 'manual' ? 'Manual' : 'Locked'))
-    : (ovPts != null ? 'Edited'
-      : (canLock ? (openSrc === 'confirm' ? 'Bankable' : 'Unlocked') : 'Not lock'));
+    : (!stillStart && (openPts != null || hasOpenLockIn(r.pid))
+      ? 'Forfeit'
+      : (ovPts != null && stillStart ? 'Edited'
+        : (canLock ? (openSrc === 'confirm' ? 'Bankable' : 'Unlocked') : 'Not lock')));
   const pillTitle = r.locked
     ? ((src === 'confirm' ? 'Confirmed lock' : (src === 'manual' ? 'Manual lock' : 'Locked'))
       + ' at ' + (r.slotLabel || 'slot') + ' · ' + formatFp(r.lockPts)
       + ' — click to edit or clear.')
-    : (ovPts != null
-      ? ('Manual FP ' + formatFp(ovPts) + ' — sticky. Click score to edit; click pill to lock it in.')
-      : (canLock
-        ? ('Bankable night'
-          + (openPts != null ? (' @ ' + formatFp(openPts)) : '')
-          + ' — click to lock / edit FP. Rec will say Lock when ≥ Bank.')
-        : 'Click the score chip to enter FP, or confirm a scored night above.'));
+    : (!stillStart
+      ? ('On the bench — last night is not bankable (must stay started after tip). Restart later to lock another game.')
+      : (ovPts != null
+        ? ('Manual FP ' + formatFp(ovPts) + ' — sticky. Click score to edit; click pill to lock it in.')
+        : (canLock
+          ? ('Bankable night'
+            + (openPts != null ? (' @ ' + formatFp(openPts)) : '')
+            + ' — stay started to keep it; benching forfeits. Click to lock / edit FP.')
+          : 'Click the score chip to enter FP, or confirm a scored night above.')));
   const bucketCls = r.bucket === 'IR' ? ' ir'
     : (r.bucket === 'TX' ? ' taxi' : (!r.starter ? ' bench' : ''));
   const trCls = (r.locked ? 'locked' : '') + bucketCls;
@@ -5111,6 +5150,7 @@ function render(){
     'Build ' + (window.MATCHUP_BUILD || '—') + '. '
     + 'Lineup slots mirror Sleeper (read-only). '
     + 'Confirm locks pulls scored nights — you verify Started + final Sleeper FP, then Bankable or Lock now. '
+    + 'A night stays bankable only while that player remains started after tip; moving them to the bench forfeits it (restart later for another game). '
     + 'API scores alone never bank. '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Roster plan is the editable beat-opponent target (auto = opp projected/live + 1). '
@@ -6300,13 +6340,17 @@ async function runOcrOnImage(file){
       const pid = String(h.pid);
       /* Skip anyone we’re about to mark LOCKED from a logo-ring. */
       if (hits.some(x => String(x.pid) === pid)) return;
+      /* Open LOCK-IN only counts while still started — BN forfeits. */
+      const side = sideForPid(pid);
+      const liveSlot = slotKeyForPidOnSide(side, pid);
+      if (liveSlot == null || liveSlot === 'BN') return;
+      if (h.slot == null || h.slot === 'BN') return;
       state.openLockMarks[pid] = {
         pts: h.pts != null && Number.isFinite(Number(h.pts)) ? Number(h.pts) : null,
         source: 'ocr-open',
         name: h.name,
-        slot: h.slot == null ? 'BN' : h.slot,
-        slotLabel: h.slotLabel || (h.slot == null || h.slot === 'BN'
-          ? 'BN' : slotDisplayLabel(h.slot))
+        slot: liveSlot,
+        slotLabel: slotDisplayLabel(liveSlot)
       };
     });
     hits.forEach(h => {
