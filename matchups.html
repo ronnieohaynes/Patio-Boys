@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261118-lockpos';
+    || '20261118-swcycle';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2981,7 +2981,9 @@ function outFillSwitchTarget(r, pack, opts){
 
 /* Tip-order: if this starter isn’t banking now, free the slot for a bench
    player who tips clearly sooner (>30m). Tips within 30m → better player
-   starts (higher Avg). Benching forfeits any played night still unlockable.
+   starts (higher Avg) ONLY when that bench tips at/before this starter —
+   never yank an earlier tip for a later “better” tip (Turner 4pm→Buzelis
+   4:30→Podz 5pm cycles). Benching forfeits any played night still unlockable.
    Never pull a bench piece that can fill an OUT/Sit start slot first. */
 function tipOrderSwitchTarget(r, pack, opts){
   if (isImmovable(r) || isBenchRow(r)) return null;
@@ -3009,7 +3011,8 @@ function tipOrderSwitchTarget(r, pack, opts){
     const close = tipsWithinCloseWindow(myNext, theirNext);
     const clearlyEarlier = theirNext < myNext - TIP_CLOSE_MS;
     if (close){
-      /* Within 30m — only Switch if bench is the better start. */
+      /* Within 30m — better start, but never a later tip (anti-cycle). */
+      if (theirNext > myNext + 1e-9) return;
       if (!isBetterStarter(o, r)) return;
       cands.push({row: o, kind: 'close', tip: theirNext});
       return;
@@ -3129,7 +3132,11 @@ function resolveUniqueSwitchRecs(pack){
         score: Number(r.rec.switchScore) || 0
       });
     });
-    if (!edges.length) return;
+    if (!edges.length){
+      uniquifyBenchSwitchIns(pack);
+      syncBenchSwitchIns(pack, new Set(), null);
+      return;
+    }
     edges.sort((a, b) => b.score - a.score
       || String(a.starter.pid).localeCompare(String(b.starter.pid)));
     const benchTaken = new Set();
@@ -3145,6 +3152,7 @@ function resolveUniqueSwitchRecs(pack){
       .filter((r, i, arr) => arr.indexOf(r) === i)
       .filter(r => !starterKeep.has(String(r.pid)));
     if (!losers.length){
+      uniquifyBenchSwitchIns(pack, starterKeep);
       syncBenchSwitchIns(pack, benchTaken, starterKeep);
       return;
     }
@@ -3163,6 +3171,7 @@ function resolveUniqueSwitchRecs(pack){
       }
     });
     if (!changed){
+      uniquifyBenchSwitchIns(pack, starterKeep);
       syncBenchSwitchIns(pack, benchTaken, starterKeep);
       return;
     }
@@ -3174,39 +3183,104 @@ function resolveUniqueSwitchRecs(pack){
       claimed.add(String(r.rec.switchPid));
     }
   });
+  uniquifyBenchSwitchIns(pack, null);
   syncBenchSwitchIns(pack, claimed, null);
 }
 
-/* Bench "In · over" should name the starter who actually claimed them. */
+/* One starter ← one bench In. Keep the strongest claim; demote the rest. */
+function uniquifyBenchSwitchIns(pack, protectedStarters){
+  if (!pack || !pack.rows) return;
+  const protect = protectedStarters || null;
+  const byOver = {};
+  (pack.rows || []).forEach(b => {
+    if (!b || !isBenchRow(b) || !b.rec || b.rec.action !== 'switch' || !b.rec.switchPid) return;
+    const overPid = String(b.rec.switchPid);
+    if (protect && protect.has(overPid)) return;
+    const score = Number(b.rec.switchScore);
+    const tip = nextTipMs(b.scout);
+    const mean = Number(b.dist && b.dist.mean) || 0;
+    const rank = (Number.isFinite(score) ? score : 0) * 1e6
+      + mean * 1e3
+      - (tip != null ? tip / 1e10 : 0);
+    if (!byOver[overPid] || rank > byOver[overPid].rank){
+      byOver[overPid] = {bench: b, rank: rank};
+    }
+  });
+  (pack.rows || []).forEach(b => {
+    if (!b || !isBenchRow(b) || !b.rec || b.rec.action !== 'switch' || !b.rec.switchPid) return;
+    const overPid = String(b.rec.switchPid);
+    if (protect && protect.has(overPid)) return;
+    const win = byOver[overPid];
+    if (win && win.bench !== b){
+      const nextBit = nextGamePhrase(b.scout) || nextGameLabel(b.scout);
+      b.rec = {
+        action: 'wait',
+        label: 'Wait',
+        reason: 'Bench'
+          + (nextBit ? (' · ' + nextBit) : '')
+          + ' · ' + shortPlayerName(win.bench.p) + ' takes the slot',
+        cls: 'rec-wait'
+      };
+    }
+  });
+}
+
+/* Bench "In · over" should name the starter who actually claimed them.
+   Unpaired Ins that target a starter already Switching out (or claimed by
+   another bench) demote to Wait — stops Queen+Podz both saying In over Sarr. */
 function syncBenchSwitchIns(pack, benchTaken, starterKeep){
-  if (!pack || !benchTaken || !benchTaken.size) return;
+  if (!pack) return;
   const byBench = {};
+  const switchingStarters = new Set();
   (pack.rows || []).forEach(r => {
     if (!r || !r.rec || r.rec.action !== 'switch' || !r.rec.switchPid) return;
     if (isBenchRow(r) || isIrRow(r) || isTaxiRow(r)) return;
     byBench[String(r.rec.switchPid)] = r;
+    switchingStarters.add(String(r.pid));
   });
+  const claimedStarters = new Set(Object.keys(byBench).map(pid => {
+    const s = byBench[pid];
+    return s ? String(s.pid) : '';
+  }).filter(Boolean));
   (pack.rows || []).forEach(b => {
     if (!b || !isBenchRow(b)) return;
     const owner = byBench[String(b.pid)];
-    if (!owner) return;
-    const into = owner.slotLabel && owner.slotLabel !== 'BN'
-      ? String(owner.slotLabel).toUpperCase()
-      : (owner.rec && owner.rec.switchInto) || null;
-    const over = {row: owner, into: into, why: 'paired Switch', score: 1};
-    const ownerForfeit = forfeitLockPhrase(owner);
-    b.rec = {
-      action: 'switch',
-      label: switchInLabel(over),
-      reason: 'start @ ' + (into || 'slot') + ' for '
-        + (nextGamePhrase(b.scout) || nextGameLabel(b.scout) || 'earlier tip')
-        + ' · over ' + shortPlayerName(owner.p)
-        + ownerForfeit,
-      cls: 'rec-switch',
-      switchPid: String(owner.pid),
-      switchInto: into,
-      switchKind: 'paired'
-    };
+    if (owner){
+      const into = owner.slotLabel && owner.slotLabel !== 'BN'
+        ? String(owner.slotLabel).toUpperCase()
+        : (owner.rec && owner.rec.switchInto) || null;
+      const over = {row: owner, into: into, why: 'paired Switch', score: 1};
+      const ownerForfeit = forfeitLockPhrase(owner);
+      b.rec = {
+        action: 'switch',
+        label: switchInLabel(over),
+        reason: 'start @ ' + (into || 'slot') + ' for '
+          + (nextGamePhrase(b.scout) || nextGameLabel(b.scout) || 'earlier tip')
+          + ' · over ' + shortPlayerName(owner.p)
+          + ownerForfeit,
+        cls: 'rec-switch',
+        switchPid: String(owner.pid),
+        switchInto: into,
+        switchKind: 'paired'
+      };
+      return;
+    }
+    /* Not the paired sub — drop Ins over a starter already Switching out
+       or claimed by another bench (Queen+Podz both over Sarr). */
+    if (!(b.rec && b.rec.action === 'switch')) return;
+    const overPid = b.rec.switchPid != null ? String(b.rec.switchPid) : '';
+    if (!overPid) return;
+    if (claimedStarters.has(overPid) || switchingStarters.has(overPid)){
+      const nextBit = nextGamePhrase(b.scout) || nextGameLabel(b.scout);
+      b.rec = {
+        action: 'wait',
+        label: 'Wait',
+        reason: 'Bench'
+          + (nextBit ? (' · ' + nextBit) : '')
+          + ' · slot claimed elsewhere',
+        cls: 'rec-wait'
+      };
+    }
   });
 }
 
@@ -3285,8 +3359,10 @@ function benchSwitchInOver(r, pack){
       why = (theirInj === 'IR' ? 'IR' : 'OUT') + ' starter';
       score = 1000 + myMean;
     } else if (myNext != null && theirNext != null && !isBankableNow(o, pack)
-      && tipsWithinCloseWindow(myNext, theirNext) && isBetterStarter(r, o)){
-      /* Tips within 30m — better player starts (not strict tip order). */
+      && tipsWithinCloseWindow(myNext, theirNext) && myNext <= theirNext + 1e-9
+      && isBetterStarter(r, o)){
+      /* Tips within 30m — better player starts, but only if we tip at/before
+         them (never In over an earlier tip from a later bench — cycles). */
       const theirLbl = nextGamePhrase(o.scout, nowMs) || nextGameLabel(o.scout) || 'their tip';
       why = 'better start · tips within 30m of ' + theirLbl;
       score = 850 + (myMean - theirMean);
