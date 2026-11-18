@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261118-swcycle';
+    || '20261118-bankrivals';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2348,8 +2348,9 @@ function unlockedSlotRivals(pack, slotLabel, excludePid){
   return out;
 }
 
-/* Best other night that could fill this slot: any scored lockable night,
-   else Avg if they still have games (proxy for a later lock). */
+/* Best other fill that could actually lock into this slot: any scored
+   lockable night, else that rival’s Bank if they still have games.
+   Opportunity cost is what can get banked — not Avg smash. */
 function bestRivalLockFp(pack, slotLabel, excludePid){
   let best = null;
   unlockedSlotRivals(pack, slotLabel, excludePid).forEach(o => {
@@ -2362,9 +2363,9 @@ function bestRivalLockFp(pack, slotLabel, excludePid){
       ? Number(o.scout.gamesLeft)
       : ((o.scout && o.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
     if (!(gamesLeft > 0)) return;
-    const mean = o.dist && o.dist.mean != null ? Number(o.dist.mean) : NaN;
-    if (!Number.isFinite(mean)) return;
-    if (best == null || mean > best) best = mean;
+    const bank = o.bank && o.bank.mark != null ? Number(o.bank.mark) : NaN;
+    if (!Number.isFinite(bank) || !(bank > 0)) return;
+    if (best == null || bank > best) best = bank;
   });
   return best;
 }
@@ -2398,7 +2399,7 @@ function bestLeftLockPhrase(r, pack, slot, scored){
     return formatFp(s) + ' best left @ ' + lab + ' · no better path';
   }
   return formatFp(s) + ' best left @ ' + lab
-    + ' · beats ' + formatFp(rival) + ' remaining';
+    + ' · beats ' + formatFp(rival) + ' lock path remaining';
 }
 
 /* Path score for parking THIS night in a slot: prefer scarce primary slots
