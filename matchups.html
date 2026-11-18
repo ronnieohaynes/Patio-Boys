@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261118-swcycle';
+    || '20261118-beatprob';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2348,8 +2348,15 @@ function unlockedSlotRivals(pack, slotLabel, excludePid){
   return out;
 }
 
-/* Best other night that could fill this slot: any scored lockable night,
-   else Avg if they still have games (proxy for a later lock). */
+function rivalGamesLeftCount(o){
+  if (!o) return 0;
+  if (o.scout && o.scout.gamesLeft != null) return Number(o.scout.gamesLeft);
+  return ((o.scout && o.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
+}
+
+/* Best other fill that could actually lock into this slot: any scored
+   lockable night, else that rival’s Bank if they still have games.
+   Opportunity cost is what can get banked — not Avg smash. */
 function bestRivalLockFp(pack, slotLabel, excludePid){
   let best = null;
   unlockedSlotRivals(pack, slotLabel, excludePid).forEach(o => {
@@ -2358,15 +2365,68 @@ function bestRivalLockFp(pack, slotLabel, excludePid){
       const n = Number(scored);
       if (best == null || n > best) best = n;
     }
-    const gamesLeft = o.scout && o.scout.gamesLeft != null
-      ? Number(o.scout.gamesLeft)
-      : ((o.scout && o.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
+    const gamesLeft = rivalGamesLeftCount(o);
     if (!(gamesLeft > 0)) return;
-    const mean = o.dist && o.dist.mean != null ? Number(o.dist.mean) : NaN;
-    if (!Number.isFinite(mean)) return;
-    if (best == null || mean > best) best = mean;
+    const bank = o.bank && o.bank.mark != null ? Number(o.bank.mark) : NaN;
+    if (!Number.isFinite(bank) || !(bank > 0)) return;
+    if (best == null || bank > best) best = bank;
   });
   return best;
+}
+
+/* P(one rival game beats mark) from smash mean/σ (normal). Falls back to
+   Bank as a point mass when dist is missing. */
+function rivalOneGameBeatProb(o, mark){
+  const m = Number(mark);
+  if (!o || !Number.isFinite(m)) return 0;
+  const dist = o.dist;
+  const mean = dist && Number(dist.mean);
+  const stdev = dist && Number(dist.stdev);
+  if (Number.isFinite(mean) && !(dist && dist.projOnly)){
+    if (window.LockInDist && typeof LockInDist.normalHitRate === 'function'){
+      const p = LockInDist.normalHitRate(mean, Number.isFinite(stdev) ? stdev : 0, m + 1e-6);
+      return Number.isFinite(p) ? Math.max(0, Math.min(1, p)) : 0;
+    }
+    if (!(Number.isFinite(stdev) && stdev > 1e-9)) return mean > m + 1e-9 ? 1 : 0;
+  }
+  const bank = o.bank && o.bank.mark != null ? Number(o.bank.mark) : NaN;
+  if (!Number.isFinite(bank)) return 0;
+  return bank > m + 1e-9 ? 1 : 0;
+}
+
+/* P(at least one remaining eligible rival beats this scored night at the slot).
+   Per rival: already-scored higher night → 1; else 1-(1-p)^gamesLeft from smash. */
+function slotScoreBeatProb(pack, slotLabel, excludePid, scored){
+  const s = Number(scored);
+  if (!Number.isFinite(s)) return null;
+  const rivals = unlockedSlotRivals(pack, slotLabel, excludePid);
+  if (!rivals.length) return 0;
+  let nobody = 1;
+  for (let i = 0; i < rivals.length; i++){
+    const o = rivals[i];
+    const already = latestLockableFp(o);
+    if (already != null && Number(already) > s + 1e-9) return 1;
+    const g = rivalGamesLeftCount(o);
+    if (!(g > 0)) continue;
+    const p1 = rivalOneGameBeatProb(o, s);
+    if (!(p1 > 0)) continue;
+    const pBeat = 1 - Math.pow(1 - Math.min(1, p1), g);
+    nobody *= (1 - pBeat);
+    if (nobody <= 1e-12) return 1;
+  }
+  return Math.max(0, Math.min(1, 1 - nobody));
+}
+
+function beatProbPhrase(r, pack, slot, scored){
+  if (!r || !pack || !slot || scored == null) return '';
+  const lab = String(slot.label || '').toUpperCase();
+  if (!lab || lab === 'BN') return '';
+  const p = slotScoreBeatProb(pack, lab, r.pid, scored);
+  if (p == null || !Number.isFinite(p)) return '';
+  const pct = Math.round(p * 100);
+  const nRiv = unlockedSlotRivals(pack, lab, r.pid).length;
+  if (!nRiv) return ' · 0% chance beaten @ ' + lab + ' (no rivals)';
+  return ' · ' + pct + '% chance beaten @ ' + lab;
 }
 
 /* Good-not-great night that still deserves Lock: clears DOW floor and beats
@@ -2398,7 +2458,7 @@ function bestLeftLockPhrase(r, pack, slot, scored){
     return formatFp(s) + ' best left @ ' + lab + ' · no better path';
   }
   return formatFp(s) + ' best left @ ' + lab
-    + ' · beats ' + formatFp(rival) + ' remaining';
+    + ' · beats ' + formatFp(rival) + ' lock path remaining';
 }
 
 /* Path score for parking THIS night in a slot: prefer scarce primary slots
@@ -3572,9 +3632,11 @@ function buildRec(r, pack, opts){
           reason: whyCore
             + ' · can’t lock from BN · start @ ' + slot.label + ' first'
             + (benchBankHit ? lockSlotPathWhy(r, slot, pack, open) : '')
+            + beatProbPhrase(r, pack, slot, scored)
             + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : '')
             + (dayHint ? (' · ' + dayHint) : ''),
-          cls: 'rec-switch'
+          cls: 'rec-switch',
+          beatProb: slotScoreBeatProb(pack, slot.label, r.pid, scored)
         };
       }
       return {
@@ -3709,11 +3771,13 @@ function buildRec(r, pack, opts){
       const utilLast = isUtilSlotLabel(slot.label) ? ' · UTIL last' : '';
       const moveBit = moved ? (' · use ' + slot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : '')) : '';
       const pathBit = bankHit ? lockSlotPathWhy(r, slot, pack, open) : '';
+      const beatBit = beatProbPhrase(r, pack, slot, scored);
       return attachLockSlotMeta({
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: whyCore + moveBit + pathBit + utilLast + urgency,
-        cls: 'rec-lock'
+        reason: whyCore + moveBit + pathBit + beatBit + utilLast + urgency,
+        cls: 'rec-lock',
+        beatProb: slotScoreBeatProb(pack, slot.label, r.pid, scored)
       }, slot);
     }
     return {
@@ -3770,14 +3834,17 @@ function buildRec(r, pack, opts){
           + (nextGamePhrase(later.scout, nowMs)
             ? (' (' + nextGamePhrase(later.scout, nowMs) + ')') : ''))
         : '';
+      const beatBit = slot ? beatProbPhrase(r, pack, slot, scored) : '';
       return {
         action: 'wait',
         label: 'Wait',
         reason: formatFp(scored) + ' < ' + bank
+          + beatBit
           + (nextPhrase ? (' · next ' + nextPhrase) : (' · ' + gamesLeft + ' left'))
           + stayStartLockPhrase(r)
           + laterBit,
-        cls: 'rec-wait'
+        cls: 'rec-wait',
+        beatProb: slot ? slotScoreBeatProb(pack, slot.label, r.pid, scored) : null
       };
     }
     return {
@@ -4538,10 +4605,11 @@ function buildWeekLockPlan(pack, opts){
         bank,
         tip,
         gamesLeft,
-        why: (bankReady
+        why: ((bankReady
           ? bankMeetPhrase(scored, bank, style, r.dist, null, mode, rowNeed)
           : bestLeftLockPhrase(r, pack, planSlot, scored))
-          || ('scored ' + formatFp(scored))
+          || ('scored ' + formatFp(scored)))
+          + (planSlot ? beatProbPhrase(r, pack, planSlot, scored) : '')
       });
       return;
     }
