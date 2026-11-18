@@ -6340,13 +6340,17 @@ async function runOcrOnImage(file){
       const pid = String(h.pid);
       /* Skip anyone we’re about to mark LOCKED from a logo-ring. */
       if (hits.some(x => String(x.pid) === pid)) return;
+      /* Open LOCK-IN only counts while still started — BN forfeits. */
+      const side = sideForPid(pid);
+      const liveSlot = slotKeyForPidOnSide(side, pid);
+      if (liveSlot == null || liveSlot === 'BN') return;
+      if (h.slot == null || h.slot === 'BN') return;
       state.openLockMarks[pid] = {
         pts: h.pts != null && Number.isFinite(Number(h.pts)) ? Number(h.pts) : null,
         source: 'ocr-open',
         name: h.name,
-        slot: h.slot == null ? 'BN' : h.slot,
-        slotLabel: h.slotLabel || (h.slot == null || h.slot === 'BN'
-          ? 'BN' : slotDisplayLabel(h.slot))
+        slot: liveSlot,
+        slotLabel: slotDisplayLabel(liveSlot)
       };
     });
     hits.forEach(h => {
