@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261118-bnforfeit';
+    || '20261118-livepace';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -3118,6 +3118,9 @@ function tipOrderSwitchTarget(r, pack, opts){
   if (isBankableNow(r, pack)) return null;
   /* OUT slots fill via outFillSwitchTarget — don’t tip-order over a live tip. */
   if (isRuledOutStart(r)) return null;
+  /* Live + on pace (or no reading yet) — don’t tip-order Switch mid-game. */
+  const liveHold = livePaceToBank(r, pack, Date.now());
+  if (liveHold && liveHold.onPace !== false) return null;
   const myNext = nextTipMs(r.scout);
   if (myNext == null) return null;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
@@ -3416,6 +3419,140 @@ function syncBenchSwitchIns(pack, benchTaken, starterKeep){
    their score banks — that burns opportunity cost (e.g. Matas 4:30 → wait
    ~4:55 before subbing Harden/LaMelo who tip after). */
 const STARTER_TIP_WATCH_MS = 25 * 60 * 1000;
+/* Tip→final wall-clock window for “still playing” (NBA tip usually lands ~2–2.5h). */
+const NBA_LIVE_WATCH_MS = 2.5 * 60 * 60 * 1000;
+/* Typical tip→final wall length used to project live FP to a full-night pace. */
+const NBA_GAME_WALL_MS = 2.25 * 60 * 60 * 1000;
+/* Don’t trust pace until a bit of clock has run (opening tips are noisy). */
+const LIVE_PACE_MIN_ELAPSED_MS = 10 * 60 * 1000;
+
+function isLiveGameInProgress(scout, nowMs){
+  const now = nowMs != null ? Number(nowMs) : Date.now();
+  if (!Number.isFinite(now)) return false;
+  function tippedLive(tipIso){
+    if (!tipIso) return false;
+    const t = Date.parse(tipIso);
+    if (!Number.isFinite(t)) return false;
+    return t <= now && now < t + NBA_LIVE_WATCH_MS;
+  }
+  const next = scout && scout.nextGame;
+  if (next && tippedLive(next.tipIso)) return true;
+  const slate = (scout && scout.slate) || [];
+  for (let i = 0; i < slate.length; i++){
+    const s = slate[i];
+    /* Non-final slate rows stay kind 'opp' until ESPN marks FINAL. */
+    if (!s || s.kind !== 'opp') continue;
+    if (tippedLive(s.tipIso)) return true;
+  }
+  return false;
+}
+
+function liveGameTipMs(scout, nowMs){
+  const now = nowMs != null ? Number(nowMs) : Date.now();
+  function tipIfLive(tipIso){
+    if (!tipIso) return null;
+    const t = Date.parse(tipIso);
+    if (!Number.isFinite(t)) return null;
+    if (t <= now && now < t + NBA_LIVE_WATCH_MS) return t;
+    return null;
+  }
+  const next = scout && scout.nextGame;
+  if (next){
+    const t = tipIfLive(next.tipIso);
+    if (t != null) return t;
+  }
+  const slate = (scout && scout.slate) || [];
+  for (let i = 0; i < slate.length; i++){
+    const s = slate[i];
+    if (!s || s.kind !== 'opp') continue;
+    const t = tipIfLive(s.tipIso);
+    if (t != null) return t;
+  }
+  return null;
+}
+
+/* Live-night FP reading only — open confirm / sticky edit matching this tip.
+   Prior bankable nights must not drive pace for a new in-progress game. */
+function liveFpReading(r){
+  if (!r || !isStartSlotRow(r)) return null;
+  const next = r.scout && r.scout.nextGame;
+  const marks = state.openLockMarks || {};
+  const m = marks[String(r.pid)];
+  if (m && m.pts != null && Number.isFinite(Number(m.pts))){
+    if (next && m.eventId != null && next.eventId != null
+      && String(m.eventId) === String(next.eventId)) return Number(m.pts);
+    if (next && m.date && next.date && String(m.date) === String(next.date)){
+      return Number(m.pts);
+    }
+    /* No night stamp — treat as the live confirm reading. */
+    if (m.date == null && m.eventId == null) return Number(m.pts);
+  }
+  const ov = fpOverrideFor(r.pid);
+  if (ov && ov.pts != null && next){
+    if (nightMatchesOverride(ov, {
+      date: next.date,
+      tipIso: next.tipIso,
+      eventId: next.eventId,
+      opp: next.opp
+    })) return Number(ov.pts);
+  }
+  return null;
+}
+
+/* Project current live FP to a full-night pace vs Bank.
+   null when not live. onPace true → hold Switch; false → free the slot. */
+function livePaceToBank(r, pack, nowMs){
+  if (!r || !isLiveGameInProgress(r.scout, nowMs)) return null;
+  const tip = liveGameTipMs(r.scout, nowMs);
+  const now = nowMs != null ? Number(nowMs) : Date.now();
+  const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  const cur = liveFpReading(r);
+  const elapsed = tip != null ? Math.max(0, now - tip) : 0;
+  let pace = null;
+  /* No reading yet / too early → hold (don’t Switch blind mid-game). */
+  let onPace = true;
+  if (cur != null && tip != null && elapsed >= LIVE_PACE_MIN_ELAPSED_MS){
+    const denom = Math.min(Math.max(elapsed, LIVE_PACE_MIN_ELAPSED_MS), NBA_GAME_WALL_MS);
+    pace = cur * (NBA_GAME_WALL_MS / denom);
+    if (bank != null && Number.isFinite(bank)){
+      const close = bankCloseFp(r.bank && r.bank.style, packWeekPlanMode(pack));
+      onPace = pace + 1e-9 >= bank - (close || 0);
+    }
+  }
+  return {
+    live: true,
+    tip: tip,
+    elapsedMs: elapsed,
+    cur: cur,
+    pace: pace,
+    bank: bank,
+    onPace: onPace
+  };
+}
+
+function livePacePhrase(paceInfo){
+  if (!paceInfo || !paceInfo.live) return '';
+  if (paceInfo.pace != null && paceInfo.bank != null){
+    const p = Math.round(Number(paceInfo.pace) * 10) / 10;
+    if (paceInfo.onPace){
+      return ' · on pace ~' + formatFp(p) + ' to Bank ' + paceInfo.bank
+        + ' · live · stay start';
+    }
+    return ' · pace ~' + formatFp(p) + ' < Bank ' + paceInfo.bank
+      + ' · live · behind';
+  }
+  if (paceInfo.cur != null){
+    return ' · live ' + formatFp(paceInfo.cur) + ' · pace TBD · stay start';
+  }
+  return ' · live · stay start until final';
+}
+
+function starterRecheckMs(starter, nowMs){
+  const tip = nextTipMs(starter && starter.scout);
+  if (tip == null) return null;
+  if (isLiveGameInProgress(starter.scout, nowMs)) return tip + NBA_LIVE_WATCH_MS;
+  return tip + STARTER_TIP_WATCH_MS;
+}
 
 function starterTipOpportunityOpen(starter, nowMs, pack){
   if (!starter || isImmovable(starter)) return true;
@@ -3425,6 +3562,10 @@ function starterTipOpportunityOpen(starter, nowMs, pack){
   /* Upcoming tip (or ~25m settle) still owns the slot — a prior under-Bank
      edit must not yank Nemby Fri 4pm for Sunday Tatum. */
   if (tip != null && now < tip + STARTER_TIP_WATCH_MS) return true;
+  /* Still playing: hold while on pace (or no live reading yet). Only free
+     the slot for a later higher-Avg when the live pace is clearly behind Bank. */
+  const live = livePaceToBank(starter, pack, now);
+  if (live && live.live) return live.onPace !== false;
   const scored = latestLockableFp(starter);
   const bank = starter.bank && starter.bank.mark != null ? Number(starter.bank.mark) : null;
   /* Tip window closed with a miss — slot free for later higher-Avg benches. */
@@ -3756,8 +3897,8 @@ function buildRec(r, pack, opts){
       }).sort((a, b) => (nextTipMs(a.scout) || 0) - (nextTipMs(b.scout) || 0));
       if (blocked.length && !myQ){
         const hold = blocked[0];
-        const tip = nextTipMs(hold.scout);
-        const decideLbl = tip != null ? formatClockParts(new Date(tip + STARTER_TIP_WATCH_MS)) : null;
+        const decideMs = starterRecheckMs(hold, nowMs);
+        const decideLbl = decideMs != null ? formatClockParts(new Date(decideMs)) : null;
         const starterLbl = nextGamePhrase(hold.scout, nowMs) || nextGameLabel(hold.scout);
         holdBit = ' · wait out '
           + shortPlayerName(hold.p)
@@ -3912,20 +4053,26 @@ function buildRec(r, pack, opts){
   }
 
   if (scored != null && bank != null && scored < bank){
+    const livePace = livePaceToBank(r, pack, nowMs);
     const alt = betterSwitchTarget(r, pack, switchOpts);
     const myMean = r.dist && Number(r.dist.mean) || 0;
     const altMean = alt && alt.row && alt.row.dist && Number(alt.row.dist.mean) || 0;
-    /* Higher-Avg later tip only after this tip window — keep Fri Nemby over Sun Tatum. */
+    /* Higher-Avg later tip only after this tip/live window — keep Fri Nemby over Sun Tatum.
+       Live + on-pace nights stay put; behind-pace frees the slot. */
     if (alt && alt.row && alt.kind !== 'tip' && altMean - myMean >= 4
       && !starterTipOpportunityOpen(r, nowMs, pack)){
       const altTip = nextGamePhrase(alt.row.scout, nowMs);
+      const paceBit = livePace && livePace.pace != null
+        ? (' · pace ~' + formatFp(Math.round(Number(livePace.pace) * 10) / 10))
+        : '';
       return attachSwitchMeta({
         action: 'switch',
         label: switchOutLabel(alt),
         reason: formatFp(scored) + ' < Bank ' + bank
+          + paceBit
           + (alt.into ? (' · ' + alt.into + '-eligible') : '')
           + (altTip ? (' · ' + shortPlayerName(alt.row.p) + ' ' + altTip) : '')
-          + ' · after tip window'
+          + (livePace && livePace.live ? ' · behind live pace' : ' · after tip window')
           + forfeitLockPhrase(r),
         cls: 'rec-switch'
       }, alt, r);
@@ -3938,6 +4085,19 @@ function buildRec(r, pack, opts){
             ? (' (' + nextGamePhrase(later.scout, nowMs) + ')') : ''))
         : '';
       const beatBit = slot ? beatProbPhrase(r, pack, slot, scored) : '';
+      /* Live night under Bank but on pace — Wait with projected pace, don’t Switch. */
+      if (livePace && livePace.live && livePace.onPace !== false){
+        return {
+          action: 'wait',
+          label: 'Wait',
+          reason: formatFp(scored) + ' < ' + bank
+            + livePacePhrase(livePace)
+            + beatBit
+            + laterBit,
+          cls: 'rec-wait',
+          beatProb: slot ? slotScoreBeatProb(pack, slot.label, r.pid, scored) : null
+        };
+      }
       return {
         action: 'wait',
         label: 'Wait',
@@ -3970,7 +4130,11 @@ function buildRec(r, pack, opts){
   if (gamesLeft > 0){
     const bits = [];
     if (bank != null) bits.push('Bank ≥' + bank);
-    if (nextPhrase) bits.push('hold for ' + nextPhrase);
+    const livePace = livePaceToBank(r, pack, nowMs);
+    if (livePace && livePace.live){
+      const phrase = livePacePhrase(livePace).replace(/^\s*·\s*/, '');
+      if (phrase) bits.push(phrase);
+    } else if (nextPhrase) bits.push('hold for ' + nextPhrase);
     else bits.push(gamesLeft + ' game' + (gamesLeft > 1 ? 's' : '') + ' left');
     /* If a later higher-Avg bench exists, say so — don’t Switch them in yet. */
     if (starterTipOpportunityOpen(r, nowMs, pack)){
@@ -3982,7 +4146,7 @@ function buildRec(r, pack, opts){
           + (laterTip ? (' (' + laterTip + ')') : ''));
       }
     }
-    if (dayHint && !nextPhrase) bits.push(dayHint);
+    if (dayHint && !nextPhrase && !(livePace && livePace.live)) bits.push(dayHint);
     return {action: 'wait', label: 'Wait', reason: bits.join(' · '), cls: 'rec-wait'};
   }
 
@@ -5167,7 +5331,8 @@ function render(){
     + Math.round(BEAT_PROB_LOCK_SOFT * 100) + '%, full Bank ≤'
     + Math.round(BEAT_PROB_LOCK_BANK * 100) + '% — otherwise Wait. '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
-    + 'Higher-Avg bench Ins wait until the starter’s tip + 25m so earlier nights keep their shot. '
+    + 'While a starter’s game is live, Rec projects FP pace to Bank (wall-clock tip→~2.25h) and holds Switch while on pace; behind-pace can free the slot. '
+    + 'Higher-Avg bench Ins wait through the tip + 25m settle, then the live pace window, so earlier nights keep their shot. '
     + 'Only starting-slot nights can lock — BN / IR / TX never bank (Start then Lock). '
     + 'IR = injured only. Taxi (TX) = swap with BN players in year ≤' + (leagueTaxiYears() + 1) + '. '
     + 'Wasn’t started = slash that night out of the confirm queue. '
