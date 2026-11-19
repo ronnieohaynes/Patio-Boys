@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261118-livepace';
+    || '20261118-notipin';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2824,6 +2824,19 @@ function tipsWithinCloseWindow(aMs, bMs){
   return Math.abs(a - b) <= TIP_CLOSE_MS;
 }
 
+/* True when the next tip is still in the future — never Switch someone in
+   after their game has already tipped (Turner 4pm In at 5:35 is too late). */
+function tipStillUpcoming(tipMs, nowMs){
+  if (tipMs == null || !Number.isFinite(Number(tipMs))) return false;
+  const now = nowMs != null ? Number(nowMs) : Date.now();
+  if (!Number.isFinite(now)) return false;
+  return Number(tipMs) > now;
+}
+
+function canStartForNextTip(scout, nowMs){
+  return tipStillUpcoming(nextTipMs(scout), nowMs);
+}
+
 /* “Better” for close tip-times: higher Avg (then lockable FP as tie-break). */
 function playerStartQuality(r){
   if (!r) return -Infinity;
@@ -3082,6 +3095,7 @@ function outFillSwitchTarget(r, pack, opts){
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN'
     ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null;
+  const nowMs = Date.now();
   const excluded = switchExcludeSet(opts);
   const cands = [];
   (pack.rows || []).forEach(o => {
@@ -3090,6 +3104,8 @@ function outFillSwitchTarget(r, pack, opts){
     if (isOutInjury(o.scout && o.scout.injury)) return;
     if (!fitsLockSlot(o.p, slotLabel)) return;
     const tip = nextTipMs(o.scout);
+    /* Don’t fill OUT with someone whose tip already started. */
+    if (!tipStillUpcoming(tip, nowMs)) return;
     const left = o.scout && o.scout.gamesLeft || 0;
     const scored = latestScoredFp(o);
     if (!(left > 0 || scored != null || tip != null)) return;
@@ -3125,6 +3141,7 @@ function tipOrderSwitchTarget(r, pack, opts){
   if (myNext == null) return null;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null;
+  const nowMs = Date.now();
   const excluded = switchExcludeSet(opts);
   const cands = [];
   (pack.rows || []).forEach(o => {
@@ -3138,6 +3155,8 @@ function tipOrderSwitchTarget(r, pack, opts){
     if (outStartsBenchCanFill(o, pack).length) return;
     const theirNext = nextTipMs(o.scout);
     if (theirNext == null) return;
+    /* Too late — never Switch in a bench player after tip. */
+    if (!tipStillUpcoming(theirNext, nowMs)) return;
     const close = tipsWithinCloseWindow(myNext, theirNext);
     const clearlyEarlier = theirNext < myNext - TIP_CLOSE_MS;
     if (close){
@@ -3186,6 +3205,7 @@ function betterSwitchTarget(r, pack, opts){
   const myMean = r.dist && Number(r.dist.mean) || 0;
   const slotLabel = r.slotLabel && r.slotLabel !== 'BN' ? String(r.slotLabel).toUpperCase() : null;
   if (!slotLabel) return null; /* starters only — bench uses switch-in */
+  const nowMs = Date.now();
   const myTip = nextTipMs(r.scout);
   const excluded = switchExcludeSet(opts);
   const cands = (pack.rows || []).filter(o => {
@@ -3200,6 +3220,8 @@ function betterSwitchTarget(r, pack, opts){
     const theirTip = nextTipMs(o.scout);
     /* Later tip than starter — only after starter tip window closed (above). */
     if (myTip != null && theirTip != null && theirTip < myTip) return false;
+    /* Never chase a higher-Avg bench whose tip already started. */
+    if (!tipStillUpcoming(theirTip, nowMs)) return false;
     const left = o.scout && o.scout.gamesLeft || 0;
     const scored = latestScoredFp(o);
     return left > 0 || scored != null;
@@ -3376,6 +3398,19 @@ function syncBenchSwitchIns(pack, benchTaken, starterKeep){
     if (!b || !isBenchRow(b)) return;
     const owner = byBench[String(b.pid)];
     if (owner){
+      /* Paired In is useless once the bench tip has started. */
+      if (!canStartForNextTip(b.scout)){
+        const nextBit = nextGamePhrase(b.scout) || nextGameLabel(b.scout);
+        b.rec = {
+          action: 'wait',
+          label: 'Wait',
+          reason: 'Bench'
+            + (nextBit ? (' · ' + nextBit) : '')
+            + ' · already tipped · too late to start',
+          cls: 'rec-wait'
+        };
+        return;
+      }
       const into = owner.slotLabel && owner.slotLabel !== 'BN'
         ? String(owner.slotLabel).toUpperCase()
         : (owner.rec && owner.rec.switchInto) || null;
@@ -3600,7 +3635,8 @@ function laterBenchBehindStarter(starter, pack, nowMs){
 /* Bench player → starter they should replace (slot they fit).
    Locked starters cannot be moved — never “In · over” them.
    Tip order: if starter isn’t banking and you tip sooner, take the slot.
-   Higher Avg / later tip: only after the starter’s tip opportunity closes. */
+   Higher Avg / later tip: only after the starter’s tip opportunity closes.
+   Never recommend In after this bench player’s tip already started. */
 function benchSwitchInOver(r, pack){
   const nowMs = Date.now();
   const myMean = r.dist && Number(r.dist.mean) || 0;
@@ -3608,6 +3644,8 @@ function benchSwitchInOver(r, pack){
   const myScored = latestScoredFp(r);
   const myBank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
   const myNext = nextTipMs(r.scout);
+  /* Too late to start — tip already began (or unknown). */
+  if (!tipStillUpcoming(myNext, nowMs)) return null;
   const myInj = r.scout && r.scout.injury;
   const myQ = myInj === 'DTD' || myInj === 'Q' || myInj === 'QUESTIONABLE';
   const cands = [];
@@ -3880,6 +3918,18 @@ function buildRec(r, pack, opts){
       };
     }
     if (gamesLeft > 0){
+      /* Already tipped while on BN — don’t suggest starting mid-game. */
+      if (!canStartForNextTip(r.scout, nowMs) && nextTipMs(r.scout) != null){
+        return {
+          action: 'wait',
+          label: 'Wait',
+          reason: 'Bench'
+            + (bank != null ? (' · Bank ≥' + bank) : '')
+            + (nextPhrase ? (' · ' + nextPhrase) : '')
+            + ' · already tipped · too late to start',
+          cls: 'rec-wait'
+        };
+      }
       /* Higher-Avg path blocked while a starter tip is still open — explain wait. */
       let holdBit = nextPhrase ? (' · ' + nextPhrase) : '';
       const myMeanNow = r.dist && Number(r.dist.mean) || 0;
@@ -5332,6 +5382,7 @@ function render(){
     + Math.round(BEAT_PROB_LOCK_BANK * 100) + '% — otherwise Wait. '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'While a starter’s game is live, Rec projects FP pace to Bank (wall-clock tip→~2.25h) and holds Switch while on pace; behind-pace can free the slot. '
+    + 'Never Switch a bench player in after their tip has started — tip-order / higher-Avg Ins require an upcoming tip. '
     + 'Higher-Avg bench Ins wait through the tip + 25m settle, then the live pace window, so earlier nights keep their shot. '
     + 'Only starting-slot nights can lock — BN / IR / TX never bank (Start then Lock). '
     + 'IR = injured only. Taxi (TX) = swap with BN players in year ≤' + (leagueTaxiYears() + 1) + '. '
