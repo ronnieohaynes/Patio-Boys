@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261118-bankfinal';
+    || '20261118-utilbeat';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2590,6 +2590,16 @@ function lockBeatProbOk(beatProb, soft){
   return Number(beatProb) <= max + 1e-9;
 }
 
+/* UTIL overflow still open → a later rival night can bank @ UTIL, so locking
+   this primary/F night has no real opportunity cost from beat-%. */
+function hasOpenUtilLockSlot(openSlots){
+  return (openSlots || []).some(s => s && isUtilSlotLabel(s.label));
+}
+
+function beatProbGatesLock(openSlots){
+  return !hasOpenUtilLockSlot(openSlots);
+}
+
 /* 'full' | 'high' | 'near' | null — how the night clears Bank. */
 function bankClearKind(scored, bank, style, dist, dow, mode){
   const s = scored != null ? Number(scored) : NaN;
@@ -3988,7 +3998,8 @@ function buildRec(r, pack, opts){
     const benchBeatP = slot && scored != null
       ? slotScoreBeatProb(pack, slot.label, r.pid, scored) : null;
     const benchSoft = benchBestLeft || bankClearKind(scored, bank, bankStyle, r.dist, null, weekMode) === 'near';
-    if ((benchBankHit || benchBestLeft) && slot && !lockBeatProbOk(benchBeatP, benchSoft)){
+    if ((benchBankHit || benchBestLeft) && slot && beatProbGatesLock(open)
+      && !lockBeatProbOk(benchBeatP, benchSoft)){
       return {
         action: 'wait',
         label: 'Wait',
@@ -3996,7 +4007,8 @@ function buildRec(r, pack, opts){
           ? bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed)
           : bestLeftLockPhrase(r, pack, slot, scored))
           + beatProbPhrase(r, pack, slot, scored)
-          + ' · hold — rivals likely top this @ ' + slot.label,
+          + ' · hold — rivals likely top this @ ' + slot.label
+          + ' · no UTIL left',
         cls: 'rec-wait',
         beatProb: benchBeatP
       };
@@ -4006,6 +4018,10 @@ function buildRec(r, pack, opts){
         ? bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed)
         : bestLeftLockPhrase(r, pack, slot, scored);
       if (slot){
+        const utilOpenBit = hasOpenUtilLockSlot(open) && benchBeatP != null
+          && !lockBeatProbOk(benchBeatP, benchSoft)
+          ? ' · UTIL open · bank anyway'
+          : '';
         return {
           action: 'switch',
           label: 'Start · ' + slot.label + ' then Lock',
@@ -4013,6 +4029,7 @@ function buildRec(r, pack, opts){
             + ' · can’t lock from BN · start @ ' + slot.label + ' first'
             + (benchBankHit ? lockSlotPathWhy(r, slot, pack, open) : '')
             + beatProbPhrase(r, pack, slot, scored)
+            + utilOpenBit
             + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : '')
             + (dayHint ? (' · ' + dayHint) : ''),
           cls: 'rec-switch',
@@ -4146,8 +4163,8 @@ function buildRec(r, pack, opts){
 
   /* Bankable night OR best remaining fill for this slot — lock before Switch/Wait.
      Slot = scarce path to max remaining lock points (not fixed PF-before-C).
-     Beat-% gates Lock: soft (near-miss / best-left) ≤35% chance beaten; full
-     Bank / season-high ≤50%. High beat risk → Wait (opportunity cost). */
+     Beat-% gates Lock only when no UTIL overflow remains: soft ≤35%, full Bank
+     ≤50%. With UTIL still open, bank anyway — rivals can fill UTIL later. */
   const bankHit = meetsBank(scored, bank, bankStyle, r.dist, dowNow, weekMode, gamesLeft);
   const clearKind = bankHit
     ? bankClearKind(scored, bank, bankStyle, r.dist, dowNow, weekMode) : null;
@@ -4157,7 +4174,8 @@ function buildRec(r, pack, opts){
   const beatP = slot && scored != null
     ? slotScoreBeatProb(pack, slot.label, r.pid, scored) : null;
   const softLock = bestLeft || clearKind === 'near';
-  if ((bankHit || bestLeft) && slot && !lockBeatProbOk(beatP, softLock)){
+  if ((bankHit || bestLeft) && slot && beatProbGatesLock(open)
+    && !lockBeatProbOk(beatP, softLock)){
     const whyCore = bankHit
       ? bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)
       : bestLeftLockPhrase(r, pack, slot, scored);
@@ -4167,6 +4185,7 @@ function buildRec(r, pack, opts){
       reason: whyCore
         + beatProbPhrase(r, pack, slot, scored)
         + ' · hold — rivals likely top this @ ' + String(slot.label).toUpperCase()
+        + ' · no UTIL left'
         + stayStartLockPhrase(r),
       cls: 'rec-wait',
       beatProb: beatP
@@ -4184,10 +4203,14 @@ function buildRec(r, pack, opts){
       const moveBit = moved ? (' · use ' + slot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : '')) : '';
       const pathBit = bankHit ? lockSlotPathWhy(r, slot, pack, open) : '';
       const beatBit = beatProbPhrase(r, pack, slot, scored);
+      const utilOpenBit = hasOpenUtilLockSlot(open) && beatP != null
+        && !lockBeatProbOk(beatP, softLock)
+        ? ' · UTIL open · bank anyway'
+        : '';
       return attachLockSlotMeta({
         action: 'lock',
         label: 'Lock · ' + slot.label,
-        reason: whyCore + moveBit + pathBit + beatBit + utilLast + urgency,
+        reason: whyCore + moveBit + pathBit + beatBit + utilOpenBit + utilLast + urgency,
         cls: 'rec-lock',
         beatProb: beatP
       }, slot);
@@ -5054,7 +5077,8 @@ function buildWeekLockPlan(pack, opts){
     const planSoft = leftReady
       || bankClearKind(scored, bank, style, r.dist, null, mode) === 'near';
     const ready = (bankReady || leftReady)
-      && (!planSlot || lockBeatProbOk(planBeat, planSoft));
+      && (!planSlot || !beatProbGatesLock(openSlots)
+        || lockBeatProbOk(planBeat, planSoft));
 
     if (ready && scored != null){
       cands.push({
@@ -5070,6 +5094,9 @@ function buildWeekLockPlan(pack, opts){
           : bestLeftLockPhrase(r, pack, planSlot, scored))
           || ('scored ' + formatFp(scored)))
           + (planSlot ? beatProbPhrase(r, pack, planSlot, scored) : '')
+          + (hasOpenUtilLockSlot(openSlots) && planBeat != null
+            && !lockBeatProbOk(planBeat, planSoft)
+            ? ' · UTIL open · bank anyway' : '')
       });
       return;
     }
@@ -5508,9 +5535,9 @@ function render(){
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Season lock avg by player first position (Guards / Forwards / Center) is display-only — Rec does not chase those numbers. '
     + 'Rec also Locks a good-not-great role-player night when it’s the best remaining fill for that slot — stars/starters with games left never best-left (they wait on Bank). '
-    + 'Lock is gated by P(remaining eligible rivals beat this night): soft locks ≤'
+    + 'Lock is gated by P(remaining eligible rivals beat this night) only when no UTIL lock slots remain: soft ≤'
     + Math.round(BEAT_PROB_LOCK_SOFT * 100) + '%, full Bank ≤'
-    + Math.round(BEAT_PROB_LOCK_BANK * 100) + '% — otherwise Wait. '
+    + Math.round(BEAT_PROB_LOCK_BANK * 100) + '% — otherwise Wait. With UTIL still open, bank anyway (rivals can fill UTIL later). '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'While a starter’s game is live, Rec projects FP pace to Bank (wall-clock tip→~2.25h) and holds Switch while on pace; behind-pace can free the slot. '
     + 'Never Switch a bench player in after their tip has started — tip-order / higher-Avg Ins require an upcoming tip. '
