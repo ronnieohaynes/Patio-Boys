@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261118-notipin';
+    || '20261118-bankwin';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -1102,6 +1102,20 @@ function setManualLock(pid, pts, opts){
   const side = sideForPid(id);
   const slot = slotKeyForPidOnSide(side, id);
   if (slot == null || slot === 'BN') return false;
+  const dist = state.lockByPid[id]
+    ? Object.assign({pid: id}, state.lockByPid[id])
+    : null;
+  const scout = scoutPlayer(id, dist);
+  const stamp = {
+    pts: n,
+    date: options.date || null,
+    eventId: options.eventId != null ? String(options.eventId) : null,
+    opp: options.opp || null
+  };
+  /* New locks only inside the bank window: FINAL night, next tip not started.
+     Editing an already-locked night still works after the window closes. */
+  const alreadyLocked = lockedPtsFor(id) != null;
+  if (!alreadyLocked && !isBankWindowOpenForStamp(scout, stamp)) return false;
   const p = state.players[id] || {};
   const rounded = Math.round(n * 100) / 100;
   state.lockMarks = state.lockMarks || {};
@@ -1131,6 +1145,18 @@ function setConfirmOpen(pid, pts, opts){
   const slot = slotKeyForPidOnSide(side, id);
   /* Must still be started — benching forfeits the night; BN cannot be bankable. */
   if (slot == null || slot === 'BN') return false;
+  const dist = state.lockByPid[id]
+    ? Object.assign({pid: id}, state.lockByPid[id])
+    : null;
+  const scout = scoutPlayer(id, dist);
+  const stamp = {
+    pts: n,
+    date: options.date || null,
+    eventId: options.eventId != null ? String(options.eventId) : null,
+    opp: options.opp || null
+  };
+  /* Bankable only after FINAL and before the next tip starts. */
+  if (!isBankWindowOpenForStamp(scout, stamp)) return false;
   const p = state.players[id] || {};
   state.openLockMarks = state.openLockMarks || {};
   const slotLabel = slotDisplayLabel(slot);
@@ -1242,7 +1268,12 @@ function promptManualLock(pid){
     window.alert('Enter a lock score between 0 and 120.');
     return;
   }
-  setManualLock(id, n, {source: existing != null ? (lockMarkSource(id) || 'manual') : 'confirm'});
+  if (!setManualLock(id, n, {
+    source: existing != null ? (lockMarkSource(id) || 'manual') : 'confirm'
+  })){
+    window.alert('Could not lock — must still be started, the night must be FINAL, and the next tip must not have started yet.');
+    return;
+  }
   render();
 }
 function clearShotUi(){
@@ -1296,6 +1327,9 @@ function listConfirmNights(side){
       break;
     }
     if (!pick) return;
+    /* Bank window closes once the next tip starts — too late for last night. */
+    const nextTip = nextTipMs(scout);
+    if (nextTip != null && nextTip <= Date.now()) return;
     const bank = (() => {
       if (!dist || !window.LockInDist || typeof LockInDist.lockBankPlan !== 'function'){
         return {mark: null, style: null};
@@ -1418,12 +1452,12 @@ function renderConfirmPanel(pair){
       const meta = {eventId: eventId, date: date, opp: opp, source: 'confirm'};
       if (act === 'lock'){
         if (!setManualLock(pid, n, meta)){
-          window.alert('Could not lock that score — player must still be in a starting slot (benching forfeits the night).');
+          window.alert('Could not lock that score — must still be started, the night must be FINAL, and the next tip must not have started yet (benching or a new tip closes the bank window).');
           return;
         }
       } else if (act === 'open'){
         if (!setConfirmOpen(pid, n, meta)){
-          window.alert('Could not mark bankable — player must still be started. If they’re on the bench, that night is forfeited.');
+          window.alert('Could not mark bankable — must still be started, the night must be FINAL, and the next tip must not have started yet.');
           return;
         }
       }
@@ -2239,8 +2273,10 @@ function sidePlayerRows(side){
     r.bank = enforceBankAbsFloor(plan, opts.dow);
   });
   if (freezeDirty) saveLockMarks();
-  /* Sitting players forfeit any unbanked open/OCR night before Rec runs. */
+  /* Sitting players forfeit any unbanked open/OCR night before Rec runs.
+     Next tip already started (or still live unfinished) also expires the window. */
   clearForfeitedOpenLocks(rows);
+  clearExpiredBankWindows(rows);
 
   const pack = {
     rows,
@@ -2294,18 +2330,108 @@ function clearForfeitedOpenLocks(rows){
   if (dirty) saveLockMarks();
 }
 
+function stampMatchesNight(stamp, night){
+  if (!stamp || !night) return false;
+  if (stamp.eventId != null && String(stamp.eventId) !== ''
+    && night.eventId != null && String(night.eventId) === String(stamp.eventId)){
+    return true;
+  }
+  if (stamp.date && night.date && String(stamp.date) === String(night.date)){
+    if (!stamp.opp || !night.opp) return true;
+    return String(stamp.opp).toUpperCase() === String(night.opp).toUpperCase();
+  }
+  return false;
+}
+
+/* Open confirm / sticky edit candidate — no bank-window gate yet. */
+function lockableNightCandidate(r){
+  if (!r) return null;
+  const ov = fpOverrideFor(r.pid);
+  if (ov && ov.pts != null && Number.isFinite(Number(ov.pts))){
+    return {
+      pts: Number(ov.pts),
+      date: ov.date || null,
+      eventId: ov.eventId != null ? String(ov.eventId) : null,
+      opp: ov.opp || null,
+      source: 'override'
+    };
+  }
+  const marks = state.openLockMarks || {};
+  const m = marks[String(r.pid)];
+  if (m && m.pts != null && Number.isFinite(Number(m.pts))){
+    return {
+      pts: Number(m.pts),
+      date: m.date || null,
+      eventId: m.eventId != null ? String(m.eventId) : null,
+      opp: m.opp || null,
+      source: m.source || 'open'
+    };
+  }
+  return null;
+}
+
+function nightStampIsFinal(scout, stamp){
+  if (!stamp) return false;
+  const slate = (scout && scout.slate) || [];
+  const finals = slate.filter(s => s && (s.kind === 'fp' || s.kind === 'played'));
+  if (!finals.length) return false;
+  if ((stamp.eventId != null && String(stamp.eventId) !== '') || stamp.date){
+    return finals.some(s => stampMatchesNight(stamp, s));
+  }
+  /* Unstamped reading — only “final” when no live tip is in progress. */
+  if (isLiveGameInProgress(scout)) return false;
+  return true;
+}
+
+/* Bank window for night N: ESPN FINAL, and the next tip has not started yet.
+   Mid-game FP is never bankable. Once tip N+1 tips, night N can no longer bank
+   — even if they stayed started for N. */
+function isBankWindowOpenForStamp(scout, stamp, nowMs){
+  if (!stamp || stamp.pts == null || !Number.isFinite(Number(stamp.pts))) return false;
+  const now = nowMs != null ? Number(nowMs) : Date.now();
+  if (!Number.isFinite(now)) return false;
+  const nextTip = nextTipMs(scout);
+  if (nextTip != null && nextTip <= now) return false;
+  if (!nightStampIsFinal(scout, stamp)) return false;
+  return true;
+}
+
+function isOpenBankWindow(r, nowMs){
+  if (!r || !isStartSlotRow(r)) return false;
+  const cand = lockableNightCandidate(r);
+  if (!cand) return false;
+  return isBankWindowOpenForStamp(r.scout, cand, nowMs);
+}
+
+/* Drop open bankable once the next tip has started — prior night can no longer bank. */
+function clearExpiredBankWindows(rows){
+  const now = Date.now();
+  let dirty = false;
+  (rows || []).forEach(r => {
+    if (!r || r.locked) return;
+    const id = String(r.pid);
+    if (!(state.openLockMarks && state.openLockMarks[id])) return;
+    const nextTip = nextTipMs(r.scout);
+    if (nextTip != null && nextTip <= now){
+      delete state.openLockMarks[id];
+      dirty = true;
+    }
+  });
+  if (dirty) saveLockMarks();
+}
+
 /* Lockable scored night — locked chip, then sticky manual edit, then open confirm.
    Only start-slot nights: if the player is on the bench (or went start→bench),
-   the night is forfeited and no longer bankable. */
+   the night is forfeited and no longer bankable.
+   Also requires the bank window: FINAL and next tip not started. */
 function latestLockableFp(r){
   if (!r) return null;
   if (r.lockPts != null && Number.isFinite(Number(r.lockPts))) return Number(r.lockPts);
   if (!isStartSlotRow(r)) return null;
-  const ovPts = fpOverridePts(r.pid);
-  if (ovPts != null) return ovPts;
-  const open = openLockPtsFor(r.pid);
-  if (open != null) return open;
-  return null;
+  const cand = lockableNightCandidate(r);
+  if (!cand) return null;
+  if (!isBankWindowOpenForStamp(r.scout, cand)) return null;
+  return Number(cand.pts);
 }
 
 function openLockSlots(pack, excludeSlotIndexes){
@@ -4694,10 +4820,13 @@ function playerRowHtml(r){
   const src = lockMarkSource(r.pid);
   const openSrc = (state.openLockMarks && state.openLockMarks[String(r.pid)]
     && state.openLockMarks[String(r.pid)].source) || null;
-  /* Bankable only while still started — BN / start→bench forfeits the night. */
+  /* Bankable only while still started AND inside the bank window
+     (FINAL night, next tip not started). BN / next tip / live unfinished expire it. */
   const stillStart = isStartSlotRow(r);
-  const openBankable = stillStart && (hasOpenLockIn(r.pid) || openPts != null);
-  const canLock = r.locked || openBankable || (stillStart && ovPts != null);
+  const bankWindow = isOpenBankWindow(r);
+  const openBankable = stillStart && bankWindow
+    && (hasOpenLockIn(r.pid) || openPts != null);
+  const canLock = r.locked || openBankable || (stillStart && bankWindow && ovPts != null);
   const pillCls = r.locked
     ? ((src === 'manual' || src === 'confirm') ? 'manual' : 'locked')
     : (canLock ? 'open' : 'none');
@@ -4713,13 +4842,16 @@ function playerRowHtml(r){
       + ' — click to edit or clear.')
     : (!stillStart
       ? ('On the bench — last night is not bankable (must stay started after tip). Restart later to lock another game.')
-      : (ovPts != null
-        ? ('Manual FP ' + formatFp(ovPts) + ' — sticky. Click score to edit; click pill to lock it in.')
-        : (canLock
-          ? ('Bankable night'
-            + (openPts != null ? (' @ ' + formatFp(openPts)) : '')
-            + ' — stay started to keep it; benching forfeits. Click to lock / edit FP.')
-          : 'Click the score chip to enter FP, or confirm a scored night above.')));
+      : (!bankWindow && (openPts != null || ovPts != null || hasOpenLockIn(r.pid))
+        ? ('Bank window closed — wait for FINAL, then bank before the next tip starts.'
+          + (isLiveGameInProgress(r.scout) ? ' Game still live.' : ''))
+        : (ovPts != null
+          ? ('Manual FP ' + formatFp(ovPts) + ' — sticky. Click score to edit; click pill to lock it in.')
+          : (canLock
+            ? ('Bankable night'
+              + (openPts != null ? (' @ ' + formatFp(openPts)) : '')
+              + ' — bank before the next tip; benching forfeits. Click to lock / edit FP.')
+            : 'Click the score chip to enter FP, or confirm a scored night above.'))));
   const bucketCls = r.bucket === 'IR' ? ' ir'
     : (r.bucket === 'TX' ? ' taxi' : (!r.starter ? ' bench' : ''));
   const trCls = (r.locked ? 'locked' : '') + bucketCls;
@@ -5364,7 +5496,7 @@ function render(){
     'Build ' + (window.MATCHUP_BUILD || '—') + '. '
     + 'Lineup slots mirror Sleeper (read-only). '
     + 'Confirm locks pulls scored nights — you verify Started + final Sleeper FP, then Bankable or Lock now. '
-    + 'A night stays bankable only while that player remains started after tip; moving them to the bench forfeits it (restart later for another game). '
+    + 'Bank window: after a night is FINAL and before the next tip starts — mid-game FP is never Bankable, and once the next tip tips the prior night can no longer bank (even if they stayed started). Benching also forfeits. '
     + 'API scores alone never bank. '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Roster plan is the editable beat-opponent target (auto = opp projected/live + 1). '
