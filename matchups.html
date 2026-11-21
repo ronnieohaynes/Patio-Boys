@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261118-utilbeat';
+    || '20261120-passfill';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -3359,6 +3359,42 @@ function betterSwitchTarget(r, pack, opts){
   return {row: best, into: slotLabel, kind: 'avg'};
 }
 
+/* Dead night (under floor/Bank, 0 games left) → free the slot for a bench
+   player who still has an upcoming tip. Lock slots still need fills; Pass alone
+   leaves the position empty. */
+function slotFillSwitchTarget(r, pack, opts){
+  if (!r || isImmovable(r) || isBenchRow(r)) return null;
+  const slotLabel = r.slotLabel && r.slotLabel !== 'BN'
+    ? String(r.slotLabel).toUpperCase() : null;
+  if (!slotLabel) return null;
+  const nowMs = Date.now();
+  const excluded = switchExcludeSet(opts);
+  const cands = [];
+  (pack.rows || []).forEach(o => {
+    if (!o || o.pid === r.pid || isImmovable(o) || !isBenchRow(o)) return;
+    if (excluded && excluded.has(String(o.pid))) return;
+    const inj = o.scout && o.scout.injury;
+    if (isOutInjury(inj)) return;
+    if (!fitsLockSlot(o.p, slotLabel)) return;
+    const tip = nextTipMs(o.scout);
+    if (!tipStillUpcoming(tip, nowMs)) return;
+    const left = o.scout && o.scout.gamesLeft != null
+      ? Number(o.scout.gamesLeft) : 0;
+    if (!(left > 0)) return;
+    cands.push({
+      row: o,
+      tip: tip,
+      mean: Number(o.dist && o.dist.mean) || 0,
+      left: left
+    });
+  });
+  cands.sort((a, b) => a.tip - b.tip || b.mean - a.mean
+    || String(a.row.pid).localeCompare(String(b.row.pid)));
+  const best = cands[0];
+  if (!best) return null;
+  return {row: best.row, into: slotLabel, kind: 'fill'};
+}
+
 /* How strongly this starter should claim this bench sub (unique across roster).
    Prefer real position slots over UTIL, tip-order over Avg chase, then tip gap. */
 function switchClaimScore(starter, alt){
@@ -3369,6 +3405,7 @@ function switchClaimScore(starter, alt){
   if (alt.into && !isUtilSlotLabel(alt.into)) score += 10000;
   if (alt.kind === 'close') score += 5500;
   else if (alt.kind === 'tip') score += 5000;
+  else if (alt.kind === 'fill') score += 6500; /* dead night — free slot for chase */
   else if (alt.kind === 'avg') score += 2000;
   else if (alt.kind === 'out') score += 8000;
   const myTip = nextTipMs(starter.scout);
@@ -4153,10 +4190,29 @@ function buildRec(r, pack, opts){
         cls: 'rec-wait'
       };
     }
+    /* Under floor + 0 left — still need a lock fill for this slot. */
+    const fillFloor = slotFillSwitchTarget(r, pack, switchOpts)
+      || betterSwitchTarget(r, pack, switchOpts);
+    if (fillFloor && fillFloor.row){
+      const inName = shortPlayerName(fillFloor.row.p);
+      const inTip = nextGamePhrase(fillFloor.row.scout, nowMs);
+      return attachSwitchMeta({
+        action: 'switch',
+        label: switchOutLabel(fillFloor),
+        reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)
+          + ' · no games left · start ' + inName
+          + (fillFloor.into ? (' @ ' + fillFloor.into) : '')
+          + (inTip ? (' · ' + inTip) : '')
+          + ' to chase a lock'
+          + forfeitLockPhrase(r),
+        cls: 'rec-switch'
+      }, fillFloor, r);
+    }
     return {
       action: 'sit',
       label: 'Pass',
-      reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed) + ' · no games left',
+      reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)
+        + ' · no games left · no bench path to fill slot',
       cls: 'rec-sit'
     };
   }
@@ -4301,10 +4357,29 @@ function buildRec(r, pack, opts){
         beatProb: slot ? slotScoreBeatProb(pack, slot.label, r.pid, scored) : null
       };
     }
+    /* Under Bank + 0 left — free the slot for someone who can still chase. */
+    const fillBank = slotFillSwitchTarget(r, pack, switchOpts)
+      || betterSwitchTarget(r, pack, switchOpts);
+    if (fillBank && fillBank.row){
+      const inName = shortPlayerName(fillBank.row.p);
+      const inTip = nextGamePhrase(fillBank.row.scout, nowMs);
+      return attachSwitchMeta({
+        action: 'switch',
+        label: switchOutLabel(fillBank),
+        reason: formatFp(scored) + ' below Bank ' + bank
+          + ' · no games left · start ' + inName
+          + (fillBank.into ? (' @ ' + fillBank.into) : '')
+          + (inTip ? (' · ' + inTip) : '')
+          + ' to chase a lock'
+          + forfeitLockPhrase(r),
+        cls: 'rec-switch'
+      }, fillBank, r);
+    }
     return {
       action: 'sit',
       label: 'Pass',
-      reason: formatFp(scored) + ' below Bank ' + bank + ' · no games left',
+      reason: formatFp(scored) + ' below Bank ' + bank
+        + ' · no games left · no bench path to fill slot',
       cls: 'rec-sit'
     };
   }
@@ -4342,10 +4417,28 @@ function buildRec(r, pack, opts){
   }
 
   if (scored != null){
+    const fillDone = (bank != null && scored < bank)
+      ? (slotFillSwitchTarget(r, pack, switchOpts) || betterSwitchTarget(r, pack, switchOpts))
+      : null;
+    if (fillDone && fillDone.row){
+      const inName = shortPlayerName(fillDone.row.p);
+      const inTip = nextGamePhrase(fillDone.row.scout, nowMs);
+      return attachSwitchMeta({
+        action: 'switch',
+        label: switchOutLabel(fillDone),
+        reason: 'No games left this window · start ' + inName
+          + (fillDone.into ? (' @ ' + fillDone.into) : '')
+          + (inTip ? (' · ' + inTip) : '')
+          + ' to chase a lock'
+          + forfeitLockPhrase(r),
+        cls: 'rec-switch'
+      }, fillDone, r);
+    }
     return {
       action: 'sit',
       label: bank != null && scored < bank ? 'Pass' : '—',
-      reason: 'No games left this window',
+      reason: 'No games left this window'
+        + (bank != null && scored < bank ? ' · no bench path to fill slot' : ''),
       cls: 'rec-sit'
     };
   }
@@ -5523,6 +5616,7 @@ function render(){
     + 'Lineup slots mirror Sleeper (read-only). '
     + 'Confirm locks pulls scored nights — you verify Started + final Sleeper FP, then Bankable or Lock now. '
     + 'Bankable / Lock only after ESPN FINAL — mid-game FP stays live (pace / Wait) until the tip ends; a prior finished Bankable night can still bank while a different tip is live. Benching forfeits. '
+    + 'Pass = don’t bank this night; if the starter has 0 games left under floor/Bank, Rec Switches in a bench player with an upcoming tip to chase a lock for that slot (Pass only when no fill path). '
     + 'API scores alone never bank. '
     + 'Fantasy weeks are Monday–Sunday; games left = remaining logos in that week. '
     + 'Roster plan is the editable beat-opponent target (auto = opp projected/live + 1). '
