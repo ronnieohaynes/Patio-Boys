@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261122-beatall';
+    || '20261122-nearfloor';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -3119,6 +3119,30 @@ function clearsAbsoluteMinLock(scored, dow){
   return s + 1e-9 >= min;
 }
 
+/* Last-night near-floor: within 1 FP of DOW min (e.g. 28 vs Sun 29).
+   Soft exception when beat-% says rivals are unlikely to top it. */
+const FLOOR_CLOSE_FP = 1;
+
+function nearAbsoluteFloor(scored, dow){
+  const s = scored != null ? Number(scored) : NaN;
+  if (!Number.isFinite(s)) return false;
+  const day = dow != null && Number.isFinite(Number(dow)) ? Number(dow) : leagueDow();
+  const min = absoluteMinLockFp(day);
+  if (min == null) return false;
+  return s + 1e-9 < min && s + 1e-9 >= min - FLOOR_CLOSE_FP;
+}
+
+function nearFloorPhrase(scored, dow){
+  const s = Number(scored);
+  const day = dow != null && Number.isFinite(Number(dow)) ? Number(dow) : leagueDow();
+  const min = absoluteMinLockFp(day);
+  if (!Number.isFinite(s) || min == null) return formatFp(s) + ' near floor';
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const d = ((Math.floor(day) % 7) + 7) % 7;
+  return formatFp(s) + ' ≈ ' + names[d] + ' floor ' + min
+    + ' (within ' + FLOOR_CLOSE_FP + ')';
+}
+
 function meetsBank(scored, bank, style, dist, dow, mode, gamesLeft){
   const s = scored != null ? Number(scored) : NaN;
   if (!Number.isFinite(s)) return false;
@@ -4208,7 +4232,10 @@ function buildRecRaw(r, pack, opts){
     return {action: 'sit', label: 'Sit', reason: 'ruled ' + tag, cls: 'rec-sit'};
   }
 
-  /* Absolute DOW floor — never Lock below Mon…Sun min (Nemby 29 on Fri/Sat). */
+  /* Absolute DOW floor — usually never Lock below Mon…Sun min.
+     Exception: last night within 1 of the floor when beat-% says rivals
+     are unlikely to top it (or UTIL overflow remains) — e.g. Jabari 28
+     vs Sun 29 with ~28% chance beaten @ C. */
   const dowNow = leagueDow(nowMs);
   const absMinNow = absoluteMinLockFp(dowNow);
   if (scored != null && absMinNow != null && Number(scored) + 1e-9 < absMinNow){
@@ -4236,6 +4263,32 @@ function buildRecRaw(r, pack, opts){
           + stayStartLockPhrase(r),
         cls: 'rec-wait'
       };
+    }
+    /* Last night near the floor — Lock when beat-% is soft-OK / UTIL open. */
+    if (nearAbsoluteFloor(scored, dowNow) && slot){
+      const floorBeatP = slotScoreBeatProb(pack, slot.label, r.pid, scored);
+      if (!beatProbGatesLock(open) || lockBeatProbOk(floorBeatP, true)){
+        const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
+        const moved = curLab && slot.label !== curLab;
+        const moveBit = moved
+          ? (' · use ' + slot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : ''))
+          : '';
+        const utilOpenBit = !beatProbGatesLock(open) && floorBeatP != null
+          && !lockBeatProbOk(floorBeatP, true)
+          ? ' · UTIL open · bank anyway'
+          : ' · near floor · bank anyway';
+        return attachLockSlotMeta({
+          action: 'lock',
+          label: 'Lock · ' + slot.label,
+          reason: nearFloorPhrase(scored, dowNow)
+            + moveBit
+            + utilOpenBit
+            + stayStartLockPhrase(r)
+            + (dayHint ? (' · ' + dayHint) : ' · bank now'),
+          cls: 'rec-lock',
+          beatProb: floorBeatP
+        }, slot);
+      }
     }
     /* Under floor + 0 left — still need a lock fill for this slot. */
     const fillFloor = slotFillSwitchTarget(r, pack, switchOpts)
@@ -5672,7 +5725,8 @@ function render(){
     + 'Under each name: last score (click to edit — sticky, API won’t overwrite) beside Avg (last 25), then next tip / games left. '
     + 'Rec shows Bank ≥; stars/starters near-miss (±' + BANK_CLOSE_STAR_FP
     + ') only on their last game, or Lock a season/sample-best night. Fringe/stream need exact. '
-    + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — never Lock below that day’s number. '
+    + 'Absolute DOW floor: Mon 35 … Sat 30 … Sun 29 — usually never Lock below; last night within '
+    + FLOOR_CLOSE_FP + ' of the floor can Lock when beat-% is soft-OK (or UTIL still open). '
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Season lock avg by player first position (Guards / Forwards / Center) is display-only — Rec does not chase those numbers. '
     + 'Rec also Locks a good-not-great role-player night when it’s the best remaining fill for that slot — stars/starters with games left never best-left (they wait on Bank). '
