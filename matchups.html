@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261122-util3';
+    || '20261122-utilord';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2489,8 +2489,77 @@ function slotTierRank(lab){
   return 0;
 }
 
-/* Unlocked roster mates who could still bank into this slot (not IR/taxi). */
-function unlockedSlotRivals(pack, slotLabel, excludePid){
+function openNonUtilLockSlots(openSlots){
+  return (openSlots || []).filter(s => s && !isUtilSlotLabel(s.label));
+}
+
+function rivalHasOpenNonUtilPath(o, openNonUtil){
+  if (!o) return false;
+  return (openNonUtil || []).some(s => s && fitsLockSlot(o.p, s.label));
+}
+
+function packRowByPid(pack, pid){
+  if (pid == null) return null;
+  return (pack && pack.rows || []).find(o => o && String(o.pid) === String(pid)) || null;
+}
+
+function rivalThreatMark(o){
+  if (!o) return 0;
+  const scored = latestLockableFp(o);
+  if (scored != null && Number.isFinite(Number(scored))) return Number(scored);
+  const gamesLeft = rivalGamesLeftCount(o);
+  if (gamesLeft > 0){
+    const bank = o.bank && o.bank.mark != null ? Number(o.bank.mark) : NaN;
+    if (Number.isFinite(bank) && bank > 0) return bank;
+  }
+  const mean = o.dist && o.dist.mean != null ? Number(o.dist.mean) : NaN;
+  return Number.isFinite(mean) ? mean : 0;
+}
+
+/* Pending UTIL nights to bank, strongest first → UTIL 1st / 2nd / 3rd. */
+function pendingUtilLockRows(pack){
+  const rows = (pack && pack.rows || []).filter(o => {
+    if (!o || o.locked || isImmovable(o)) return false;
+    if (isIrRow(o) || isTaxiRow(o)) return false;
+    if (!isUtilSlotLabel(o.slotLabel)) return false;
+    return true;
+  });
+  rows.sort((a, b) => {
+    const sa = latestLockableFp(a);
+    const sb = latestLockableFp(b);
+    const na = sa != null && Number.isFinite(Number(sa)) ? Number(sa) : -1e9;
+    const nb = sb != null && Number.isFinite(Number(sb)) ? Number(sb) : -1e9;
+    return nb - na
+      || rivalThreatMark(b) - rivalThreatMark(a)
+      || Number(a.slot) - Number(b.slot)
+      || String(a.pid).localeCompare(String(b.pid));
+  });
+  return rows;
+}
+
+/* 0 = UTIL 1st (bank first), 1 = 2nd, 2 = 3rd. Earlier locks reserve
+   stronger UTIL-only leftovers so later UTILs don’t double-count them. */
+function utilLockOrdinalFor(r, pack){
+  if (!r || !pack) return 0;
+  const pending = pendingUtilLockRows(pack);
+  let idx = pending.findIndex(o => String(o.pid) === String(r.pid));
+  if (idx < 0){
+    /* Not yet sitting UTIL — treat as next in line after current pending. */
+    idx = pending.length;
+  }
+  return Math.max(0, Math.min(2, idx));
+}
+
+function utilOrdinalTag(ordinal){
+  const n = Number(ordinal);
+  if (n === 1) return 'UTIL 2nd';
+  if (n >= 2) return 'UTIL 3rd';
+  return 'UTIL 1st';
+}
+
+/* Unlocked roster mates who could still bank into this slot (not IR/taxi).
+   UTIL rivals = leftovers who cannot fill any open non-UTIL lock slot. */
+function unlockedSlotRivals(pack, slotLabel, excludePid, opts){
   const lab = String(slotLabel || '').toUpperCase();
   const out = [];
   (pack && pack.rows || []).forEach(o => {
@@ -2500,7 +2569,32 @@ function unlockedSlotRivals(pack, slotLabel, excludePid){
     if (!fitsLockSlot(o.p, lab)) return;
     out.push(o);
   });
-  return out;
+  if (!isUtilSlotLabel(lab)) return out;
+  const open = (opts && opts.openSlots)
+    || openLockSlots(pack, opts && opts.excludeSlotIndexes);
+  const openNonUtil = openNonUtilLockSlots(open);
+  return out.filter(o => !rivalHasOpenNonUtilPath(o, openNonUtil));
+}
+
+/* UTIL cascade: sort UTIL-only leftovers by threat, drop the top `ordinal`
+   reserved for earlier UTIL locks (1st keeps all, 2nd skips #1 threat, …). */
+function cascadedSlotRivals(pack, slotLabel, excludePid, opts){
+  const lab = String(slotLabel || '').toUpperCase();
+  const baseOpts = opts || {};
+  let rivals = unlockedSlotRivals(pack, lab, excludePid, baseOpts);
+  if (!isUtilSlotLabel(lab)){
+    return {rivals: rivals, ordinal: null, label: lab};
+  }
+  const subject = baseOpts.subjectRow || packRowByPid(pack, excludePid);
+  const ordinal = subject ? utilLockOrdinalFor(subject, pack) : 0;
+  rivals = rivals.slice().sort((a, b) =>
+    rivalThreatMark(b) - rivalThreatMark(a)
+    || String(a.pid).localeCompare(String(b.pid)));
+  return {
+    rivals: rivals.slice(Math.max(0, ordinal)),
+    ordinal: ordinal,
+    label: utilOrdinalTag(ordinal)
+  };
 }
 
 function rivalGamesLeftCount(o){
@@ -2512,9 +2606,10 @@ function rivalGamesLeftCount(o){
 /* Best other fill that could actually lock into this slot: any scored
    lockable night, else that rival’s Bank if they still have games.
    Opportunity cost is what can get banked — not Avg smash. */
-function bestRivalLockFp(pack, slotLabel, excludePid){
+function bestRivalLockFp(pack, slotLabel, excludePid, opts){
   let best = null;
-  unlockedSlotRivals(pack, slotLabel, excludePid).forEach(o => {
+  const {rivals} = cascadedSlotRivals(pack, slotLabel, excludePid, opts);
+  rivals.forEach(o => {
     const scored = latestLockableFp(o);
     if (scored != null && Number.isFinite(Number(scored))){
       const n = Number(scored);
@@ -2550,11 +2645,15 @@ function rivalOneGameBeatProb(o, mark){
 }
 
 /* P(at least one remaining eligible rival beats this scored night at the slot).
-   Per rival: already-scored higher night → 1; else 1-(1-p)^gamesLeft from smash. */
-function slotScoreBeatProb(pack, slotLabel, excludePid, scored){
+   UTIL uses leftover-only rivals + 1st→2nd→3rd cascade. Per rival:
+   already-scored higher night → 1; else 1-(1-p)^gamesLeft from smash. */
+function slotScoreBeatProb(pack, slotLabel, excludePid, scored, opts){
   const s = Number(scored);
   if (!Number.isFinite(s)) return null;
-  const rivals = unlockedSlotRivals(pack, slotLabel, excludePid);
+  const beatOpts = Object.assign({}, opts || {}, {
+    subjectRow: (opts && opts.subjectRow) || packRowByPid(pack, excludePid)
+  });
+  const {rivals} = cascadedSlotRivals(pack, slotLabel, excludePid, beatOpts);
   if (!rivals.length) return 0;
   let nobody = 1;
   for (let i = 0; i < rivals.length; i++){
@@ -2572,16 +2671,23 @@ function slotScoreBeatProb(pack, slotLabel, excludePid, scored){
   return Math.max(0, Math.min(1, 1 - nobody));
 }
 
-function beatProbPhrase(r, pack, slot, scored){
+function beatProbPhrase(r, pack, slot, scored, opts){
   if (!r || !pack || !slot || scored == null) return '';
   const lab = String(slot.label || '').toUpperCase();
   if (!lab || lab === 'BN') return '';
-  const p = slotScoreBeatProb(pack, lab, r.pid, scored);
+  const beatOpts = Object.assign({}, opts || {}, {
+    subjectRow: r,
+    openSlots: (opts && opts.openSlots)
+      || openLockSlots(pack, opts && opts.excludeSlotIndexes)
+  });
+  const p = slotScoreBeatProb(pack, lab, r.pid, scored, beatOpts);
   if (p == null || !Number.isFinite(p)) return '';
   const pct = Math.round(p * 100);
-  const nRiv = unlockedSlotRivals(pack, lab, r.pid).length;
-  if (!nRiv) return ' · 0% chance beaten @ ' + lab + ' (no rivals)';
-  return ' · ' + pct + '% chance beaten @ ' + lab;
+  const casc = cascadedSlotRivals(pack, lab, r.pid, beatOpts);
+  const tag = casc.label || lab;
+  const nRiv = casc.rivals.length;
+  if (!nRiv) return ' · 0% chance beaten @ ' + tag + ' (no leftovers)';
+  return ' · ' + pct + '% chance beaten @ ' + tag;
 }
 
 /* Reference FP for beat-%: lockable night, else Bank ≥, else Avg. */
@@ -2624,14 +2730,24 @@ function attachBeatProbToRec(rec, r, pack, opts){
   const slot = beatProbSlotForRec(r, pack, opts, rec);
   const ref = beatProbRefFp(r);
   if (!slot || ref == null) return rec;
+  const beatOpts = Object.assign({}, opts || {}, {
+    subjectRow: r,
+    openSlots: (opts && opts.openSlots)
+      || openLockSlots(pack, opts && opts.excludeSlotIndexes)
+  });
   /* If phrase already names a different slot (e.g. preferred C), replace it. */
   const why = String(rec.reason || '');
-  const phrase = beatProbPhrase(r, pack, slot, ref);
+  const phrase = beatProbPhrase(r, pack, slot, ref, beatOpts);
   if (phrase){
-    const stripped = why.replace(/\s*·\s*\d+% chance beaten @ [A-Z0-9]+(?:\s*\([^)]*\))?/g, '');
+    const stripped = why.replace(
+      /\s*·\s*\d+% chance beaten @ [A-Z0-9]+(?:\s+\d+(?:st|nd|rd))?(?:\s*\([^)]*\))?/g,
+      ''
+    );
     rec.reason = stripped + phrase;
   }
-  const p = slotScoreBeatProb(pack, String(slot.label || '').toUpperCase(), r.pid, ref);
+  const p = slotScoreBeatProb(
+    pack, String(slot.label || '').toUpperCase(), r.pid, ref, beatOpts
+  );
   if (p != null && Number.isFinite(p)) rec.beatProb = p;
   return rec;
 }
@@ -2653,7 +2769,10 @@ function hasOpenUtilLockSlot(openSlots){
   return (openSlots || []).some(s => s && isUtilSlotLabel(s.label));
 }
 
-function beatProbGatesLock(openSlots){
+/* Gate Lock by beat-% always for UTIL itself (cascade). For primary/flex,
+   skip the gate while any UTIL overflow remains (bank anyway). */
+function beatProbGatesLock(openSlots, slotLabel){
+  if (isUtilSlotLabel(slotLabel)) return true;
   return !hasOpenUtilLockSlot(openSlots);
 }
 
@@ -2686,7 +2805,8 @@ function isBestLeftLock(r, pack, slot, scored, gamesLeft){
   /* Role players: night must already be a plus for THEM before beating rivals. */
   if (left > 0 && Number.isFinite(mean) && s + 1e-9 < mean) return false;
   const lab = String(slot.label || '').toUpperCase();
-  const rival = bestRivalLockFp(pack, lab, r.pid);
+  const rivalOpts = {subjectRow: r};
+  const rival = bestRivalLockFp(pack, lab, r.pid, rivalOpts);
   if (rival == null) return true;
   return s + 1e-9 >= Number(rival);
 }
@@ -2694,11 +2814,15 @@ function isBestLeftLock(r, pack, slot, scored, gamesLeft){
 function bestLeftLockPhrase(r, pack, slot, scored){
   const s = Number(scored);
   const lab = String(slot && slot.label || '').toUpperCase();
-  const rival = bestRivalLockFp(pack, lab, r && r.pid);
+  const rivalOpts = {subjectRow: r};
+  const rival = bestRivalLockFp(pack, lab, r && r.pid, rivalOpts);
+  const tag = isUtilSlotLabel(lab)
+    ? utilOrdinalTag(utilLockOrdinalFor(r, pack))
+    : lab;
   if (rival == null){
-    return formatFp(s) + ' best left @ ' + lab + ' · no better path';
+    return formatFp(s) + ' best left @ ' + tag + ' · no better path';
   }
-  return formatFp(s) + ' best left @ ' + lab
+  return formatFp(s) + ' best left @ ' + tag
     + ' · beats ' + formatFp(rival) + ' lock path remaining';
 }
 
@@ -2709,9 +2833,10 @@ function lockSlotPathScore(r, slot, pack){
   const scored = latestLockableFp(r);
   const my = scored != null && Number.isFinite(Number(scored)) ? Number(scored) : 0;
   const tier = slotTierRank(lab);
-  const rival = bestRivalLockFp(pack, lab, r && r.pid);
+  const rivalOpts = {subjectRow: r};
+  const rival = bestRivalLockFp(pack, lab, r && r.pid, rivalOpts);
   const uniqueEdge = rival == null ? (500 + my) : (my - rival);
-  const rivals = unlockedSlotRivals(pack, lab, r && r.pid);
+  const rivals = unlockedSlotRivals(pack, lab, r && r.pid, rivalOpts);
   const scarcity = 1 / (1 + rivals.length);
   const keep = r && r.slot != null && Number(r.slot) === Number(slot.index) ? 1 : 0;
   /* Tier dominates; then unique edge (best remaining filler); then scarcity. */
@@ -2724,7 +2849,7 @@ function lockSlotPathWhy(r, slot, pack, openSlots){
   const lab = String(slot.label || '').toUpperCase();
   if (isUtilSlotLabel(lab)) return '';
   const my = latestLockableFp(r);
-  const rival = bestRivalLockFp(pack, lab, r.pid);
+  const rival = bestRivalLockFp(pack, lab, r.pid, {subjectRow: r, openSlots: openSlots});
   const otherFits = (openSlots || []).filter(s =>
     s && Number(s.index) !== Number(slot.index) && fitsLockSlot(r.p, s.label)
     && !isUtilSlotLabel(s.label));
@@ -4117,10 +4242,11 @@ function buildRecRaw(r, pack, opts){
     const benchBestLeft = !benchBankHit && slot
       ? isBestLeftLock(r, pack, slot, scored, gamesLeft)
       : false;
+    const beatOpts = {subjectRow: r, openSlots: open};
     const benchBeatP = slot && scored != null
-      ? slotScoreBeatProb(pack, slot.label, r.pid, scored) : null;
+      ? slotScoreBeatProb(pack, slot.label, r.pid, scored, beatOpts) : null;
     const benchSoft = benchBestLeft || bankClearKind(scored, bank, bankStyle, r.dist, null, weekMode) === 'near';
-    if ((benchBankHit || benchBestLeft) && slot && beatProbGatesLock(open)
+    if ((benchBankHit || benchBestLeft) && slot && beatProbGatesLock(open, slot.label)
       && !lockBeatProbOk(benchBeatP, benchSoft)){
       return {
         action: 'wait',
@@ -4128,7 +4254,7 @@ function buildRecRaw(r, pack, opts){
         reason: (benchBankHit
           ? bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed)
           : bestLeftLockPhrase(r, pack, slot, scored))
-          + beatProbPhrase(r, pack, slot, scored)
+          + beatProbPhrase(r, pack, slot, scored, beatOpts)
           + ' · hold — rivals likely top this @ ' + slot.label
           + ' · no UTIL left',
         cls: 'rec-wait',
@@ -4140,7 +4266,7 @@ function buildRecRaw(r, pack, opts){
         ? bankMeetPhrase(scored, bank, bankStyle, r.dist, null, weekMode, weekNeed)
         : bestLeftLockPhrase(r, pack, slot, scored);
       if (slot){
-        const utilOpenBit = hasOpenUtilLockSlot(open) && benchBeatP != null
+        const utilOpenBit = !beatProbGatesLock(open, slot.label) && benchBeatP != null
           && !lockBeatProbOk(benchBeatP, benchSoft)
           ? ' · UTIL open · bank anyway'
           : '';
@@ -4150,7 +4276,7 @@ function buildRecRaw(r, pack, opts){
           reason: whyCore
             + ' · can’t lock from BN · start @ ' + slot.label + ' first'
             + (benchBankHit ? lockSlotPathWhy(r, slot, pack, open) : '')
-            + beatProbPhrase(r, pack, slot, scored)
+            + beatProbPhrase(r, pack, slot, scored, beatOpts)
             + utilOpenBit
             + (isUtilSlotLabel(slot.label) ? ' · UTIL last' : '')
             + (dayHint ? (' · ' + dayHint) : ''),
@@ -4280,14 +4406,17 @@ function buildRecRaw(r, pack, opts){
     }
     /* Last night near the floor — Lock when beat-% is soft-OK / UTIL open. */
     if (nearAbsoluteFloor(scored, dowNow) && slot){
-      const floorBeatP = slotScoreBeatProb(pack, slot.label, r.pid, scored);
-      if (!beatProbGatesLock(open) || lockBeatProbOk(floorBeatP, true)){
+      const beatOptsFloor = {subjectRow: r, openSlots: open};
+      const floorBeatP = slotScoreBeatProb(
+        pack, slot.label, r.pid, scored, beatOptsFloor
+      );
+      if (!beatProbGatesLock(open, slot.label) || lockBeatProbOk(floorBeatP, true)){
         const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
         const moved = curLab && slot.label !== curLab;
         const moveBit = moved
           ? (' · use ' + slot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : ''))
           : '';
-        const utilOpenBit = !beatProbGatesLock(open) && floorBeatP != null
+        const utilOpenBit = !beatProbGatesLock(open, slot.label) && floorBeatP != null
           && !lockBeatProbOk(floorBeatP, true)
           ? ' · UTIL open · bank anyway'
           : ' · near floor · bank anyway';
@@ -4333,18 +4462,20 @@ function buildRecRaw(r, pack, opts){
 
   /* Bankable night OR best remaining fill for this slot — lock before Switch/Wait.
      Slot = scarce path to max remaining lock points (not fixed PF-before-C).
-     Beat-% gates Lock only when no UTIL overflow remains: soft ≤35%, full Bank
-     ≤50%. With UTIL still open, bank anyway — rivals can fill UTIL later. */
+     Beat-% always gates UTIL locks (1st→2nd→3rd cascade). For primary/flex,
+     soft ≤35% / Bank ≤50% only when no UTIL overflow remains — otherwise bank
+     anyway (rivals can still fill UTIL). */
   const bankHit = meetsBank(scored, bank, bankStyle, r.dist, dowNow, weekMode, gamesLeft);
   const clearKind = bankHit
     ? bankClearKind(scored, bank, bankStyle, r.dist, dowNow, weekMode) : null;
   const bestLeft = !bankHit && slot
     ? isBestLeftLock(r, pack, slot, scored, gamesLeft)
     : false;
+  const beatOpts = {subjectRow: r, openSlots: open};
   const beatP = slot && scored != null
-    ? slotScoreBeatProb(pack, slot.label, r.pid, scored) : null;
+    ? slotScoreBeatProb(pack, slot.label, r.pid, scored, beatOpts) : null;
   const softLock = bestLeft || clearKind === 'near';
-  if ((bankHit || bestLeft) && slot && beatProbGatesLock(open)
+  if ((bankHit || bestLeft) && slot && beatProbGatesLock(open, slot.label)
     && !lockBeatProbOk(beatP, softLock)){
     const whyCore = bankHit
       ? bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)
@@ -4353,9 +4484,9 @@ function buildRecRaw(r, pack, opts){
       action: 'wait',
       label: 'Wait',
       reason: whyCore
-        + beatProbPhrase(r, pack, slot, scored)
+        + beatProbPhrase(r, pack, slot, scored, beatOpts)
         + ' · hold — rivals likely top this @ ' + String(slot.label).toUpperCase()
-        + ' · no UTIL left'
+        + (isUtilSlotLabel(slot.label) ? '' : ' · no UTIL left')
         + stayStartLockPhrase(r),
       cls: 'rec-wait',
       beatProb: beatP
@@ -4372,8 +4503,8 @@ function buildRecRaw(r, pack, opts){
       const utilLast = isUtilSlotLabel(slot.label) ? ' · UTIL last' : '';
       const moveBit = moved ? (' · use ' + slot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : '')) : '';
       const pathBit = bankHit ? lockSlotPathWhy(r, slot, pack, open) : '';
-      const beatBit = beatProbPhrase(r, pack, slot, scored);
-      const utilOpenBit = hasOpenUtilLockSlot(open) && beatP != null
+      const beatBit = beatProbPhrase(r, pack, slot, scored, beatOpts);
+      const utilOpenBit = !beatProbGatesLock(open, slot.label) && beatP != null
         && !lockBeatProbOk(beatP, softLock)
         ? ' · UTIL open · bank anyway'
         : '';
@@ -4445,7 +4576,7 @@ function buildRecRaw(r, pack, opts){
           + (nextGamePhrase(later.scout, nowMs)
             ? (' (' + nextGamePhrase(later.scout, nowMs) + ')') : ''))
         : '';
-      const beatBit = slot ? beatProbPhrase(r, pack, slot, scored) : '';
+      const beatBit = slot ? beatProbPhrase(r, pack, slot, scored, beatOpts) : '';
       /* Live night under Bank but on pace — Wait with projected pace, don’t Switch. */
       if (livePace && livePace.live && livePace.onPace !== false){
         return {
@@ -4456,7 +4587,9 @@ function buildRecRaw(r, pack, opts){
             + beatBit
             + laterBit,
           cls: 'rec-wait',
-          beatProb: slot ? slotScoreBeatProb(pack, slot.label, r.pid, scored) : null
+          beatProb: slot
+            ? slotScoreBeatProb(pack, slot.label, r.pid, scored, beatOpts)
+            : null
         };
       }
       return {
@@ -4468,7 +4601,9 @@ function buildRecRaw(r, pack, opts){
           + stayStartLockPhrase(r)
           + laterBit,
         cls: 'rec-wait',
-        beatProb: slot ? slotScoreBeatProb(pack, slot.label, r.pid, scored) : null
+        beatProb: slot
+          ? slotScoreBeatProb(pack, slot.label, r.pid, scored, beatOpts)
+          : null
       };
     }
     /* Under Bank + 0 left — free the slot for someone who can still chase. */
@@ -5279,12 +5414,13 @@ function buildWeekLockPlan(pack, opts){
     const leftReady = !bankReady && planSlot
       ? isBestLeftLock(r, pack, planSlot, scored, gamesLeft)
       : false;
+    const planBeatOpts = {subjectRow: r, openSlots: openSlots};
     const planBeat = planSlot && scored != null
-      ? slotScoreBeatProb(pack, planSlot.label, r.pid, scored) : null;
+      ? slotScoreBeatProb(pack, planSlot.label, r.pid, scored, planBeatOpts) : null;
     const planSoft = leftReady
       || bankClearKind(scored, bank, style, r.dist, null, mode) === 'near';
     const ready = (bankReady || leftReady)
-      && (!planSlot || !beatProbGatesLock(openSlots)
+      && (!planSlot || !beatProbGatesLock(openSlots, planSlot.label)
         || lockBeatProbOk(planBeat, planSoft));
 
     if (ready && scored != null){
@@ -5300,8 +5436,8 @@ function buildWeekLockPlan(pack, opts){
           ? bankMeetPhrase(scored, bank, style, r.dist, null, mode, rowNeed)
           : bestLeftLockPhrase(r, pack, planSlot, scored))
           || ('scored ' + formatFp(scored)))
-          + (planSlot ? beatProbPhrase(r, pack, planSlot, scored) : '')
-          + (hasOpenUtilLockSlot(openSlots) && planBeat != null
+          + (planSlot ? beatProbPhrase(r, pack, planSlot, scored, planBeatOpts) : '')
+          + (!beatProbGatesLock(openSlots, planSlot && planSlot.label) && planBeat != null
             && !lockBeatProbOk(planBeat, planSoft)
             ? ' · UTIL open · bank anyway' : '')
       });
@@ -5745,11 +5881,13 @@ function render(){
     + 'Season lock avg by player first position (Guards / Forwards / Center) is display-only — Rec does not chase those numbers. '
     + 'Rec also Locks a good-not-great role-player night when it’s the best remaining fill for that slot — stars/starters with games left never best-left (they wait on Bank). '
     + 'Every Rec shows P(remaining eligible rivals beat this night) at the Rec’s actual lock slot (lineup / Switch-into / Lock · slot — not redirected to preferred C). '
-    + 'UTIL is three separate lock-ins (same label); locking one UTIL does not close the other two. '
+    + 'UTIL is three separate lock-ins banked in order (strongest night = UTIL 1st). '
+    + 'UTIL 1st beat-% only counts leftovers who cannot fill an open non-UTIL slot; '
+    + 'UTIL 2nd/3rd reserve the stronger leftovers for earlier UTIL locks first. '
     + 'Beat-% uses scored night, else Bank ≥, else Avg. '
-    + 'Lock is gated by that % only when no UTIL lock slots remain: soft ≤'
+    + 'UTIL locks are always gated by that cascade beat-%. Primary/flex Lock is gated only when no UTIL overflow remains: soft ≤'
     + Math.round(BEAT_PROB_LOCK_SOFT * 100) + '%, full Bank ≤'
-    + Math.round(BEAT_PROB_LOCK_BANK * 100) + '% — otherwise Wait. With UTIL still open, bank anyway (rivals can fill UTIL later). '
+    + Math.round(BEAT_PROB_LOCK_BANK * 100) + '% — otherwise Wait. With UTIL still open on a non-UTIL Lock, bank anyway. '
     + 'Live clock at the top drives tip-relative Recs (in Xm / later today / tipped). '
     + 'While a starter’s game is live, Rec projects FP pace to Bank (wall-clock tip→~2.25h) and holds Switch while on pace; behind-pace can free the slot. '
     + 'Never Switch a bench player in after their tip has started — tip-order / higher-Avg Ins require an upcoming tip. '
