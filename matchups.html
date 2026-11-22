@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261122-nearfloor';
+    || '20261122-util3';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2443,8 +2443,13 @@ function openLockSlots(pack, excludeSlotIndexes){
     const idx = Number(r.slot);
     if (Number.isFinite(idx)) taken.add(idx);
     const lab = String(r.slotLabel || '').toUpperCase();
-    const byLabel = labels.indexOf(lab);
-    if (byLabel >= 0) taken.add(byLabel);
+    /* Only map label→index when the label is unique. UTIL appears 3× —
+       indexOf would collapse all three into the first UTIL slot. */
+    const matches = [];
+    for (let i = 0; i < labels.length; i++){
+      if (String(labels[i]).toUpperCase() === lab) matches.push(i);
+    }
+    if (matches.length === 1) taken.add(matches[0]);
   });
   return labels.map((lab, i) => ({index: i, label: lab, open: !taken.has(i)}))
     .filter(s => s.open);
@@ -2593,29 +2598,38 @@ function beatProbRefFp(r){
   return null;
 }
 
-function beatProbSlotForRec(r, pack, opts){
+/* Slot for beat-%: the Rec’s actual target (Lock/Switch-into), else current
+   lineup slot — never redirect UTIL nights to preferred C/PF scarcity path. */
+function beatProbSlotForRec(r, pack, opts, rec){
   if (!r || !pack) return null;
-  const open = openLockSlots(pack, opts && opts.excludeSlotIndexes);
-  const preferred = lockSlotForPlayer(r, open, pack);
-  if (preferred) return preferred;
+  if (rec && rec.lockSlotLabel){
+    return {
+      label: String(rec.lockSlotLabel).toUpperCase(),
+      index: rec.lockSlotIndex != null ? Number(rec.lockSlotIndex) : null
+    };
+  }
+  if (rec && rec.switchInto){
+    return {label: String(rec.switchInto).toUpperCase(), index: null};
+  }
   const cur = r.slotLabel && r.slotLabel !== 'BN'
     ? String(r.slotLabel).toUpperCase() : null;
   if (cur) return {label: cur, index: r.slot != null ? Number(r.slot) : null};
-  return null;
+  const open = openLockSlots(pack, opts && opts.excludeSlotIndexes);
+  return lockSlotForPlayer(r, open, pack);
 }
 
 /* Append % chance beaten to every Rec (dedupe if already present). */
 function attachBeatProbToRec(rec, r, pack, opts){
   if (!rec || typeof rec !== 'object') return rec;
-  const slot = beatProbSlotForRec(r, pack, opts);
+  const slot = beatProbSlotForRec(r, pack, opts, rec);
   const ref = beatProbRefFp(r);
   if (!slot || ref == null) return rec;
+  /* If phrase already names a different slot (e.g. preferred C), replace it. */
+  const why = String(rec.reason || '');
   const phrase = beatProbPhrase(r, pack, slot, ref);
   if (phrase){
-    const why = String(rec.reason || '');
-    if (why.indexOf('chance beaten') < 0){
-      rec.reason = why + phrase;
-    }
+    const stripped = why.replace(/\s*·\s*\d+% chance beaten @ [A-Z0-9]+(?:\s*\([^)]*\))?/g, '');
+    rec.reason = stripped + phrase;
   }
   const p = slotScoreBeatProb(pack, String(slot.label || '').toUpperCase(), r.pid, ref);
   if (p != null && Number.isFinite(p)) rec.beatProb = p;
@@ -5730,7 +5744,9 @@ function render(){
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Season lock avg by player first position (Guards / Forwards / Center) is display-only — Rec does not chase those numbers. '
     + 'Rec also Locks a good-not-great role-player night when it’s the best remaining fill for that slot — stars/starters with games left never best-left (they wait on Bank). '
-    + 'Every Rec shows P(remaining eligible rivals beat this night) at the lock slot (scored night, else Bank ≥, else Avg). '
+    + 'Every Rec shows P(remaining eligible rivals beat this night) at the Rec’s actual lock slot (lineup / Switch-into / Lock · slot — not redirected to preferred C). '
+    + 'UTIL is three separate lock-ins (same label); locking one UTIL does not close the other two. '
+    + 'Beat-% uses scored night, else Bank ≥, else Avg. '
     + 'Lock is gated by that % only when no UTIL lock slots remain: soft ≤'
     + Math.round(BEAT_PROB_LOCK_SOFT * 100) + '%, full Bank ≤'
     + Math.round(BEAT_PROB_LOCK_BANK * 100) + '% — otherwise Wait. With UTIL still open, bank anyway (rivals can fill UTIL later). '
