@@ -559,8 +559,8 @@
       </div>
       <div class="nav-secondary" id="navSecondary" role="tablist" aria-label="Matchup panels">
         <!-- League team tabs are injected by buildLeagueTeamTabs(); hidden until League is selected. -->
-        <!-- Matchup is a solo primary group — secondary chip stays hidden. -->
         <button class="nav-sub" id="tabBtnMatchup" type="button" role="tab" aria-selected="true" aria-controls="tabMatchup" data-group="matchup" data-tab="matchup" hidden>Matchup</button>
+        <button class="nav-sub" id="tabBtnWeek" type="button" role="tab" aria-selected="false" aria-controls="tabWeek" data-group="matchup" data-tab="week" hidden>Week</button>
         <button class="nav-sub" id="tabBtnFa" type="button" role="tab" aria-selected="false" aria-controls="tabFa" data-group="moves" data-tab="fa" hidden>FA</button>
         <button class="nav-sub" id="tabBtnTx" type="button" role="tab" aria-selected="false" aria-controls="tabTx" data-group="moves" data-tab="tx" hidden>Trades</button>
         <button class="nav-sub" id="tabBtnTrade" type="button" role="tab" aria-selected="false" aria-controls="tabTrade" data-group="moves" data-tab="trade" hidden>Analyzer</button>
@@ -647,6 +647,9 @@
     </div>
     <div class="boardsection status-panel" id="tabMatchup" role="tabpanel" aria-labelledby="tabBtnMatchup">
       <iframe class="status-frame" id="matchupsFrame" title="Matchups" src="about:blank"></iframe>
+    </div>
+    <div class="boardsection status-panel" id="tabWeek" role="tabpanel" aria-labelledby="tabBtnWeek" hidden>
+      <iframe class="status-frame" id="weeklyReportFrame" title="Weekly Report" src="about:blank"></iframe>
     </div>
     <div class="boardsection status-panel" id="tabTx" role="tabpanel" aria-labelledby="tabBtnTx" hidden>
       <iframe class="status-frame" id="transactionsFrame" title="Trades" src="about:blank"></iframe>
@@ -2376,9 +2379,9 @@ const HQ_NAV = {
   matchup: {
     label: 'Matchup',
     defaultTab: 'matchup',
-    hideSecondary: true,
     tabs: {
-      matchup: { panel: 'tabMatchup', btn: 'tabBtnMatchup', frame: 'matchupsFrame', src: 'matchups.html?embed=1&v=20261118-bnforfeit', loaded: 'matchupFrameLoaded' }
+      matchup: { panel: 'tabMatchup', btn: 'tabBtnMatchup', frame: 'matchupsFrame', src: 'matchups.html?embed=1&v=20261122-utilord', loaded: 'matchupFrameLoaded' },
+      week: { panel: 'tabWeek', btn: 'tabBtnWeek', frame: 'weeklyReportFrame', src: 'weekly-report.html?embed=1&v=20261123-week5', loaded: 'weekFrameLoaded' }
     }
   },
   league: {
@@ -2509,6 +2512,7 @@ const hqFrameLoaded = {
   gradesFrameLoaded: false,
   faFrameLoaded: false,
   matchupFrameLoaded: false,
+  weekFrameLoaded: false,
   txFrameLoaded: false,
   tradeFrameLoaded: false,
   offseasonFrameLoaded: false,
@@ -2523,6 +2527,7 @@ let mockFrameLoaded = false;
 let gradesFrameLoaded = false;
 let faFrameLoaded = false;
 let matchupFrameLoaded = false;
+let weekFrameLoaded = false;
 let txFrameLoaded = false;
 let tradeFrameLoaded = false;
 let offseasonFrameLoaded = false;
@@ -2537,6 +2542,7 @@ function syncFrameLoadedFlags(){
   gradesFrameLoaded = hqFrameLoaded.gradesFrameLoaded;
   faFrameLoaded = hqFrameLoaded.faFrameLoaded;
   matchupFrameLoaded = hqFrameLoaded.matchupFrameLoaded;
+  weekFrameLoaded = hqFrameLoaded.weekFrameLoaded;
   txFrameLoaded = hqFrameLoaded.txFrameLoaded;
   tradeFrameLoaded = hqFrameLoaded.tradeFrameLoaded;
   offseasonFrameLoaded = hqFrameLoaded.offseasonFrameLoaded;
@@ -2691,6 +2697,7 @@ function tabLoaderLabel(tab){
     goat: 'Loading GOAT race…',
     fa: 'Loading free agents…',
     matchup: 'Loading matchups…',
+    week: 'Loading weekly report…',
     tx: 'Loading trades…',
     trade: 'Loading trade analyzer…',
     offseason: 'Loading report card…',
@@ -2866,7 +2873,7 @@ function flashNavButton(btn){
 }
 
 /* Stamp iframe URLs so Refresh / nocache also busts nested script caches. */
-const HQ_BUILD = '20261122-utilord';
+const HQ_BUILD = '20261123-week5';
 function hqCacheToken(){
   return new URLSearchParams(location.search).get('nocache') || '';
 }
