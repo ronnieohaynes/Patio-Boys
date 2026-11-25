@@ -430,7 +430,7 @@
         <select id="focusTeam"></select>
       </div>
       <button type="button" class="btn" id="refreshBtn" title="Reload Sleeper lineups/matchups — keeps confirmed locks">Refresh slate</button>
-      <button type="button" class="btn" id="notifyBtn" title="Browser alerts when Focus team Rec flips to Switch (keep this tab open)">Alerts off</button>
+      <button type="button" class="btn" id="notifyBtn" title="Browser alerts when a Focus starter Rec flips to Switch — not bench Ins (keep this tab open)">Alerts off</button>
     </div>
 
     <div class="slate" id="slate"></div>
@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261122-utilord';
+    || '20261125-swstart';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -4729,8 +4729,8 @@ function paintNotifyBtn(){
   btn.classList.toggle('notify-on', on);
   btn.classList.toggle('primary', !on);
   btn.title = on
-    ? 'Alerts on — notifies when Focus team Rec flips to Switch, and ~15m before tip. Keep this tab open (background OK).'
-    : 'Turn on Switch alerts for your Focus team (browser permission required; keep Matchup tab open)';
+    ? 'Alerts on — notifies when a Focus starter Rec flips to Switch (not bench Ins), and ~15m before tip. Keep this tab open (background OK).'
+    : 'Turn on Switch alerts for Focus starters only (browser permission required; keep Matchup tab open)';
 }
 
 function resetNotifySeed(){
@@ -4738,10 +4738,18 @@ function resetNotifySeed(){
   state._notified = new Set();
 }
 
+/* Alerts only for the 10 starters — skip bench “In · over X” mirrors of the
+   same Switch so Smith Jr. BN doesn’t ping alongside Sarr’s Switch · Smith Jr. */
+function notifyEligibleSwitchRow(r){
+  if (!r || !r.rec || r.rec.action !== 'switch') return false;
+  if (!isStartSlotRow(r) || isBenchRow(r) || isIrRow(r) || isTaxiRow(r)) return false;
+  return true;
+}
+
 function seedSwitchAlerts(pack){
   const store = notifyStore();
   (pack && pack.rows || []).forEach(r => {
-    if (!r || !r.rec || r.rec.action !== 'switch') return;
+    if (!notifyEligibleSwitchRow(r)) return;
     store.add(switchAlertKey(r));
     const tipMs = nextTipMs(r.scout);
     if (tipMs != null) store.add(tipWarnKey(r.pid, tipMs));
@@ -4783,7 +4791,7 @@ function processSwitchAlerts(pack){
   const store = notifyStore();
   const now = Date.now();
   (pack.rows || []).forEach(r => {
-    if (!r || !r.rec || r.rec.action !== 'switch') return;
+    if (!notifyEligibleSwitchRow(r)) return;
     const name = shortPlayerName(r.p) || 'Player';
     const key = switchAlertKey(r);
     if (!store.has(key)){
@@ -4855,7 +4863,7 @@ async function toggleSwitchAlerts(){
     status.classList.remove('error');
     status.textContent = 'Switch alerts on for '
       + (state.focusTeam || 'Focus team')
-      + ' — keep this Matchup tab open (background is fine).';
+      + ' starters only — keep this Matchup tab open (background is fine).';
   }
 }
 
@@ -5898,7 +5906,7 @@ function render(){
     + 'Bank ≥ freezes at lock time. '
     + 'Score color vs Avg/Bank: red below Avg, yellow between Avg and Bank, green at/near Bank. '
     + 'Rec Lock prefers PG–C before UTIL. Rec suggests tip-order Switch / Wait — each bench sub is assigned to one best starter slot (not the same Switch on four rows). '
-    + 'Alerts on notifies when Focus team Rec flips to Switch (and ~15m before tip) while this tab stays open.';
+    + 'Alerts on notifies when a Focus starter Rec flips to Switch (bench Ins are silent — no mirror of the same swap) and ~15m before tip while this tab stays open.';
 }
 
 async function loadMatchups(week, opts){
