@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261127-outbank2';
+    || '20261127-outkeep2';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -3406,18 +3406,26 @@ function isOutInjury(inj){
 /* Start-slot player ruled OUT/IR — slot should be filled before tip-order
    benches someone who still has a game (Allen UTIL Sit → Marshall there,
    not Switch Marshall over Giannis @ F). */
+/* OUT starter with a lockable night that clears DOW floor (or meets Bank) —
+   keep them started; Switch would forfeit that night. */
+function outNightWorthKeeping(r, pack){
+  if (!r) return false;
+  const scored = latestLockableFp(r);
+  if (scored == null || !Number.isFinite(Number(scored))) return false;
+  const floor = absoluteMinLockFp(leagueDow());
+  if (floor != null && Number(scored) + 1e-9 >= floor) return true;
+  if (pack && isBankableNow(r, pack)) return true;
+  const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+  return meetsBank(scored, bank, r.bank && r.bank.style, r.dist,
+    null, packWeekPlanMode(pack), rowGamesLeft(r));
+}
+
 function isRuledOutStart(r, pack){
   if (!r || isBenchRow(r) || isIrRow(r) || isTaxiRow(r)) return false;
   if (isImmovable(r)) return false;
   if (!isOutInjury(r.scout && r.scout.injury)) return false;
-  /* Bankable OUT night must stay started to Lock — don’t tip-fill over it. */
-  if (pack && isBankableNow(r, pack)) return false;
-  if (!pack && latestLockableFp(r) != null){
-    const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
-    if (meetsBank(latestLockableFp(r), bank, r.bank && r.bank.style, r.dist, null, null, 0)){
-      return false;
-    }
-  }
+  /* Floor-clear / Bankable OUT night must stay started — don’t tip-fill over it. */
+  if (outNightWorthKeeping(r, pack)) return false;
   return true;
 }
 
@@ -4571,12 +4579,54 @@ function buildRecRaw(r, pack, opts){
     };
   }
 
-  /* OUT/IR and not locking this night — fill the Sit slot (Marshall over empty
-     OUT). Bankable OUT already returned Lock above. */
+  /* OUT/IR — Lock a floor-clear (or Bank) night instead of Switch/forfeit.
+     Personal Bank can sit above a good 35 (LaMelo); forfeiting that to chase
+     Nembhard is still wrong. Only fill Sit when the night is under floor / none. */
   if (isOutInjury(injury)){
+    const tag = injury === 'IR' ? 'IR' : 'OUT';
+    const absMinOut = absoluteMinLockFp(dowNow);
+    const keepOut = outNightWorthKeeping(r, pack);
+    if (keepOut && scored != null){
+      const beatOptsOut = {subjectRow: r, openSlots: open};
+      const beatPOut = slot
+        ? slotScoreBeatProb(pack, slot.label, r.pid, scored, beatOptsOut)
+        : null;
+      const floorBit = absMinOut != null && Number(scored) + 1e-9 >= absMinOut
+        ? (formatFp(scored) + ' ≥ '
+          + ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][((Math.floor(dowNow) % 7) + 7) % 7]
+          + ' floor ' + absMinOut)
+        : bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed);
+      if (slot){
+        const curLab = r.slotLabel ? String(r.slotLabel).toUpperCase() : null;
+        const moved = curLab && slot.label !== curLab;
+        const moveBit = moved
+          ? (' · use ' + slot.label + (isUtilSlotLabel(curLab) ? ' not UTIL' : ''))
+          : '';
+        return attachLockSlotMeta({
+          action: 'lock',
+          label: 'Lock · ' + slot.label,
+          reason: floorBit
+            + moveBit
+            + ' · ' + tag + ' · bank this night — Switch forfeits'
+            + (slot ? beatProbPhrase(r, pack, slot, scored, beatOptsOut) : '')
+            + stayStartLockPhrase(r)
+            + (dayHint ? (' · ' + dayHint) : ' · bank now'),
+          cls: 'rec-lock',
+          beatProb: beatPOut
+        }, slot);
+      }
+      return {
+        action: 'lock',
+        label: 'Lock',
+        reason: floorBit
+          + ' · ' + tag + ' · stay start — Switch forfeits'
+          + stayStartLockPhrase(r),
+        cls: 'rec-lock',
+        beatProb: beatPOut
+      };
+    }
     const alt = outFillSwitchTarget(r, pack, switchOpts)
       || betterSwitchTarget(r, pack, switchOpts);
-    const tag = injury === 'IR' ? 'IR' : 'OUT';
     if (alt && alt.row){
       const altTip = nextGamePhrase(alt.row.scout, nowMs);
       return attachSwitchMeta({
