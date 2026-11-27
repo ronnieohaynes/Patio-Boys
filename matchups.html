@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261125-swstart';
+    || '20261127-outbank2';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2599,6 +2599,7 @@ function cascadedSlotRivals(pack, slotLabel, excludePid, opts){
 
 function rivalGamesLeftCount(o){
   if (!o) return 0;
+  /* OUT ≠ out for the week — remaining slate tips still count unless gone. */
   if (o.scout && o.scout.gamesLeft != null) return Number(o.scout.gamesLeft);
   return ((o.scout && o.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
 }
@@ -3332,6 +3333,7 @@ function bankMeetPhrase(scored, bank, style, dist, dow, mode /* , needPer */){
 
 function rowGamesLeft(r){
   if (!r) return 0;
+  /* OUT is day-to-day for the week — only 0 when the slate has no tips left. */
   if (r.scout && r.scout.gamesLeft != null) return Number(r.scout.gamesLeft);
   return ((r.scout && r.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
 }
@@ -3404,17 +3406,26 @@ function isOutInjury(inj){
 /* Start-slot player ruled OUT/IR — slot should be filled before tip-order
    benches someone who still has a game (Allen UTIL Sit → Marshall there,
    not Switch Marshall over Giannis @ F). */
-function isRuledOutStart(r){
+function isRuledOutStart(r, pack){
   if (!r || isBenchRow(r) || isIrRow(r) || isTaxiRow(r)) return false;
   if (isImmovable(r)) return false;
-  return isOutInjury(r.scout && r.scout.injury);
+  if (!isOutInjury(r.scout && r.scout.injury)) return false;
+  /* Bankable OUT night must stay started to Lock — don’t tip-fill over it. */
+  if (pack && isBankableNow(r, pack)) return false;
+  if (!pack && latestLockableFp(r) != null){
+    const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
+    if (meetsBank(latestLockableFp(r), bank, r.bank && r.bank.style, r.dist, null, null, 0)){
+      return false;
+    }
+  }
+  return true;
 }
 
 function outStartsBenchCanFill(bench, pack){
   if (!bench || !pack) return [];
   const out = [];
   (pack.rows || []).forEach(s => {
-    if (!isRuledOutStart(s)) return;
+    if (!isRuledOutStart(s, pack)) return;
     const lab = s.slotLabel && s.slotLabel !== 'BN'
       ? String(s.slotLabel).toUpperCase() : null;
     if (!lab || !fitsLockSlot(bench.p, lab)) return;
@@ -3467,7 +3478,7 @@ function tipOrderSwitchTarget(r, pack, opts){
   /* Still bankable in a start slot — never bench (would forfeit the lock). */
   if (isBankableNow(r, pack)) return null;
   /* OUT slots fill via outFillSwitchTarget — don’t tip-order over a live tip. */
-  if (isRuledOutStart(r)) return null;
+  if (isRuledOutStart(r, pack)) return null;
   /* Live + on pace (or no reading yet) — don’t tip-order Switch mid-game. */
   const liveHold = livePaceToBank(r, pack, Date.now());
   if (liveHold && liveHold.onPace !== false) return null;
@@ -3607,7 +3618,7 @@ function switchClaimScore(starter, alt){
   if (!starter || !alt || !alt.row) return -Infinity;
   let score = 0;
   /* OUT/IR fills beat tip-order claims so Marshall isn’t stolen from Allen UTIL. */
-  if (isRuledOutStart(starter) || alt.kind === 'out') score += 30000;
+  if (isRuledOutStart(starter) || alt.kind === 'out') score += 30000; /* pack optional */
   if (alt.into && !isUtilSlotLabel(alt.into)) score += 10000;
   if (alt.kind === 'close') score += 5500;
   else if (alt.kind === 'tip') score += 5000;
@@ -4116,9 +4127,7 @@ function buildRecRaw(r, pack, opts){
   const onTaxi = isTaxiRow(r);
   const injury = r.scout && r.scout.injury;
   const myQ = injury === 'DTD' || injury === 'Q' || injury === 'QUESTIONABLE';
-  const gamesLeft = r.scout && r.scout.gamesLeft != null
-    ? r.scout.gamesLeft
-    : ((r.scout && r.scout.slate) || []).filter(s => s.kind === 'opp').length;
+  const gamesLeft = rowGamesLeft(r);
   /* Only confirmed / OCR / locked nights — raw ESPN FP isn’t bankable until you confirm. */
   const scored = latestLockableFp(r);
   const rawBank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
@@ -4351,26 +4360,9 @@ function buildRecRaw(r, pack, opts){
   }
 
   /* ——— Starters ——— */
-  if (injury === 'OUT' || injury === 'O' || injury === 'IR'){
-    /* Fill OUT/Sit slots first — don’t leave Marshall on BN while tip-ordering
-       him over Giannis. */
-    const alt = outFillSwitchTarget(r, pack, switchOpts)
-      || betterSwitchTarget(r, pack, switchOpts);
-    const tag = injury === 'IR' ? 'IR' : 'OUT';
-    if (alt && alt.row){
-      const altTip = nextGamePhrase(alt.row.scout, nowMs);
-      return attachSwitchMeta({
-        action: 'switch',
-        label: switchOutLabel(alt),
-        reason: tag + ' — use ' + shortPlayerName(alt.row.p)
-          + (alt.into ? (' @ ' + alt.into) : '')
-          + (altTip ? (' · tips ' + altTip) : '')
-          + ' · fill Sit slot first',
-        cls: 'rec-switch'
-      }, alt, r);
-    }
-    return {action: 'sit', label: 'Sit', reason: 'ruled ' + tag, cls: 'rec-sit'};
-  }
+  /* OUT/IR used to short-circuit to Switch/Sit here — that forfeited bankable
+     nights (LaMelo 35 Bankable + ankle OUT). Run floor/Bank Lock first; fill
+     the Sit slot only if this night isn’t locking. */
 
   /* Absolute DOW floor — usually never Lock below Mon…Sun min.
      Exception: last night within 1 of the floor when beat-% says rivals
@@ -4521,6 +4513,34 @@ function buildRecRaw(r, pack, opts){
       label: 'Lock',
       reason: whyCore + ' · no open slot' + urgency,
       cls: 'rec-lock'
+    };
+  }
+
+  /* OUT/IR and not locking this night — fill the Sit slot (Marshall over empty
+     OUT). Bankable OUT already returned Lock above. */
+  if (isOutInjury(injury)){
+    const alt = outFillSwitchTarget(r, pack, switchOpts)
+      || betterSwitchTarget(r, pack, switchOpts);
+    const tag = injury === 'IR' ? 'IR' : 'OUT';
+    if (alt && alt.row){
+      const altTip = nextGamePhrase(alt.row.scout, nowMs);
+      return attachSwitchMeta({
+        action: 'switch',
+        label: switchOutLabel(alt),
+        reason: tag + ' — use ' + shortPlayerName(alt.row.p)
+          + (alt.into ? (' @ ' + alt.into) : '')
+          + (altTip ? (' · tips ' + altTip) : '')
+          + ' · fill Sit slot first'
+          + forfeitLockPhrase(r),
+        cls: 'rec-switch'
+      }, alt, r);
+    }
+    return {
+      action: 'sit',
+      label: 'Sit',
+      reason: 'ruled ' + tag
+        + (scored != null ? (' · ' + formatFp(scored) + ' kept if you stay start') : ''),
+      cls: 'rec-sit'
     };
   }
 
@@ -5409,9 +5429,7 @@ function buildWeekLockPlan(pack, opts){
     const bank = r.bank && r.bank.mark != null ? Number(r.bank.mark) : null;
     const style = r.bank && r.bank.style;
     const mean = r.dist && r.dist.mean != null ? Number(r.dist.mean) : null;
-    const gamesLeft = r.scout && r.scout.gamesLeft != null
-      ? Number(r.scout.gamesLeft)
-      : ((r.scout && r.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
+    const gamesLeft = rowGamesLeft(r);
     const tip = nextGamePhrase(r.scout);
     const name = shortPlayerName(r.p) || playerName(r.p);
     const mode = packWeekPlanMode(pack);
