@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261127-outkeep2';
+    || '20261127-beatleftover';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2498,6 +2498,19 @@ function rivalHasOpenNonUtilPath(o, openNonUtil){
   return (openNonUtil || []).some(s => s && fitsLockSlot(o.p, s.label));
 }
 
+/* Rival can still bank into a *different* open lock slot (not thisLabel).
+   Locking 35 @ PG leaves G/UTIL for other guards — those aren’t PG leftovers. */
+function rivalHasOtherOpenLockPath(o, openSlots, thisLabel){
+  if (!o) return false;
+  const lab = String(thisLabel || '').toUpperCase();
+  return (openSlots || []).some(s => {
+    if (!s || !s.label) return false;
+    const sl = String(s.label).toUpperCase();
+    if (sl === lab) return false;
+    return fitsLockSlot(o.p, sl);
+  });
+}
+
 function packRowByPid(pack, pid){
   if (pid == null) return null;
   return (pack && pack.rows || []).find(o => o && String(o.pid) === String(pid)) || null;
@@ -2558,7 +2571,10 @@ function utilOrdinalTag(ordinal){
 }
 
 /* Unlocked roster mates who could still bank into this slot (not IR/taxi).
-   UTIL rivals = leftovers who cannot fill any open non-UTIL lock slot. */
+   Always leftovers-only vs open slots:
+   - UTIL → only who cannot fill any open non-UTIL slot
+   - Primary/flex → only who cannot fill a *different* open slot
+     (locking PG @ 35 still leaves G/UTIL for other guards). */
 function unlockedSlotRivals(pack, slotLabel, excludePid, opts){
   const lab = String(slotLabel || '').toUpperCase();
   const out = [];
@@ -2569,11 +2585,13 @@ function unlockedSlotRivals(pack, slotLabel, excludePid, opts){
     if (!fitsLockSlot(o.p, lab)) return;
     out.push(o);
   });
-  if (!isUtilSlotLabel(lab)) return out;
   const open = (opts && opts.openSlots)
     || openLockSlots(pack, opts && opts.excludeSlotIndexes);
-  const openNonUtil = openNonUtilLockSlots(open);
-  return out.filter(o => !rivalHasOpenNonUtilPath(o, openNonUtil));
+  if (isUtilSlotLabel(lab)){
+    const openNonUtil = openNonUtilLockSlots(open);
+    return out.filter(o => !rivalHasOpenNonUtilPath(o, openNonUtil));
+  }
+  return out.filter(o => !rivalHasOtherOpenLockPath(o, open, lab));
 }
 
 /* UTIL cascade: sort UTIL-only leftovers by threat, drop the top `ordinal`
@@ -6013,9 +6031,10 @@ function render(){
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Season lock avg by player first position (Guards / Forwards / Center) is display-only — Rec does not chase those numbers. '
     + 'Rec also Locks a good-not-great role-player night when it’s the best remaining fill for that slot — stars/starters with games left never best-left (they wait on Bank). '
-    + 'Every Rec shows P(remaining eligible rivals beat this night) at the Rec’s actual lock slot (lineup / Switch-into / Lock · slot — not redirected to preferred C). '
+    + 'Every Rec shows P(remaining leftover rivals beat this night) at the Rec’s actual lock slot (lineup / Switch-into / Lock · slot — not redirected to preferred C). '
+    + 'Beat-% only counts leftovers: players who fit this slot and have no other open lock path (locking PG @ 35 still leaves G/UTIL for other guards). '
     + 'UTIL is three separate lock-ins banked in order (strongest night = UTIL 1st). '
-    + 'UTIL 1st beat-% only counts leftovers who cannot fill an open non-UTIL slot; '
+    + 'UTIL 1st leftovers cannot fill any open non-UTIL slot; '
     + 'UTIL 2nd/3rd reserve the stronger leftovers for earlier UTIL locks first. '
     + 'Beat-% uses scored night, else Bank ≥, else Avg. '
     + 'UTIL locks are always gated by that cascade beat-%. Primary/flex Lock is gated only when no UTIL overflow remains: soft ≤'
