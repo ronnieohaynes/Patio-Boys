@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261127-sametip1';
+    || '20261127-selfbeat2';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2663,8 +2663,23 @@ function rivalOneGameBeatProb(o, mark){
   return bank > m + 1e-9 ? 1 : 0;
 }
 
-/* P(at least one remaining eligible rival beats this scored night at the slot).
-   UTIL uses leftover-only rivals + 1st→2nd→3rd cascade. Per rival:
+/* Fold one player's remaining games into P(nobody tops mark). */
+function foldBeatNobody(nobody, o, mark){
+  if (!(nobody > 0) || !o || !Number.isFinite(Number(mark))) return nobody;
+  const already = latestLockableFp(o);
+  /* Only for rivals — subject's current night is the mark itself. */
+  if (already != null && Number(already) > Number(mark) + 1e-9) return 0;
+  const g = rivalGamesLeftCount(o);
+  if (!(g > 0)) return nobody;
+  const p1 = rivalOneGameBeatProb(o, mark);
+  if (!(p1 > 0)) return nobody;
+  const pBeat = 1 - Math.pow(1 - Math.min(1, p1), g);
+  return nobody * (1 - pBeat);
+}
+
+/* P(this night is topped before we need it): rivals at the slot AND the
+   player's own remaining games (self-upside of waiting). UTIL uses
+   leftover-only rivals + 1st→2nd→3rd cascade. Per threat:
    already-scored higher night → 1; else 1-(1-p)^gamesLeft from smash. */
 function slotScoreBeatProb(pack, slotLabel, excludePid, scored, opts){
   const s = Number(scored);
@@ -2673,19 +2688,22 @@ function slotScoreBeatProb(pack, slotLabel, excludePid, scored, opts){
     subjectRow: (opts && opts.subjectRow) || packRowByPid(pack, excludePid)
   });
   const {rivals} = cascadedSlotRivals(pack, slotLabel, excludePid, beatOpts);
-  if (!rivals.length) return 0;
+  const subject = beatOpts.subjectRow;
   let nobody = 1;
   for (let i = 0; i < rivals.length; i++){
-    const o = rivals[i];
-    const already = latestLockableFp(o);
-    if (already != null && Number(already) > s + 1e-9) return 1;
-    const g = rivalGamesLeftCount(o);
-    if (!(g > 0)) continue;
-    const p1 = rivalOneGameBeatProb(o, s);
-    if (!(p1 > 0)) continue;
-    const pBeat = 1 - Math.pow(1 - Math.min(1, p1), g);
-    nobody *= (1 - pBeat);
+    nobody = foldBeatNobody(nobody, rivals[i], s);
     if (nobody <= 1e-12) return 1;
+  }
+  /* Own remaining slate can still beat tonight’s bankable mark. */
+  if (subject){
+    const gOwn = rivalGamesLeftCount(subject);
+    if (gOwn > 0){
+      const p1 = rivalOneGameBeatProb(subject, s);
+      if (p1 > 0){
+        const pBeat = 1 - Math.pow(1 - Math.min(1, p1), gOwn);
+        nobody *= (1 - pBeat);
+      }
+    }
   }
   return Math.max(0, Math.min(1, 1 - nobody));
 }
@@ -2705,8 +2723,12 @@ function beatProbPhrase(r, pack, slot, scored, opts){
   const casc = cascadedSlotRivals(pack, lab, r.pid, beatOpts);
   const tag = casc.label || lab;
   const nRiv = casc.rivals.length;
-  if (!nRiv) return ' · 0% chance beaten @ ' + tag + ' (no leftovers)';
-  return ' · ' + pct + '% chance beaten @ ' + tag;
+  const ownLeft = rivalGamesLeftCount(r);
+  if (!nRiv && !(ownLeft > 0)){
+    return ' · 0% chance beaten @ ' + tag + ' (no leftovers)';
+  }
+  const ownBit = ownLeft > 0 ? ' · incl. own' : '';
+  return ' · ' + pct + '% chance beaten @ ' + tag + ownBit;
 }
 
 /* Reference FP for beat-%: lockable night, else Bank ≥, else Avg. */
@@ -2759,7 +2781,7 @@ function attachBeatProbToRec(rec, r, pack, opts){
   const phrase = beatProbPhrase(r, pack, slot, ref, beatOpts);
   if (phrase){
     const stripped = why.replace(
-      /\s*·\s*\d+% chance beaten @ [A-Z0-9]+(?:\s+\d+(?:st|nd|rd))?(?:\s*\([^)]*\))?/g,
+      /\s*·\s*\d+% chance beaten @ [A-Z0-9]+(?:\s+\d+(?:st|nd|rd))?(?:\s*\([^)]*\))?(?:\s*·\s*incl\. own)?/g,
       ''
     );
     rec.reason = stripped + phrase;
@@ -6036,8 +6058,8 @@ function render(){
     + 'Header FP is the sum of locked nights only (weekly goal ' + LOCK_FP_GOAL + '). '
     + 'Season lock avg by player first position (Guards / Forwards / Center) is display-only — Rec does not chase those numbers. '
     + 'Rec also Locks a good-not-great role-player night when it’s the best remaining fill for that slot — stars/starters with games left never best-left (they wait on Bank). '
-    + 'Every Rec shows P(remaining leftover rivals beat this night) at the Rec’s actual lock slot (lineup / Switch-into / Lock · slot — not redirected to preferred C). '
-    + 'Beat-% only counts leftovers: players who fit this slot and have no other open lock path (locking PG @ 35 still leaves G/UTIL for other guards). '
+    + 'Every Rec shows P(this night gets topped) at the Rec’s actual lock slot (lineup / Switch-into / Lock · slot — not redirected to preferred C): leftover rivals (no other open lock path) plus the player’s own remaining games (incl. own). '
+    + 'Leftover rivals: players who fit this slot and have no other open lock path (locking PG @ 35 still leaves G/UTIL for other guards). '
     + 'UTIL is three separate lock-ins banked in order (strongest night = UTIL 1st). '
     + 'UTIL 1st leftovers cannot fill any open non-UTIL slot; '
     + 'UTIL 2nd/3rd reserve the stronger leftovers for earlier UTIL locks first. '
