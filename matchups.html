@@ -3434,6 +3434,52 @@ function outStartsBenchCanFill(bench, pack){
   return out;
 }
 
+/* Bench pids actually chosen to cover OUT/IR starts — only those are reserved
+   from tip-order (not every PG who *could* fill Ball). */
+function outFillReservedBenchPids(pack, opts){
+  const reserved = new Set();
+  if (!pack) return reserved;
+  (pack.rows || []).forEach(s => {
+    if (!isRuledOutStart(s, pack)) return;
+    const alt = outFillSwitchTarget(s, pack, opts);
+    if (alt && alt.row) reserved.add(String(alt.row.pid));
+  });
+  return reserved;
+}
+
+/* When tip-order skips an earlier Fri bench because they cover an OUT start
+   (Reaves → Ball OUT, so Buzelis gets Sarr) — surface that in the Rec reason. */
+function tipOrderOutCoverPhrase(r, pack, chosen, opts){
+  if (!r || !pack || !chosen || !chosen.row) return '';
+  const myNext = nextTipMs(r.scout);
+  const chosenTip = nextTipMs(chosen.row.scout);
+  if (chosenTip == null) return '';
+  const reserved = outFillReservedBenchPids(pack, opts);
+  if (!reserved.size) return '';
+  const slotLabel = r.slotLabel && r.slotLabel !== 'BN'
+    ? String(r.slotLabel).toUpperCase() : null;
+  if (!slotLabel) return '';
+  const nowMs = Date.now();
+  const bits = [];
+  (pack.rows || []).forEach(o => {
+    if (!o || !reserved.has(String(o.pid)) || !isBenchRow(o)) return;
+    if (String(o.pid) === String(chosen.row.pid)) return;
+    if (!fitsLockSlot(o.p, slotLabel)) return;
+    const theirNext = nextTipMs(o.scout);
+    if (theirNext == null || !tipStillUpcoming(theirNext, nowMs)) return;
+    if (!(theirNext < chosenTip - 1e-9)) return;
+    if (myNext != null && !(theirNext < myNext - TIP_CLOSE_MS)) return;
+    const outs = outStartsBenchCanFill(o, pack);
+    const over = outs[0];
+    bits.push(
+      shortPlayerName(o.p) + ' covers '
+        + (over ? shortPlayerName(over.p) + ' OUT' : 'OUT')
+    );
+  });
+  if (!bits.length) return '';
+  return ' · ' + bits.slice(0, 2).join(' · ');
+}
+
 /* OUT/IR start → any eligible bench fill (don’t Sit while Marshall sits on BN). */
 function outFillSwitchTarget(r, pack, opts){
   if (!r || isImmovable(r) || isBenchRow(r)) return null;
@@ -3488,6 +3534,7 @@ function tipOrderSwitchTarget(r, pack, opts){
   if (!slotLabel) return null;
   const nowMs = Date.now();
   const excluded = switchExcludeSet(opts);
+  const outReserved = outFillReservedBenchPids(pack, opts);
   const cands = [];
   (pack.rows || []).forEach(o => {
     if (!o || o.pid === r.pid || isImmovable(o)) return;
@@ -3496,8 +3543,8 @@ function tipOrderSwitchTarget(r, pack, opts){
     const inj = o.scout && o.scout.injury;
     if (isOutInjury(inj)) return;
     if (!fitsLockSlot(o.p, slotLabel)) return;
-    /* Marshall → Allen’s OUT UTIL first, not over Giannis @ F. */
-    if (outStartsBenchCanFill(o, pack).length) return;
+    /* Only the chosen OUT fill is reserved (Reaves→Ball), not every PG. */
+    if (outReserved.has(String(o.pid))) return;
     const theirNext = nextTipMs(o.scout);
     if (theirNext == null) return;
     /* Too late — never Switch in a bench player after tip. */
@@ -4382,12 +4429,14 @@ function buildRecRaw(r, pack, opts){
       const inName = shortPlayerName(tipAltFloor.row.p);
       const inTip = nextGamePhrase(tipAltFloor.row.scout, nowMs);
       const holdUntil = nextPhrase || nextLbl || 'later';
+      const outCover = tipOrderOutCoverPhrase(r, pack, tipAltFloor, switchOpts);
       return attachSwitchMeta({
         action: 'switch',
         label: switchOutLabel(tipAltFloor),
         reason: bankMeetPhrase(scored, bank, bankStyle, r.dist, dowNow, weekMode, weekNeed)
           + ' · start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first'
           + ' · slot back by ' + holdUntil
+          + outCover
           + forfeitLockPhrase(r),
         cls: 'rec-switch'
       }, tipAltFloor, r);
@@ -4561,6 +4610,8 @@ function buildRecRaw(r, pack, opts){
     if (scored != null && bank != null) bits.push(formatFp(scored) + ' < Bank ' + bank);
     bits.push('start ' + inName + (inTip ? (' (' + inTip + ')') : '') + ' first');
     bits.push('slot back by ' + holdUntil);
+    const outCover = tipOrderOutCoverPhrase(r, pack, tipAlt, switchOpts);
+    if (outCover) bits.push(outCover.replace(/^\s·\s/, ''));
     const forfeit = forfeitLockPhrase(r);
     return attachSwitchMeta({
       action: 'switch',
