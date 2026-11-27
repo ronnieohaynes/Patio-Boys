@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261127-outbank';
+    || '20261127-outbank2';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -2599,7 +2599,7 @@ function cascadedSlotRivals(pack, slotLabel, excludePid, opts){
 
 function rivalGamesLeftCount(o){
   if (!o) return 0;
-  if (isOutInjury(o.scout && o.scout.injury)) return 0;
+  /* OUT ≠ out for the week — remaining slate tips still count unless gone. */
   if (o.scout && o.scout.gamesLeft != null) return Number(o.scout.gamesLeft);
   return ((o.scout && o.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
 }
@@ -3333,9 +3333,7 @@ function bankMeetPhrase(scored, bank, style, dist, dow, mode /* , needPer */){
 
 function rowGamesLeft(r){
   if (!r) return 0;
-  /* Ruled OUT/IR won’t play remaining slate tips — treat as 0 left for Bank
-     near-miss / best-left / beat-% self-upside. */
-  if (isOutInjury(r.scout && r.scout.injury)) return 0;
+  /* OUT is day-to-day for the week — only 0 when the slate has no tips left. */
   if (r.scout && r.scout.gamesLeft != null) return Number(r.scout.gamesLeft);
   return ((r.scout && r.scout.slate) || []).filter(s => s && s.kind === 'opp').length;
 }
@@ -4129,7 +4127,6 @@ function buildRecRaw(r, pack, opts){
   const onTaxi = isTaxiRow(r);
   const injury = r.scout && r.scout.injury;
   const myQ = injury === 'DTD' || injury === 'Q' || injury === 'QUESTIONABLE';
-  /* OUT/IR → 0 via rowGamesLeft (won’t play remaining tips). */
   const gamesLeft = rowGamesLeft(r);
   /* Only confirmed / OCR / locked nights — raw ESPN FP isn’t bankable until you confirm. */
   const scored = latestLockableFp(r);
