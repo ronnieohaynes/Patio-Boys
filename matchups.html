@@ -479,7 +479,7 @@
 (function(){
   var v = new URLSearchParams(location.search).get('nocache')
     || new URLSearchParams(location.search).get('v')
-    || '20261127-beatleftover';
+    || '20261127-sametip1';
   window.MATCHUP_BUILD = v;
   ['hq-share.js','2k-ratings-snapshot.js','nba-proj-consensus.js','nba-contracts-snapshot.js','team-needs.js','lock-in-dist.js'].forEach(function(src){
     document.write('<script src="'+src+'?v='+encodeURIComponent(v)+'"><\/script>');
@@ -3580,6 +3580,9 @@ function tipOrderSwitchTarget(r, pack, opts){
     if (close){
       /* Within 30m — better start, but never a later tip (anti-cycle). */
       if (theirNext > myNext + 1e-9) return;
+      /* Don’t forfeit a played unlockable night for a same-tip Avg upgrade
+         (Jenkins 30.5 @ 4:30 ≠ Switch Nemby @ 4:30 — no “start first”). */
+      if (latestLockableFp(r) != null) return;
       if (!isBetterStarter(o, r)) return;
       cands.push({row: o, kind: 'close', tip: theirNext});
       return;
@@ -4451,7 +4454,9 @@ function buildRecRaw(r, pack, opts){
   const absMinNow = absoluteMinLockFp(dowNow);
   if (scored != null && absMinNow != null && Number(scored) + 1e-9 < absMinNow){
     const tipAltFloor = tipOrderSwitchTarget(r, pack, switchOpts);
-    if (tipAltFloor && tipAltFloor.row){
+    /* Under floor: only a clearly earlier tip justifies forfeiting this night.
+       Same-tip “better Avg” (Nemby = Jenkins 4:30) is not tip-order. */
+    if (tipAltFloor && tipAltFloor.row && tipAltFloor.kind === 'tip'){
       const inName = shortPlayerName(tipAltFloor.row.p);
       const inTip = nextGamePhrase(tipAltFloor.row.scout, nowMs);
       const holdUntil = nextPhrase || nextLbl || 'later';
